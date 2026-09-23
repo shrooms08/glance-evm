@@ -46,16 +46,27 @@ export function VaultStep(p: VaultStepProps) {
   const done = p.status === "done";
   const funded = p.progress.funded;
   const steps = p.plan?.steps ?? [];
+  const oneTx = p.plan?.mode === "one-tx" && !p.vault;
   const showFinish = steps.length > 0 && !p.plan?.blocked;
   const finishLabel = p.busy ? "Working…" : p.vault ? "Finish setup" : "Create my vault";
+  const prompts = steps.length === 1 ? "1 wallet prompt" : `${steps.length} wallet prompts`;
 
   return (
     <div className="create">
-      <p className="meta">
-        Exactly what <code>make create-vault</code> does: the vault, the five stocks with their price feeds and freshness (20 hours open, 96 hours closed),
-        the stock desk, the Glance agent for 29 days, then your first deposit. It starts with the vault's default limits: $100 a trade, $500 a day each way,
-        1% slippage, 25% while the market&apos;s closed. Change them any time under Limits.
-      </p>
+      {oneTx ? (
+        <p className="meta">
+          One transaction creates your vault configured exactly like <code>make create-vault</code> leaves one: the five stocks with their price feeds
+          and freshness (20 hours open, 96 hours closed), the stock desk, the Glance agent for 30 days, and $100 a trade, $500 a day each way, 1% slippage,
+          25% while the market&apos;s closed. Your deposit goes in with it. You&apos;re the owner from the start; the factory keeps no rights. Change any
+          limit later under Limits.
+        </p>
+      ) : (
+        <p className="meta">
+          Exactly what <code>make create-vault</code> does: the vault, the five stocks with their price feeds and freshness (20 hours open, 96 hours
+          closed), the stock desk, the Glance agent for 29 days, then your first deposit. It starts with the vault&apos;s default limits: $100 a trade, $500
+          a day each way, 1% slippage, 25% while the market&apos;s closed. Change them any time under Limits.
+        </p>
+      )}
 
       {!p.flavourLocked && !funded && (
         <fieldset className="segmented" aria-label="Which USDG" disabled={p.busy}>
@@ -123,7 +134,23 @@ export function VaultStep(p: VaultStepProps) {
         </div>
       )}
 
-      {showFinish && (
+      {oneTx && showFinish && (
+        <ol className="plan one-tx" aria-label="Still to do">
+          {steps
+            .filter((st) => st.id === "faucet")
+            .map((st) => (
+              <li key={st.id} className="meta">
+                {st.label}
+              </li>
+            ))}
+          <li className="meta" data-done={p.plan?.approveCovered || undefined}>
+            Approve USDG
+            {p.plan?.approveCovered ? <span className="chip chip-accent">Done: your approval already covers it</span> : null}
+          </li>
+          <li className="meta">Create vault: one transaction, configured and funded</li>
+        </ol>
+      )}
+      {!oneTx && showFinish && (
         <ol className="plan" aria-label="Still to do">
           {steps.map((st) => (
             <li key={st.id} className="meta">
@@ -148,8 +175,8 @@ export function VaultStep(p: VaultStepProps) {
           <button className="btn btn-primary" onClick={p.onFinish} disabled={!p.ready || p.busy || Boolean(!funded && p.deposit.error)}>
             {finishLabel}
           </button>
-          {!p.ready && <span className="meta">Connect and switch to Robinhood Chain testnet first.</span>}
-          {p.ready && <span className="meta">{steps.length === 1 ? "One wallet confirmation." : `${steps.length} wallet confirmations, one at a time.`}</span>}
+          {!p.ready && <span className="meta">Connect and switch to Robinhood Chain testnet first.{oneTx ? ` Then ${prompts}.` : ""}</span>}
+          {p.ready && <span className="meta">{oneTx ? `${prompts}.` : steps.length === 1 ? "One wallet confirmation." : `${steps.length} wallet confirmations, one at a time.`}</span>}
         </div>
       )}
 

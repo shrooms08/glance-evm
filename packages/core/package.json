@@ -9,7 +9,8 @@
     "./errors": "./src/errors.ts",
     "./format": "./src/format.ts",
     "./rpc": "./src/rpc.ts",
-    "./window": "./src/window.ts"
+    "./window": "./src/window.ts",
+    "./factories": "./src/factories.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

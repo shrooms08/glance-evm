@@ -11,11 +11,11 @@
  *
  * The plan is recomputed from chain state before every step, never from what the console remembers.
  */
-import { glanceVaultAbi, glanceVaultFactoryAbi, testUsdgAbi } from "@glance/core/abi";
+import { glanceVaultAbi, glanceVaultFactoryAbi, glanceVaultFactoryV2Abi, testUsdgAbi } from "@glance/core/abi";
 import { formatUsd } from "@glance/core/format";
 import { erc20Abi, isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
 
-import { factory, stocks, VAULT_SETUP, type DemoVault } from "./deployment";
+import { factory, factoryV2 as deployedFactoryV2, sequencerUptimeFeed, stocks, VAULT_SETUP, type DemoVault } from "./deployment";
 
 export interface TokenState {
   approved: boolean;
@@ -39,7 +39,10 @@ export interface SetupSnapshot {
   ownerUsdg: bigint;
   /** TestUSDG only: how much the faucet still gives this owner today. */
   faucetRemaining: bigint | null;
+  /** The owner's USDG allowance to the vault (step-by-step deposits). */
   allowance: bigint;
+  /** The owner's USDG allowance to GlanceVaultFactoryV2 (the one-transaction setup); 0 when it isn't deployed. */
+  factoryAllowance: bigint;
   vaultUsdgBalance: bigint;
 }
 
@@ -68,6 +71,95 @@ export interface SetupPlan {
   steps: SetupStep[];
   /** Set when setup can't continue, in the script's own words. */
   blocked: string | null;
+  /** "one-tx": approve (if needed) + createVaultWithConfig. "steps": the original one-transaction-per-setting setup. */
+  mode?: "one-tx" | "steps";
+  /** One-tx only: the allowance to the factory already covers the deposit, so there's no approve prompt. */
+  approveCovered?: boolean;
+}
+
+/** The VaultConfig GlanceVaultFactoryV2.createVaultWithConfig takes (field names as in the contract's struct). */
+export interface VaultConfigArg {
+  usdg: Address;
+  agent: Address;
+  agentExpiry: bigint;
+  tokens: Array<{ token: Address; priceFeed: Address; openMaxAge: number; closedMaxAge: number }>;
+  routers: Address[];
+  perBuyCap: bigint;
+  dailyCap: bigint;
+  dailySellCap: bigint;
+  maxSlippageBps: number;
+  weekendCapBps: number;
+  sequencerUptimeFeed: Address;
+}
+
+/**
+ * The same vault the step-by-step setup leaves, as one config: the deployment's agent for 30 days from `now` (the
+ * latest block), the five stocks with 20h/96h freshness, the desk for this USDG, $100 / $500 / $500, 1% slippage, 25%
+ * while the market's closed, and the chain's sequencer feed (none on Robinhood Chain testnet).
+ */
+export function consoleVaultConfig(flavour: DemoVault, now: number, usdgDecimals: number): VaultConfigArg {
+  const unit = 10n ** BigInt(usdgDecimals);
+  return {
+    usdg: flavour.usdg,
+    agent: flavour.agent,
+    agentExpiry: BigInt(now + VAULT_SETUP.newAgentTtlSeconds),
+    tokens: stocks.map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: VAULT_SETUP.openMaxAge, closedMaxAge: VAULT_SETUP.closedMaxAge })),
+    routers: [flavour.desk],
+    perBuyCap: VAULT_SETUP.perTradeWhole * unit,
+    dailyCap: VAULT_SETUP.dailyWhole * unit,
+    dailySellCap: VAULT_SETUP.dailyWhole * unit,
+    maxSlippageBps: VAULT_SETUP.maxSlippageBps,
+    weekendCapBps: VAULT_SETUP.weekendCapBps,
+    sequencerUptimeFeed,
+  };
+}
+
+/**
+ * A new owner with GlanceVaultFactoryV2 deployed: at most two wallet prompts. Approve the factory for the deposit
+ * (skipped when the allowance already covers it), then createVaultWithConfig, which deploys, configures and funds the
+ * vault in one transaction. TestUSDG adds its faucet first when the wallet is short.
+ */
+export function planOneTx(s: SetupSnapshot, t: SetupTarget, factoryV2: Address): SetupPlan {
+  const steps: SetupStep[] = [];
+  const f = t.flavour;
+  const amount = formatUsd(t.deposit, t.usdgDecimals);
+  if (t.deposit > 0n && s.ownerUsdg < t.deposit) {
+    const missing = t.deposit - s.ownerUsdg;
+    if (!t.testUsdg) {
+      return {
+        steps: [],
+        blocked: `Not enough Paxos USDG to deposit ${amount}. Claim some at https://faucet.paxos.com/ (Robinhood Chain testnet), or deposit less.`,
+        mode: "one-tx",
+      };
+    }
+    if (s.faucetRemaining !== null && s.faucetRemaining < missing) {
+      return { steps: [], blocked: "Today's TestUSDG faucet allowance is used up. Deposit less, or try again tomorrow.", mode: "one-tx" };
+    }
+    steps.push({
+      id: "faucet",
+      label: `Take ${formatUsd(missing, t.usdgDecimals)} TestUSDG from its faucet`,
+      call: { address: f.usdg, abi: testUsdgAbi as Abi, functionName: "faucet", args: [missing] },
+    });
+  }
+  const approveCovered = t.deposit === 0n || s.factoryAllowance >= t.deposit;
+  if (!approveCovered) {
+    steps.push({
+      id: "allow-factory",
+      label: `Approve ${amount} ${f.usdgLabel}`,
+      call: { address: f.usdg, abi: erc20Abi as Abi, functionName: "approve", args: [factoryV2, t.deposit] },
+    });
+  }
+  steps.push({
+    id: "create-configured",
+    label: t.deposit > 0n ? `Create your vault, configured and funded with ${amount}` : "Create your vault, configured",
+    call: {
+      address: factoryV2,
+      abi: glanceVaultFactoryV2Abi as Abi,
+      functionName: "createVaultWithConfig",
+      args: [consoleVaultConfig(f, s.now, t.usdgDecimals), t.deposit],
+    },
+  });
+  return { steps, blocked: null, mode: "one-tx", approveCovered };
 }
 
 const freshVault: Pick<SetupSnapshot, "tokens" | "routerApproved" | "agent" | "agentExpiry"> = {
@@ -183,9 +275,20 @@ export function vaultReady(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: n
  * USDG. Once the vault holds any USDG (or a deposit confirmed in this session, even if a lagging RPC hasn't caught up
  * yet), setup never deposits again. More USDG only goes in through addMorePlan, from its own explicit input.
  */
-export function setupPlan(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: number, initialDeposit: bigint, depositConfirmed = false): SetupPlan {
+export function setupPlan(
+  s: SetupSnapshot,
+  flavour: DemoVault,
+  usdgDecimals: number,
+  initialDeposit: bigint,
+  depositConfirmed = false,
+  factoryV2: Address | null = deployedFactoryV2,
+): SetupPlan {
   const funded = s.vaultUsdgBalance > 0n || depositConfirmed;
-  return planSetup(s, { flavour, testUsdg: flavour.key === "test", usdgDecimals, deposit: funded ? 0n : initialDeposit });
+  const target: SetupTarget = { flavour, testUsdg: flavour.key === "test", usdgDecimals, deposit: funded ? 0n : initialDeposit };
+  // A new owner, and the one-transaction factory is deployed: approve + one transaction. An existing vault (from either
+  // factory) only ever gets the missing settings, one owner transaction each, exactly as before.
+  if (!s.vault && factoryV2) return planOneTx(s, target, factoryV2);
+  return { ...planSetup(s, target), mode: "steps" };
 }
 
 /** "Add more USDG": only the funding steps (faucet for TestUSDG, approve if the allowance is short, deposit). */

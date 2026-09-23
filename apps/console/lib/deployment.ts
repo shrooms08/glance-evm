@@ -1,6 +1,7 @@
 /**
  * Every address the console uses comes from deployments/46630.json, the same record the API and the scripts read.
  */
+import { factoryV2Address, glanceFactories } from "@glance/core/factories";
 import { getAddress, type Address } from "viem";
 
 import record from "../../../deployments/46630.json";
@@ -56,6 +57,18 @@ export const demoVaults: DemoVault[] = [
 
 export const primaryVault = demoVaults[0]!;
 export const factory = getAddress(record.factory.address);
+/**
+ * Every vault factory in the record: the original (step-by-step setup) and, once deployed, GlanceVaultFactoryV2 (one
+ * transaction to a configured, funded vault). Vaults from either are ordinary GlanceVaults.
+ */
+export const factories = glanceFactories(record as Parameters<typeof glanceFactories>[0]).map((f) => ({ ...f, address: getAddress(f.address) }));
+/** The one-transaction factory, or null while it isn't deployed: Get started then uses the step-by-step setup. */
+export const factoryV2: Address | null = (() => {
+  const a = factoryV2Address(record as Parameters<typeof factoryV2Address>[0]);
+  return a ? getAddress(a) : null;
+})();
+/** The chain's L2 sequencer uptime feed (zero on Robinhood Chain testnet, which publishes none). */
+export const sequencerUptimeFeed = getAddress(record.sequencerUptimeFeed);
 
 export interface Stock {
   symbol: StockSymbol;
@@ -77,6 +90,13 @@ export const VAULT_SETUP = {
   /** A new agent permission lasts 29 days; one with under 7 days left is renewed. */
   agentTtlSeconds: 29 * 86_400,
   agentMinLeftSeconds: 7 * 86_400,
+  /** A new vault's agent permission (one-transaction setup): 30 days from the latest block, the vault's maximum. */
+  newAgentTtlSeconds: 30 * 86_400,
+  /** Default limits, as whole USDG and basis points: the vault's own defaults. */
+  perTradeWhole: 100n,
+  dailyWhole: 500n,
+  maxSlippageBps: 100,
+  weekendCapBps: 2_500,
   /** Default deposit, in whole USDG. */
   defaultDeposit: "10",
 } as const;

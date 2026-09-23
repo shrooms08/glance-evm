@@ -58,6 +58,8 @@ export const deploymentSchema = z.object({
   sequencerUptimeFeed: address,
   usdg: z.object({ address, real: z.boolean(), source: z.string() }),
   factory: contract,
+  /** The one-transaction factory (GlanceVaultFactoryV2), once deployed. The original factory stays in `factory`. */
+  factoryV2: contract.extend({ note: z.string().optional(), deployedAt: z.string().optional() }).optional(),
   stockDesk: contract,
   stockDeskPaxosUSDG: contract.optional(),
   demoVaultTestUSDG: vault,

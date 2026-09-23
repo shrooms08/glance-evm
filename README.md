@@ -65,7 +65,13 @@ to 4 (trades then spend the demo vault's USDG).
 
 ## Contracts and deployment
 
-- `src/`: the vault (`GlanceVault`), its factory, and the libraries it uses. This is the production code.
+- `src/`: the vault (`GlanceVault`), its factories, and the libraries it uses. This is the production code.
+  - `GlanceVaultFactory` creates a vault that its owner then configures with one transaction per setting.
+  - `GlanceVaultFactoryV2` creates a vault already configured and funded, in one transaction. It deploys a
+    `ConfiguredGlanceVault`, whose constructor applies every setting through the same internal functions as the
+    owner setters: same checks, same errors, same events. The owner is `msg.sender` from the start. The deposit goes
+    from the owner straight to the vault's CREATE2 address, so the factory never holds USDG, an allowance or a role.
+    Both factories stay valid; `deployments/46630.json` records V2 under `factoryV2` once deployed.
 - `src/testnet/`: clearly labelled stand-ins for what the testnets lack: `TestPriceFeed`, `StockDesk` (an
   oracle-priced demo venue, not an AMM), `TestUSDG` (the fallback's faucet token) and `TestStockToken` (Arbitrum
   Sepolia only).
@@ -77,6 +83,8 @@ cp .env.example .env         # set PRIVATE_KEY, optionally AGENT_ADDRESS
 make test
 make dry-run-robinhood       # simulate, sends nothing
 make deploy-robinhood        # deploy + verify on Blockscout; writes deployments/46630.json
+make dry-run-factory-v2      # simulate deploying GlanceVaultFactoryV2 (sends nothing, needs no key)
+make deploy-factory-v2       # deploy + verify it; records factoryV2 in deployments/46630.json
 make fund-paxos              # stock the Paxos desk and fund the primary vault with real Paxos USDG (idempotent)
 make check-vaults            # read-only: both demo vaults quote a $10 TSLA buy and pass the on-chain preflight
 make seed                    # fund the TestUSDG fallback vault

@@ -6,13 +6,15 @@ import { zeroAddress, type Address } from "viem";
 import { describe, expect, it } from "vitest";
 
 import { demoVaults, stocks, VAULT_SETUP } from "../lib/deployment";
-import { addMorePlan, setupPlan, type SetupSnapshot } from "../lib/setup";
+import { addMorePlan, consoleVaultConfig, setupPlan, type SetupSnapshot } from "../lib/setup";
 import { stepStatuses, summarize, type Activity, type StatusInputs } from "../lib/setupStatus";
 
 const paxos = demoVaults.find((d) => d.key === "paxos")!;
 const OWNER = "0x03dAC9899f5153fBd9c5EeFEf8E8B46D7f3426CA" as Address;
 const VAULT = "0xEb7371e40bc863697De3efAbD99e51729D57D3Eb" as Address;
 const NOW = 1_790_300_000;
+/** GlanceVaultFactoryV2, as it will be recorded once deployed. Tests pin it (or null) rather than read the record. */
+const V2 = "0xA76C3E2fe629889D8Bc83b285394eC62673B02E4" as Address;
 
 const noVault: SetupSnapshot = {
   owner: OWNER,
@@ -26,6 +28,7 @@ const noVault: SetupSnapshot = {
   ownerUsdg: 100_000_000n,
   faucetRemaining: null,
   allowance: 0n,
+  factoryAllowance: 0n,
   vaultUsdgBalance: 0n,
 };
 const configured: SetupSnapshot = {
@@ -102,8 +105,8 @@ describe("stepStatuses", () => {
     expect(s.complete).toBe(false);
     expect(s.text).toBe("Next: Install the Glance extension");
     // Funded, and the wallet has no USDG left for another deposit: Finish setup has nothing to do, so nothing to block.
-    const plan = setupPlan(funded, paxos, 6, 10_000_000n);
-    expect(plan).toEqual({ steps: [], blocked: null });
+    const plan = setupPlan(funded, paxos, 6, 10_000_000n, false, V2);
+    expect(plan).toMatchObject({ steps: [], blocked: null });
   });
 
   it("test ETH without USDG is In progress for step 3", () => {
@@ -114,25 +117,25 @@ describe("stepStatuses", () => {
 
 describe("Finish setup is idempotent", () => {
   it("deposit already done, click again: no transaction at all", () => {
-    expect(setupPlan(funded, paxos, 6, 10_000_000n).steps).toEqual([]);
+    expect(setupPlan(funded, paxos, 6, 10_000_000n, false, null).steps).toEqual([]);
     // Even with an amount typed and a stale balance read, a deposit confirmed this session stops a second one.
-    expect(setupPlan(configured, paxos, 6, 10_000_000n, true).steps).toEqual([]);
+    expect(setupPlan(configured, paxos, 6, 10_000_000n, true, null).steps).toEqual([]);
   });
 
   it("a new owner's first click plans everything once, deposit last", () => {
-    const ids = setupPlan(noVault, paxos, 6, 10_000_000n).steps.map((s) => s.id);
+    const ids = setupPlan(noVault, paxos, 6, 10_000_000n, false, null).steps.map((s) => s.id);
     expect(ids[0]).toBe("create");
     expect(ids.slice(-2)).toEqual(["allow", "deposit"]);
     expect(ids.filter((id) => id === "deposit")).toHaveLength(1);
   });
 
   it("skips what's already in place: an agent about to expire is renewed, and nothing is deposited", () => {
-    expect(setupPlan({ ...funded, agentExpiry: NOW + 86_400 }, paxos, 6, 10_000_000n).steps.map((s) => s.id)).toEqual(["agent"]);
+    expect(setupPlan({ ...funded, agentExpiry: NOW + 86_400 }, paxos, 6, 10_000_000n, false, null).steps.map((s) => s.id)).toEqual(["agent"]);
   });
 
   it("an unfunded, configured vault only deposits, and skips the approve when the allowance covers it", () => {
-    expect(setupPlan(configured, paxos, 6, 10_000_000n).steps.map((s) => s.id)).toEqual(["allow", "deposit"]);
-    expect(setupPlan({ ...configured, allowance: 10_000_000n }, paxos, 6, 10_000_000n).steps.map((s) => s.id)).toEqual(["deposit"]);
+    expect(setupPlan(configured, paxos, 6, 10_000_000n, false, null).steps.map((s) => s.id)).toEqual(["allow", "deposit"]);
+    expect(setupPlan({ ...configured, allowance: 10_000_000n }, paxos, 6, 10_000_000n, false, null).steps.map((s) => s.id)).toEqual(["deposit"]);
   });
 });
 
@@ -150,5 +153,82 @@ describe("Add more USDG", () => {
     expect(addMorePlan(withUsdg, paxos, 6, 0n)).toEqual({ steps: [], blocked: null });
     expect(addMorePlan(noVault, paxos, 6, 5_000_000n).blocked).toBe("Create your vault first.");
     expect(addMorePlan({ ...funded, ownerUsdg: 1_000_000n }, paxos, 6, 5_000_000n).blocked).toMatch(/^Not enough Paxos USDG to deposit \$5/);
+  });
+});
+
+describe("one-transaction setup (GlanceVaultFactoryV2 deployed)", () => {
+  const fresh = { ...noVault, ownerUsdg: 70_000_000n };
+
+  it("a new owner: approve, then ONE transaction that creates the vault configured and funded", () => {
+    const plan = setupPlan(fresh, paxos, 6, 10_000_000n, false, V2);
+    expect(plan.mode).toBe("one-tx");
+    expect(plan.steps.map((s) => s.id)).toEqual(["allow-factory", "create-configured"]);
+    expect(plan.steps[0]!.call).toMatchObject({ address: paxos.usdg, functionName: "approve", args: [V2, 10_000_000n] });
+    const create = plan.steps[1]!.call;
+    expect(create).toMatchObject({ address: V2, functionName: "createVaultWithConfig" });
+    const [config, deposit] = create.args as [ReturnType<typeof consoleVaultConfig>, bigint];
+    expect(deposit).toBe(10_000_000n);
+    // The same defaults the step-by-step flow sets.
+    expect(config).toEqual({
+      usdg: paxos.usdg,
+      agent: paxos.agent,
+      agentExpiry: BigInt(NOW + 30 * 86_400),
+      tokens: stocks.map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: 72_000, closedMaxAge: 345_600 })),
+      routers: [paxos.desk],
+      perBuyCap: 100_000_000n,
+      dailyCap: 500_000_000n,
+      dailySellCap: 500_000_000n,
+      maxSlippageBps: 100,
+      weekendCapBps: 2_500,
+      sequencerUptimeFeed: zeroAddress,
+    });
+  });
+
+  it("skips the approve (1 prompt) when the allowance to the factory already covers the deposit", () => {
+    const plan = setupPlan({ ...fresh, factoryAllowance: 10_000_000n }, paxos, 6, 10_000_000n, false, V2);
+    expect(plan.approveCovered).toBe(true);
+    expect(plan.steps.map((s) => s.id)).toEqual(["create-configured"]);
+    // An allowance to an old vault address doesn't count: only the factory's.
+    expect(setupPlan({ ...fresh, allowance: 10_000_000n }, paxos, 6, 10_000_000n, false, V2).steps.map((s) => s.id)).toEqual([
+      "allow-factory",
+      "create-configured",
+    ]);
+  });
+
+  it("says where to get Paxos USDG before asking for anything", () => {
+    const plan = setupPlan({ ...fresh, ownerUsdg: 1_000_000n }, paxos, 6, 10_000_000n, false, V2);
+    expect(plan.steps).toEqual([]);
+    expect(plan.blocked).toMatch(/^Not enough Paxos USDG to deposit \$10\./);
+  });
+
+  it("TestUSDG: takes what's missing from its faucet first", () => {
+    const test = demoVaults.find((d) => d.key === "test")!;
+    const plan = setupPlan({ ...fresh, ownerUsdg: 4_000_000n, faucetRemaining: 1_000_000_000n }, test, 6, 10_000_000n, false, V2);
+    expect(plan.steps.map((s) => s.id)).toEqual(["faucet", "allow-factory", "create-configured"]);
+  });
+
+  it("an existing vault from the old factory is unaffected: configured and funded means Setup complete, no transaction", () => {
+    expect(setupPlan(funded, paxos, 6, 10_000_000n, false, V2)).toMatchObject({ steps: [], blocked: null, mode: "steps" });
+    expect(summarize(stepStatuses(inputs(funded)))).toEqual({ complete: true, text: "Setup complete" });
+    // And one missing a setting gets just that setting, from its owner, as before.
+    expect(setupPlan({ ...funded, routerApproved: false }, paxos, 6, 10_000_000n, false, V2).steps.map((s) => s.id)).toEqual(["router"]);
+  });
+
+  it("without the new factory recorded, a new owner gets the step-by-step setup (nothing breaks today)", () => {
+    const plan = setupPlan(fresh, paxos, 6, 10_000_000n, false, null);
+    expect(plan.mode).toBe("steps");
+    expect(plan.steps[0]!.id).toBe("create");
+  });
+
+  it("statuses: approving and creating show Waiting for wallet then Confirming; the created vault is Done", () => {
+    expect(stepStatuses(inputs(fresh, { activity: { step: "vault", phase: "wallet" } })).vault).toBe("waiting-wallet");
+    expect(stepStatuses(inputs(fresh, { activity: { step: "vault", phase: "confirming" } })).vault).toBe("confirming");
+    expect(stepStatuses(inputs(fresh)).vault).toBe("not-started");
+    // After the one transaction: exists, configured by its constructor, funded.
+    expect(stepStatuses(inputs({ ...funded, ownerUsdg: 60_000_000n })).vault).toBe("done");
+  });
+
+  it("deposit already made by the one transaction: clicking again sends nothing", () => {
+    expect(setupPlan(funded, paxos, 6, 10_000_000n, true, V2).steps).toEqual([]);
   });
 });

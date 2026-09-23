@@ -23,6 +23,7 @@ const fresh: SetupSnapshot = {
   ownerUsdg: 50_000_000n,
   faucetRemaining: null,
   allowance: 0n,
+  factoryAllowance: 0n,
   vaultUsdgBalance: 0n,
 };
 

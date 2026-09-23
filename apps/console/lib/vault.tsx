@@ -8,10 +8,10 @@ import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
 import { useQuery } from "@tanstack/react-query";
 import { usePathname, useSearchParams } from "next/navigation";
 import { getAddress, isAddress, isAddressEqual, zeroAddress, type Address } from "viem";
-import { useAccount, useReadContract, useReadContracts } from "wagmi";
+import { useAccount, useReadContracts } from "wagmi";
 
 import { api, ApiProblem, retryDelay, shouldRetry } from "./api";
-import { CHAIN_ID, demoVaults, factory, primaryVault } from "./deployment";
+import { CHAIN_ID, demoVaults, factories, primaryVault } from "./deployment";
 
 export function useSelectedVault(): Address {
   const params = useSearchParams();
@@ -38,32 +38,53 @@ export interface VaultOption {
   mine: boolean;
 }
 
-/** The vault the connected wallet owns, from the factory (one per owner). */
-export function useOwnedVault() {
+/** The vaults the connected wallet owns: one per factory at most (the original, and the one-transaction V2). */
+export function useOwnedVaults() {
   const { address } = useAccount();
-  const read = useReadContract({
-    address: factory,
-    abi: glanceVaultFactoryAbi,
-    functionName: "vaultOf",
-    args: address ? [address] : undefined,
-    chainId: CHAIN_ID,
+  const read = useReadContracts({
+    contracts: factories.map((f) => ({
+      address: f.address,
+      abi: glanceVaultFactoryAbi,
+      functionName: "vaultOf",
+      args: [address ?? zeroAddress],
+      chainId: CHAIN_ID,
+    })),
     query: { enabled: Boolean(address), refetchInterval: 30_000 },
   });
-  const owned = read.data && !isAddressEqual(read.data as Address, zeroAddress) ? (read.data as Address) : null;
-  return { owned, isLoading: read.isLoading, error: read.error };
+  return { owned: ownedFromReads(factories, read.data), isLoading: read.isLoading, error: read.error };
+}
+
+/** Each factory's answer to vaultOf, as the vaults that exist (newest factory first), without duplicates. */
+export function ownedFromReads(
+  from: Array<{ version: 1 | 2; address: Address }>,
+  data: ReadonlyArray<{ status: string; result?: unknown }> | undefined,
+): Array<{ vault: Address; factoryVersion: 1 | 2 }> {
+  const out: Array<{ vault: Address; factoryVersion: 1 | 2 }> = [];
+  from.forEach((f, i) => {
+    const r = data?.[i];
+    const vault = r?.status === "success" ? (r.result as Address) : null;
+    if (vault && !isAddressEqual(vault, zeroAddress) && !out.some((o) => isAddressEqual(o.vault, vault))) out.push({ vault, factoryVersion: f.version });
+  });
+  return out.sort((a, b) => b.factoryVersion - a.factoryVersion);
 }
 
 export function useVaultOptions(): VaultOption[] {
   const { address } = useAccount();
-  const { owned } = useOwnedVault();
+  const { owned } = useOwnedVaults();
   const options: VaultOption[] = demoVaults.map((d) => ({
     address: d.address,
     label: d.label,
     note: d.primary ? "Primary demo, real Paxos USDG" : "Fallback, TestUSDG from its own faucet",
     mine: Boolean(address && isAddressEqual(d.owner, address)),
   }));
-  if (owned && !options.some((o) => isAddressEqual(o.address, owned))) {
-    options.push({ address: owned, label: "Your vault", note: "Owned by the connected wallet", mine: true });
+  for (const o of owned) {
+    if (options.some((x) => isAddressEqual(x.address, o.vault))) continue;
+    options.push({
+      address: o.vault,
+      label: owned.length > 1 ? `Your vault (${o.factoryVersion === 2 ? "one-transaction setup" : "original factory"})` : "Your vault",
+      note: "Owned by the connected wallet",
+      mine: true,
+    });
   }
   return options;
 }

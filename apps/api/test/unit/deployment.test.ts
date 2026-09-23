@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadConfig } from "../../src/config.js";
-import { demoVaults, loadDeployment, primaryVault, type Deployment } from "../../src/deployment.js";
+import { deploymentSchema, demoVaults, loadDeployment, primaryVault, type Deployment } from "../../src/deployment.js";
 
 const real = loadDeployment(resolve(import.meta.dirname, "../../../../deployments/46630.json"));
 
@@ -36,5 +37,24 @@ describe("DEFAULT_VAULT", () => {
     expect(loadConfig({ DEFAULT_VAULT: "" }).DEFAULT_VAULT).toBeUndefined();
     expect(loadConfig({ DEFAULT_VAULT: "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D" }).DEFAULT_VAULT).toBe("0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D");
     expect(() => loadConfig({ DEFAULT_VAULT: "nope" })).toThrow(/DEFAULT_VAULT/);
+  });
+});
+
+describe("vault factories", () => {
+  it("reads the original factory today, and the one-transaction factory once it's recorded, keeping both", async () => {
+    const { glanceFactories, factoryV2Address } = await import("@glance/core/factories");
+    expect(glanceFactories(real)).toEqual([{ version: 1, address: "0x2dE74C4643FF724c54150f1F24f4d8B73F432999" }]);
+    expect(factoryV2Address(real)).toBeNull();
+
+    const withV2 = deploymentSchema.parse({
+      ...JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../../deployments/46630.json"), "utf8")),
+      factoryV2: { address: "0xa76c3e2fe629889d8bc83b285394ec62673b02e4", kind: "glance-v2", note: "x", deployedAt: "2026-09-24T12:00Z" },
+    });
+    expect(withV2.factory.address).toBe("0x2dE74C4643FF724c54150f1F24f4d8B73F432999");
+    expect(glanceFactories(withV2)).toEqual([
+      { version: 1, address: "0x2dE74C4643FF724c54150f1F24f4d8B73F432999" },
+      { version: 2, address: "0xA76C3E2fe629889D8Bc83b285394eC62673B02E4" },
+    ]);
+    expect(factoryV2Address(withV2)).toBe("0xA76C3E2fe629889D8Bc83b285394eC62673B02E4");
   });
 });

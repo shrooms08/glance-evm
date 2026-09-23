@@ -77,8 +77,16 @@ API, add the console's URL to `CORS_ORIGINS` (for example `https://glance-consol
   network if it's missing), not the owner (controls off, and the page says whose vault it is), API unreachable,
   testnet not responding (the API's `RPC_UNAVAILABLE` wording, and reads retry and recover on their own), transaction
   pending, and transaction failed.
-- **Get started** runs exactly what `make create-vault` does, one wallet confirmation at a time, re-reading the
-  chain before each step:
+- **Get started**, with `factoryV2` recorded in `deployments/46630.json`: at most two wallet prompts.
+  1. Approve USDG to GlanceVaultFactoryV2. This step is shown as Done and skipped when the allowance already covers
+     the deposit.
+  2. `createVaultWithConfig`: one transaction that deploys the vault already configured, then deposits. The
+     configuration is the five stocks with 20h/96h freshness, the desk, the Glance agent for 30 days, and $100 /
+     $500 / $500 limits.
+
+  Vaults from the original factory are unaffected: a configured, funded one shows "Setup complete". Until V2 is
+  recorded, Get started runs exactly what `make create-vault` does, one wallet confirmation at a time, re-reading
+  the chain before each step:
   1. create the vault;
   2. approve the five stocks with their feeds;
   3. set freshness to 20 hours open and 96 hours closed;

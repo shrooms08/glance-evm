@@ -103,10 +103,16 @@ export default function StartPage() {
       for (let guard = 0; guard < 25; guard++) {
         let fresh = await readStartState(owner, flavour);
         // Just created: give the RPC a moment to show the new vault before planning its configuration.
-        for (let wait = 0; confirmed.has("create") && !fresh.snapshot.vault && wait < 5; wait++) {
-          await new Promise((r) => setTimeout(r, 1_000));
-          fresh = await readStartState(owner, flavour);
+        const created = confirmed.has("create") || confirmed.has("create-configured");
+        if (created) {
+          for (let wait = 0; !fresh.snapshot.vault && wait < 5; wait++) {
+            await new Promise((r) => setTimeout(r, 1_000));
+            fresh = await readStartState(owner, flavour);
+          }
         }
+        // Created in this run but the RPC still can't see it: stop rather than plan a second vault. The page
+        // refreshes on its own; the factory would refuse a second vault anyway (VaultAlreadyExists).
+        if (created && !fresh.snapshot.vault) break;
         const f = fresh.vaultFlavour ?? flavour;
         const dec = fresh.usdgDecimals[f.key];
         const next = mode === "setup" ? setupPlan(fresh.snapshot, f, dec, amount, deposited) : addMorePlan(fresh.snapshot, f, dec, amount);
@@ -122,7 +128,7 @@ export default function StartPage() {
         const hash = await tx.send({ label: step.label, address: target, abi: step.call.abi, functionName: step.call.functionName, args });
         if (!hash) break; // failed or cancelled: TxStatus says why; nothing else is sent
         confirmed.add(step.id);
-        if (step.id === "deposit") {
+        if (step.id === "deposit" || (step.id === "create-configured" && amount > 0n)) {
           deposited = true;
           setConfirmedDeposit({ owner, hash });
           if (mode === "add-more") {

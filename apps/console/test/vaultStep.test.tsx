@@ -31,6 +31,7 @@ const configured: SetupSnapshot = {
   ownerUsdg: 70_000_000n,
   faucetRemaining: null,
   allowance: 0n,
+  factoryAllowance: 0n,
   vaultUsdgBalance: 0n,
 };
 
@@ -46,7 +47,7 @@ function props(s: SetupSnapshot, over: Partial<VaultStepProps> = {}): VaultStepP
   return {
     status,
     progress: { exists: s.vault !== null, configured: true, funded: s.vaultUsdgBalance > 0n },
-    plan: setupPlan(s, paxos, 6, 10_000_000n),
+    plan: setupPlan(s, paxos, 6, 10_000_000n, false, null),
     ready: true,
     busy: false,
     flavour: paxos,
@@ -104,7 +105,7 @@ describe("funded vault", () => {
     const onFinish = vi.fn();
     const p = props(funded, { depositHash: HASH, onFinish });
     expect(p.status).toBe("done");
-    expect(p.plan).toEqual({ steps: [], blocked: null });
+    expect(p.plan).toMatchObject({ steps: [], blocked: null });
     render(<VaultStep {...p} />);
     expect(screen.getByText("Your vault holds $30 Paxos USDG.")).toBeTruthy();
     expect(screen.getByText(/^Deposit 0x15ea…324a/).getAttribute("href")).toBe(`https://explorer.testnet.chain.robinhood.com/tx/${HASH}`);
@@ -143,5 +144,38 @@ describe("no vault yet", () => {
     render(<VaultStep {...props(s)} />);
     expect(screen.getByText("Create my vault")).toBeTruthy();
     expect(screen.getByLabelText(/Paxos USDG/)).toBeTruthy();
+  });
+});
+
+describe("one-transaction setup", () => {
+  const V2 = "0xA76C3E2fe629889D8Bc83b285394eC62673B02E4" as Address;
+  const fresh: SetupSnapshot = { ...configured, vault: null, vaultUsdg: null, tokens: [], routerApproved: false, agent: zeroAddress, agentExpiry: 0 };
+
+  it("shows Approve USDG and Create vault, and says 2 wallet prompts before anything starts", () => {
+    render(<VaultStep {...props(fresh, { plan: setupPlan(fresh, paxos, 6, 10_000_000n, false, V2), ready: false })} />);
+    const todo = screen.getByRole("list", { name: "Still to do" });
+    expect(todo.textContent).toContain("Approve USDG");
+    expect(todo.textContent).toContain("Create vault: one transaction, configured and funded");
+    expect(screen.getByText(/Then 2 wallet prompts\./)).toBeTruthy();
+    expect(screen.getByText("Create my vault").matches(":disabled")).toBe(true); // not connected yet
+  });
+
+  it("shows the approve as Done and says 1 wallet prompt when the allowance covers the deposit", () => {
+    const covered = { ...fresh, factoryAllowance: 10_000_000n };
+    const onFinish = vi.fn();
+    render(<VaultStep {...props(covered, { plan: setupPlan(covered, paxos, 6, 10_000_000n, false, V2), onFinish })} />);
+    expect(screen.getByText("Done: your approval already covers it")).toBeTruthy();
+    expect(screen.getByText("1 wallet prompt.")).toBeTruthy();
+    fireEvent.click(screen.getByText("Create my vault"));
+    expect(onFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables Create my vault while the approve or the create is in flight", () => {
+    const onFinish = vi.fn();
+    render(<VaultStep {...props(fresh, { plan: setupPlan(fresh, paxos, 6, 10_000_000n, false, V2), busy: true, onFinish })} />);
+    const button = screen.getByText("Working…");
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(onFinish).not.toHaveBeenCalled();
   });
 });

@@ -375,3 +375,6 @@ fieldset.segmented:disabled label.segment { opacity: 0.5; cursor: not-allowed; }
 .progress { flex-direction: column; align-items: flex-end; }
 .progress[data-complete] .ui { color: var(--t-accent-text); }
 .step[data-status="failed"] { border-color: var(--t-fail-line); }
+
+.plan.one-tx > li { align-items: center; flex-wrap: wrap; }
+.plan.one-tx > li[data-done] { color: var(--t-soft); }

@@ -1370,6 +1370,296 @@ export const glanceVaultFactoryAbi = [
   }
 ] as const;
 
+export const glanceVaultFactoryV2Abi = [
+  {
+    "type": "function",
+    "name": "createVaultWithConfig",
+    "inputs": [
+      {
+        "name": "config",
+        "type": "tuple",
+        "internalType": "struct VaultConfig",
+        "components": [
+          {
+            "name": "usdg",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "agent",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "agentExpiry",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "tokens",
+            "type": "tuple[]",
+            "internalType": "struct TokenInit[]",
+            "components": [
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "priceFeed",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "openMaxAge",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "closedMaxAge",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          },
+          {
+            "name": "routers",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "perBuyCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dailyCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dailySellCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "weekendCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "sequencerUptimeFeed",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "name": "depositAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "predictVault",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "config",
+        "type": "tuple",
+        "internalType": "struct VaultConfig",
+        "components": [
+          {
+            "name": "usdg",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "agent",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "agentExpiry",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "tokens",
+            "type": "tuple[]",
+            "internalType": "struct TokenInit[]",
+            "components": [
+              {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "priceFeed",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "openMaxAge",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "closedMaxAge",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          },
+          {
+            "name": "routers",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "perBuyCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dailyCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dailySellCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxSlippageBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "weekendCapBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "sequencerUptimeFeed",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      },
+      {
+        "name": "depositAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultOf",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "VaultCreated",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "usdg",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VaultAlreadyExists",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  }
+] as const;
+
 export const stockDeskAbi = [
   {
     "type": "constructor",

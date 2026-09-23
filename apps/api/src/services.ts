@@ -19,6 +19,7 @@ import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
 import { primaryVault } from "./deployment.js";
 import { onChainRefusals } from "./refusals.js";
+import { glanceFactories } from "@glance/core/factories";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "./rpc.js";
 import {
   decodeRevert,
@@ -908,6 +909,8 @@ export async function healthView(ctx: AppContext) {
       ethBalanceWei: balance.toString(),
     },
     llmFallback: ctx.llm !== null,
+    // Every vault factory; vaults from either are GlanceVaults, and the vault checks above never depend on which.
+    factories: glanceFactories(ctx.deployment),
     keeper: {
       // The local pause file. The scheduled GitHub Actions keeper is paused by committing this file.
       pausedLocally: existsSync(ctx.config.KEEPER_PAUSE_FILE),

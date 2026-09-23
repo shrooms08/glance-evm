@@ -291,6 +291,11 @@ contract GlanceVault is ReentrancyGuard {
     /// @param agent_ The agent address.
     /// @param expiry Unix timestamp after which the agent can no longer trade. At most MAX_AGENT_TTL from now.
     function setAgent(address agent_, uint64 expiry) external onlyOwner {
+        _setAgent(agent_, expiry);
+    }
+
+    /// @dev setAgent's checks and effects, shared with ConfiguredGlanceVault's constructor.
+    function _setAgent(address agent_, uint64 expiry) internal {
         if (agent_ == address(0)) revert ZeroAddress();
         if (expiry <= block.timestamp || expiry > block.timestamp + MAX_AGENT_TTL) revert InvalidAgentExpiry(expiry);
         agent = agent_;
@@ -319,6 +324,17 @@ contract GlanceVault is ReentrancyGuard {
         uint16 maxSlippageBps_,
         uint16 weekendCapBps_
     ) external onlyOwner {
+        _setLimits(perBuyCap_, dailyCap_, dailySellCap_, maxSlippageBps_, weekendCapBps_);
+    }
+
+    /// @dev setLimits' checks and effects, shared with ConfiguredGlanceVault's constructor.
+    function _setLimits(
+        uint256 perBuyCap_,
+        uint256 dailyCap_,
+        uint256 dailySellCap_,
+        uint16 maxSlippageBps_,
+        uint16 weekendCapBps_
+    ) internal {
         if (
             perBuyCap_ == 0 || perBuyCap_ > dailyCap_ || perBuyCap_ > dailySellCap_
                 || maxSlippageBps_ > MAX_SLIPPAGE_BPS || weekendCapBps_ > BPS
@@ -346,6 +362,11 @@ contract GlanceVault is ReentrancyGuard {
     /// @param priceFeed Chainlink-style USD feed for one whole token. Required when approving.
     /// @param approved Whether the agent may trade this token.
     function setTokenApproval(address token, address priceFeed, bool approved) external onlyOwner {
+        _setTokenApproval(token, priceFeed, approved);
+    }
+
+    /// @dev setTokenApproval's checks and effects, shared with ConfiguredGlanceVault's constructor.
+    function _setTokenApproval(address token, address priceFeed, bool approved) internal {
         _checkConfigurableToken(token);
         if (approved && priceFeed == address(0)) revert InvalidTokenConfig();
         TokenConfig storage cfg = tokenConfig[token];
@@ -365,6 +386,11 @@ contract GlanceVault is ReentrancyGuard {
     /// @param openMaxAge Maximum age for OPEN, in seconds. Must be non-zero.
     /// @param closedMaxAge Maximum age for CLOSED, in seconds. Must exceed openMaxAge and be <= MAX_FRESHNESS_AGE.
     function setTokenFreshness(address token, uint32 openMaxAge, uint32 closedMaxAge) external onlyOwner {
+        _setTokenFreshness(token, openMaxAge, closedMaxAge);
+    }
+
+    /// @dev setTokenFreshness' checks and effects, shared with ConfiguredGlanceVault's constructor.
+    function _setTokenFreshness(address token, uint32 openMaxAge, uint32 closedMaxAge) internal {
         _checkConfigurableToken(token);
         if (openMaxAge == 0 || closedMaxAge <= openMaxAge || closedMaxAge > MAX_FRESHNESS_AGE) {
             revert InvalidFreshness(openMaxAge, closedMaxAge);
@@ -377,6 +403,11 @@ contract GlanceVault is ReentrancyGuard {
     ///      the check is then skipped.
     /// @param feed The uptime feed, or address(0) to disable the check.
     function setSequencerUptimeFeed(address feed) external onlyOwner {
+        _setSequencerUptimeFeed(feed);
+    }
+
+    /// @dev setSequencerUptimeFeed's effects, shared with ConfiguredGlanceVault's constructor.
+    function _setSequencerUptimeFeed(address feed) internal {
         sequencerUptimeFeed = AggregatorV3Interface(feed);
         emit SequencerUptimeFeedSet(feed);
     }
@@ -385,6 +416,11 @@ contract GlanceVault is ReentrancyGuard {
     /// @param router The router address.
     /// @param approved Whether the agent may trade through this router.
     function setRouterApproval(address router, bool approved) external onlyOwner {
+        _setRouterApproval(router, approved);
+    }
+
+    /// @dev setRouterApproval's checks and effects, shared with ConfiguredGlanceVault's constructor.
+    function _setRouterApproval(address router, bool approved) internal {
         if (router == address(0)) revert ZeroAddress();
         approvedRouters[router] = approved;
         emit RouterApprovalSet(router, approved);

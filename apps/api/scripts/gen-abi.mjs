@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const artifacts = {
   glanceVaultAbi: "GlanceVault.sol/GlanceVault.json",
   glanceVaultFactoryAbi: "GlanceVaultFactory.sol/GlanceVaultFactory.json",
+  glanceVaultFactoryV2Abi: "GlanceVaultFactoryV2.sol/GlanceVaultFactoryV2.json",
   stockDeskAbi: "StockDesk.sol/StockDesk.json",
   testPriceFeedAbi: "TestPriceFeed.sol/TestPriceFeed.json",
   testUsdgAbi: "TestUSDG.sol/TestUSDG.json",
