@@ -1,0 +1,338 @@
+/**
+ * The in-page Glance UI: a draggable orb, its compact panel, the hover card on underlined company names, and the
+ * weekend badge. When the user has docked Glance and the side panel is open, the orb hides entirely (it must never
+ * cover the page's own controls) and speech captured here is handed to the side panel.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { browser } from "wxt/browser";
+
+import { CompanyCard, WeekendBadge } from "../../components/CompanyCard";
+import { GlanceProvider, marketClosed, useGlance } from "../../components/context";
+import { Orb } from "../../components/Orb";
+import { Panel, type PageCompany } from "../../components/Panel";
+import { useAssistant } from "../../components/useAssistant";
+import type { AssistantMessage } from "../../lib/messages-assistant";
+import type { Message, PageMatchesReply } from "../../lib/messages";
+import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
+import { orb as orbTokens } from "../../lib/tokens";
+import type { Mention, Underliner } from "../../lib/underline";
+import { listen, voiceSupported, type Listener } from "../../lib/voice";
+
+const HOVER_DWELL_MS = 300;
+const HOVER_GRACE_MS = 250;
+const DRAG_THRESHOLD = 4;
+
+export function App({ underliner }: { underliner: Underliner }) {
+  return (
+    <GlanceProvider idleLine="">
+      <div className="g-root">
+        <Floating underliner={underliner} />
+      </div>
+    </GlanceProvider>
+  );
+}
+
+function companiesFrom(mentions: Mention[], catalog: ReturnType<typeof useGlance>["catalog"]): PageCompany[] {
+  const counts = new Map<string, number>();
+  for (const m of mentions) counts.set(m.symbol, (counts.get(m.symbol) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([symbol, mentions]) => ({ symbol, mentions, name: catalog.find((c) => c.symbol === symbol)?.name ?? symbol }))
+    .sort((a, b) => b.mentions - a.mentions);
+}
+
+function Floating({ underliner }: { underliner: Underliner }) {
+  const g = useGlance();
+  const assistant = useAssistant();
+  const [mentions, setMentions] = useState<Mention[]>(underliner.current());
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [openedByKeyboard, setOpenedByKeyboard] = useState(false);
+  const [docked, setDocked] = useState(false);
+  const [pos, setPos] = useState<OrbPosition>({ right: 24, bottom: 24 });
+  const [hover, setHover] = useState<{ symbol: string; rect: DOMRect; range: Range } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
+  const pointerInCard = useRef(false);
+  /** Once the reader clicks or types in the hover card it stays open (its content can resize under the pointer). */
+  const cardPinned = useRef(false);
+  const orbRef = useRef<HTMLButtonElement>(null);
+  const dockedListener = useRef<Listener | null>(null);
+
+  const companies = useMemo(() => companiesFrom(mentions, g.catalog), [mentions, g.catalog]);
+  const host = location.hostname.replace(/^www\./, "");
+
+  useEffect(() => underliner.onChange(setMentions), [underliner]);
+  useEffect(() => {
+    if (!hover) cardPinned.current = false;
+  }, [hover]);
+  useEffect(() => {
+    void orbPosition.getValue().then(setPos);
+    return orbPosition.watch(setPos);
+  }, []);
+
+  // Docked state: ask once, then follow the background's broadcasts. Answer the side panel's questions.
+  useEffect(() => {
+    void browser.runtime.sendMessage({ kind: "panel:isOpen" }).then((open) => setDocked(Boolean(open))).catch(() => {});
+    const onMessage = (msg: Message): Promise<PageMatchesReply> | undefined => {
+      if (msg.kind === "panel:changed") setDocked(msg.open);
+      if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
+      if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
+      return undefined;
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => browser.runtime.onMessage.removeListener(onMessage);
+  }, [host, underliner, g.catalog]);
+
+  // ---- talking -------------------------------------------------------------------------------------------------
+  const startTalking = useCallback(() => {
+    if (docked) {
+      // The side panel owns the conversation; capture here and hand the words over.
+      if (dockedListener.current || !voiceSupported()) return;
+      void browser.runtime.sendMessage({ kind: "assistant:listening", listening: true } satisfies AssistantMessage).catch(() => {});
+      dockedListener.current = listen({
+        onInterim: (text) => void browser.runtime.sendMessage({ kind: "assistant:heard", text } satisfies AssistantMessage).catch(() => {}),
+        onFinal: (text) => {
+          dockedListener.current = null;
+          void browser.runtime.sendMessage({ kind: "assistant:run", text } satisfies AssistantMessage).catch(() => {});
+        },
+        onError: (message) => {
+          dockedListener.current = null;
+          void browser.runtime.sendMessage({ kind: "assistant:run", text: "" } satisfies AssistantMessage).catch(() => {});
+          g.setOrb({ state: "idle", line: message, meta: "" });
+        },
+      });
+      return;
+    }
+    setPanelOpen(true);
+    assistant.startListening();
+  }, [docked, assistant, g]);
+
+  const stopTalking = useCallback(() => {
+    if (dockedListener.current) dockedListener.current.stop();
+    else assistant.stopListening();
+  }, [assistant]);
+
+  // Press and hold Option+<letter> to talk. Capture phase, so it works even while focus is inside our shadow root.
+  useEffect(() => {
+    const code = `Key${g.hotkey.toUpperCase()}`;
+    let held = false;
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== code || !e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat || held) return;
+      held = true;
+      startTalking();
+    };
+    const up = (e: KeyboardEvent) => {
+      if (!held || (e.code !== code && e.key !== "Alt")) return;
+      held = false;
+      stopTalking();
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setHover(null);
+      if (panelOpen) {
+        setPanelOpen(false);
+        orbRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", down, true);
+    window.addEventListener("keyup", up, true);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keyup", up, true);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [g.hotkey, startTalking, stopTalking, panelOpen]);
+
+  // A voice buy or price question opens the panel to show its card.
+  useEffect(() => {
+    if (assistant.card) setPanelOpen(true);
+  }, [assistant.card]);
+
+  // ---- hover card ----------------------------------------------------------------------------------------------
+  useEffect(() => {
+    let frame = 0;
+    const onMove = (e: MouseEvent) => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const hit = underliner.hitTest(e.clientX, e.clientY);
+        clearTimeout(hoverTimer.current);
+        if (hit) {
+          if (hover?.symbol === hit.symbol) return;
+          hoverTimer.current = setTimeout(() => setHover({ symbol: hit.symbol, rect: hit.range.getBoundingClientRect(), range: hit.range }), HOVER_DWELL_MS);
+        } else if (hover && !pointerInCard.current && !cardPinned.current) {
+          hoverTimer.current = setTimeout(() => !pointerInCard.current && !cardPinned.current && setHover(null), HOVER_GRACE_MS);
+        }
+      });
+    };
+    // Busy sites fire scroll events without the reader scrolling (sticky headers, lazy loading). Keep the card anchored
+    // to its words; close it only once they have left the screen and the pointer is not on the card.
+    let scrollFrame = 0;
+    const onScroll = () => {
+      if (scrollFrame) return;
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = 0;
+        setHover((h) => {
+          if (!h) return h;
+          const rect = h.range.getBoundingClientRect();
+          const offscreen = rect.bottom < 0 || rect.top > window.innerHeight || (rect.width === 0 && rect.height === 0);
+          return offscreen && !pointerInCard.current && !cardPinned.current ? null : { ...h, rect };
+        });
+      });
+    };
+    document.addEventListener("mousemove", onMove, { passive: true });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(scrollFrame);
+    };
+  }, [underliner, hover]);
+
+  // ---- orb drag and click ----------------------------------------------------------------------------------------
+  const drag = useRef<{ x: number; y: number; moved: boolean; start: OrbPosition } | null>(null);
+  /** pointerup fires before click: remember a finished drag so its click doesn't also start talking. */
+  const justDragged = useRef(false);
+  const clamp = (p: OrbPosition): OrbPosition => ({
+    right: Math.min(Math.max(p.right, 4), window.innerWidth - orbTokens.hitArea - 4),
+    bottom: Math.min(Math.max(p.bottom, 4), window.innerHeight - orbTokens.hitArea - 4),
+  });
+  const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    drag.current = { x: e.clientX, y: e.clientY, moved: false, start: pos };
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.x;
+    const dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    d.moved = true;
+    setPos(clamp({ right: d.start.right - dx, bottom: d.start.bottom - dy }));
+  };
+  const onPointerUp = () => {
+    const d = drag.current;
+    drag.current = null;
+    justDragged.current = Boolean(d?.moved);
+    if (d?.moved) void orbPosition.setValue(pos);
+  };
+  const onOrbClick = () => {
+    if (justDragged.current) {
+      justDragged.current = false;
+      return;
+    }
+    if (g.mode === "docked") {
+      void browser.runtime.sendMessage({ kind: "panel:open" });
+      return;
+    }
+    if (assistant.listening) {
+      assistant.stopListening();
+      return;
+    }
+    if (panelOpen && g.orb.state === "idle") {
+      setPanelOpen(false);
+      return;
+    }
+    setOpenedByKeyboard(false);
+    startTalking();
+  };
+  const onOrbKey = (e: React.KeyboardEvent) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    setOpenedByKeyboard(true);
+    if (g.mode === "docked") void browser.runtime.sendMessage({ kind: "panel:open" });
+    else setPanelOpen((o) => !o);
+  };
+
+  const switchToDocked = () => {
+    void defaultMode.setValue("docked");
+    setPanelOpen(false);
+    void browser.runtime.sendMessage({ kind: "panel:open" });
+  };
+
+  const { closed, freshestAgeSeconds } = marketClosed(g.health);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const orbLeftHalf = vw - pos.right - orbTokens.hitArea / 2 < vw / 2;
+  const orbTopHalf = vh - pos.bottom - orbTokens.hitArea / 2 < vh / 2;
+  const beside = orbLeftHalf ? { left: vw - pos.right - orbTokens.hitArea } : { right: pos.right };
+  const panelPlacement = { ...beside, ...(orbTopHalf ? { top: vh - pos.bottom + 8 } : { bottom: pos.bottom + orbTokens.hitArea + 8 }) };
+
+  return (
+    <div className="g-layer">
+      {!docked && (
+        <>
+          {closed && !panelOpen && (
+            <div className="g-float-badge" style={{ ...beside, ...(orbTopHalf ? { top: vh - pos.bottom + 6 } : { bottom: pos.bottom + orbTokens.hitArea + 6 }) }}>
+              <WeekendBadge ageSeconds={freshestAgeSeconds} cap={g.vault?.limits.weekendCap ?? "25%"} />
+            </div>
+          )}
+
+          {panelOpen && (
+            <div className="g-panel" style={panelPlacement}>
+              <Panel
+                layout="compact"
+                assistant={assistant}
+                host={host}
+                companies={companies}
+                onRevealCompany={(s) => underliner.reveal(s)}
+                onSwitchMode={switchToDocked}
+                onClose={() => {
+                  setPanelOpen(false);
+                  assistant.setCard(null);
+                }}
+                autoFocusInput={openedByKeyboard}
+              />
+            </div>
+          )}
+
+          <button
+            ref={orbRef}
+            className="g-orb-button"
+            style={{ right: pos.right, bottom: pos.bottom }}
+            aria-label={`Glance. Press to talk, or hold Option ${g.hotkey}. ${companies.length} companies found on this page.`}
+            aria-expanded={panelOpen}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onClick={onOrbClick}
+            onKeyDown={onOrbKey}
+          >
+            <Orb state={g.orb.state} size={orbTokens.floating} markUrl={g.markUrl} />
+          </button>
+        </>
+      )}
+
+      {hover && (
+        <div
+          className="g-pop"
+          style={placeCard(hover.rect)}
+          onMouseEnter={() => {
+            pointerInCard.current = true;
+            clearTimeout(hoverTimer.current);
+          }}
+          onMouseLeave={() => {
+            pointerInCard.current = false;
+            if (!cardPinned.current) hoverTimer.current = setTimeout(() => !cardPinned.current && setHover(null), HOVER_GRACE_MS);
+          }}
+          onPointerDownCapture={() => (cardPinned.current = true)}
+          onFocusCapture={() => (cardPinned.current = true)}
+        >
+          <CompanyCard key={hover.symbol} symbol={hover.symbol} variant="hover" onClose={() => setHover(null)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Below the words if there is room, otherwise above; kept inside the viewport. */
+function placeCard(rect: DOMRect): React.CSSProperties {
+  const width = 332;
+  const gap = 8;
+  const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+  return rect.bottom + 360 < window.innerHeight ? { left, top: rect.bottom + gap } : { left, bottom: window.innerHeight - rect.top + gap };
+}

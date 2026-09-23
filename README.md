@@ -46,3 +46,10 @@ pnpm --filter api test
 the price **and** each feed's own timestamp, so the testnet market opens and closes when the real one does. It runs
 every 5 minutes on GitHub Actions, or locally with `make keeper` / `make keeper-watch`. See
 [apps/keeper/README.md](apps/keeper/README.md).
+
+## Browser extension
+
+`apps/extension` is the demo surface. A floating orb (or a docked side panel) finds companies in any article,
+underlines them without touching the page, shows live prices on hover, and buys through the vault. When a guard
+refuses a trade it shows why, as protection rather than an error. See [apps/extension/README.md](apps/extension/README.md)
+for step-by-step installation.

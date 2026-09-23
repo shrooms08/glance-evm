@@ -20,3 +20,8 @@ node_modules/
 apps/*/dist/
 *.tsbuildinfo
 coverage/
+
+# Extension build output (rebuild with `pnpm --filter extension build`)
+apps/extension/.output/
+apps/extension/.wxt/
+apps/extension/e2e/out/
