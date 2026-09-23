@@ -11,7 +11,17 @@ import { isAddress } from "../lib/settings";
 import { keyLabel } from "../lib/hotkeys";
 import { speak, stopSpeaking } from "../lib/voice";
 import { startVoice, type VoiceSession } from "../lib/voiceClient";
-import { detectBrowser, reasonFor, type VoiceCode } from "../lib/voiceReasons";
+import { detectBrowser, failureKind, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
+
+/** The short label under the reason, so the five kinds of failure are told apart at a glance. */
+const KIND_META: Record<VoiceFailureKind, string> = {
+  "no-service": "No speech service · you can type instead",
+  "mic-denied": "Microphone not allowed · you can type instead",
+  "no-mic": "No microphone found · you can type instead",
+  "no-speech": "No speech heard",
+  aborted: "Listening was interrupted",
+  other: "Voice stopped · you can type instead",
+};
 import { useGlance } from "./context";
 
 const browserInfo = detectBrowser(navigator as unknown as Parameters<typeof detectBrowser>[0]);
@@ -92,8 +102,8 @@ export function useAssistant() {
   const voiceFailed = useCallback(
     (code: VoiceCode) => {
       const line = voiceReason(code);
-      if (import.meta.env.DEV) console.info(`[glance] voice error "${code}" in ${browserInfo.name} ${browserInfo.version}`);
-      g.setOrb({ state: "idle", line, meta: "You can type instead" });
+      if (import.meta.env.DEV) console.info(`[glance] voice error "${code}" (${failureKind(code)}) in ${browserInfo.name} ${browserInfo.version}`);
+      g.setOrb({ state: "idle", line, meta: KIND_META[failureKind(code)] });
     },
     [g],
   );
@@ -120,7 +130,7 @@ export function useAssistant() {
         setListening(false);
         if (failed) return;
         if (finalText) void run(finalText);
-        else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: `Hold ${keyLabel(g.voiceKey)} while you speak` });
+        else g.setOrb({ state: "idle", line: `I didn't hear anything. Hold ${keyLabel(g.voiceKey)} while you speak, then let go.`, meta: KIND_META["no-speech"] });
       },
     });
   }, [g, run, voiceFailed]);

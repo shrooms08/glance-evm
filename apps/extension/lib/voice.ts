@@ -40,7 +40,13 @@ export interface ListenHandlers {
   onEnd?(): void;
 }
 
-/** Starts listening in this context. Returns null (after onError) if recognition is unavailable here. */
+/**
+ * Starts listening in this context. Returns null (after onError) if recognition is unavailable here.
+ * It never ends silently: every way it can stop maps to onFinal (words, possibly none) or onError with a code:
+ *   the browser's own codes (network, not-allowed, audio-capture, no-speech, aborted, ...), plus
+ *   "ended-before-start"  the browser ended recognition before it ever started (typically: no speech service)
+ *   "ended-early"         it started, then ended on its own with nothing heard and nobody asking it to stop
+ */
 export function listen(lang: string, h: ListenHandlers): Listener | null {
   const Ctor = ctor();
   if (!Ctor) {
@@ -55,20 +61,34 @@ export function listen(lang: string, h: ListenHandlers): Listener | null {
   r.maxAlternatives = 1;
   let text = "";
   let failed = false;
-  r.onstart = () => h.onStart?.();
+  let started = false;
+  let heard = false;
+  /** Who ended it: us (the key was released, or the caller gave up), or the browser on its own. */
+  let asked: "stop" | "abort" | null = null;
+  r.onstart = () => {
+    started = true;
+    h.onStart?.();
+  };
   r.onresult = (e) => {
     let out = "";
     for (let i = 0; i < e.results.length; i++) out += e.results[i]![0]!.transcript;
     text = out.trim();
+    heard = heard || text.length > 0;
     h.onInterim(text);
   };
   r.onerror = (e) => {
-    if (e.error === "aborted") return;
+    if (import.meta.env.DEV) console.info(`[glance] SpeechRecognition error "${e.error}"`, e);
+    // Our own abort is not a failure; anything else, including an abort we didn't ask for, is.
+    if (e.error === "aborted" && asked === "abort") return;
     failed = true;
     h.onError(e.error);
   };
   r.onend = () => {
-    if (!failed) h.onFinal(text);
+    if (!failed) {
+      if (!started && !asked) h.onError("ended-before-start");
+      else if (started && !heard && !asked) h.onError("ended-early");
+      else h.onFinal(text);
+    }
     h.onEnd?.();
   };
   try {
@@ -78,7 +98,16 @@ export function listen(lang: string, h: ListenHandlers): Listener | null {
     h.onEnd?.();
     return null;
   }
-  return { stop: () => r.stop(), abort: () => r.abort() };
+  return {
+    stop: () => {
+      asked ??= "stop";
+      r.stop();
+    },
+    abort: () => {
+      asked = "abort";
+      r.abort();
+    },
+  };
 }
 
 export interface SpeakHandlers {

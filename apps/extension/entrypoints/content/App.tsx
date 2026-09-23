@@ -11,6 +11,7 @@ import { browser } from "wxt/browser";
 import { CompanyCard, WeekendBadge } from "../../components/CompanyCard";
 import { GlanceProvider, marketClosed, useGlance } from "../../components/context";
 import { Orb } from "../../components/Orb";
+import { DockTransition } from "../../components/DockTransition";
 import { GooPanel, orbDisc } from "../../components/GooPanel";
 import { Panel, type PageCompany } from "../../components/Panel";
 import { useAssistant } from "../../components/useAssistant";
@@ -56,6 +57,11 @@ function Floating({ underliner }: { underliner: Underliner }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [openedByKeyboard, setOpenedByKeyboard] = useState(false);
   const [docked, setDocked] = useState(false);
+  /** The float <-> dock movement in progress, if any (components/DockTransition.tsx). */
+  const [dockAnim, setDockAnim] = useState<null | "dock" | "undock">(null);
+  const wasDocked = useRef(false);
+  /** Docking closes the floating panel at once: the orb drains away instead of absorbing it. */
+  const [dockSkipClose, setDockSkipClose] = useState(false);
   const [pos, setPos] = useState<OrbPosition>({ right: 24, bottom: 24 });
   const [hover, setHover] = useState<{ symbol: string; rect: DOMRect; range: Range } | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -88,9 +94,20 @@ function Floating({ underliner }: { underliner: Underliner }) {
 
   // Docked state: ask once, then follow the background's broadcasts. Answer the side panel's questions.
   useEffect(() => {
-    void send({ kind: "panel:isOpen" }).then((open) => setDocked(Boolean(open))).catch(() => {});
+    void send({ kind: "panel:isOpen" })
+      .then((open) => {
+        wasDocked.current = Boolean(open);
+        setDocked(Boolean(open));
+      })
+      .catch(() => {});
     const onMessage = (msg: Message): Promise<PageMatchesReply> | undefined => {
-      if (msg.kind === "panel:changed") setDocked(msg.open);
+      if (msg.kind === "panel:changed") {
+        // The side panel just closed on a page that was docked: the orb flows back in from that edge.
+        if (!msg.open && wasDocked.current) setDockAnim("undock");
+        if (msg.open) setDockAnim((a) => (a === "undock" ? null : a));
+        wasDocked.current = msg.open;
+        setDocked(msg.open);
+      }
       if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
       if (msg.kind === "page:scan") return underliner.scan().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
@@ -255,11 +272,25 @@ function Floating({ underliner }: { underliner: Underliner }) {
     orbMotion.release(fresh ? Math.hypot(d.vx, d.vy) : 0);
     void safely(() => orbPosition.setValue(pos), Promise.resolve());
   };
+  /**
+   * Docking: the orb drains off toward the window edge, and the side panel is requested as the liquid starts leaving
+   * the screen (onPanelCue), so it appears just as the liquid goes. Chrome only opens a side panel from a user gesture;
+   * the click's activation lasts seconds, and the cue comes about a quarter of a second after it.
+   */
   const switchToDocked = () => {
     void safely(() => defaultMode.setValue("docked"), Promise.resolve());
+    setDockSkipClose(true);
     setPanelOpen(false);
-    // Must stay inside the click's user gesture: the background opens the side panel synchronously.
-    void send({ kind: "panel:open" }).catch(() => {});
+    setDockAnim("dock");
+  };
+  /** Chrome refused the side panel (no user gesture left, or no side panel support): the orb flows back instead. */
+  const panelRefused = useRef(false);
+  const requestSidePanel = () => {
+    panelRefused.current = false;
+    void send<boolean>({ kind: "panel:open" }).then(
+      (ok) => (panelRefused.current = ok === false),
+      () => (panelRefused.current = true),
+    );
   };
   /** Clicking the orb docks Glance to the side panel. */
   const onOrbClick = () => {
@@ -289,6 +320,27 @@ function Floating({ underliner }: { underliner: Underliner }) {
 
   return (
     <div className="g-layer">
+      {dockAnim && (
+        <DockTransition
+          key={dockAnim}
+          kind={dockAnim}
+          orb={orbDisc(pos, vw, vh)}
+          onPanelCue={requestSidePanel}
+          onDone={() => {
+            const finished = dockAnim;
+            setDockSkipClose(false);
+            if (finished === "dock" && panelRefused.current) {
+              panelRefused.current = false;
+              void safely(() => defaultMode.setValue("floating"), Promise.resolve());
+              setDockAnim("undock");
+              return;
+            }
+            setDockAnim(null);
+            // The droplet has reformed into the orb: it settles with the same small wobble as absorbing the panel.
+            if (finished === "undock") orbMotion.absorb();
+          }}
+        />
+      )}
       {!docked && (
         <>
           {closed && !panelOpen && (
@@ -297,7 +349,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
             </div>
           )}
 
-          <GooPanel open={panelOpen} orb={orbDisc(pos, vw, vh)} placement={panelPlacement} onAbsorbed={orbMotion.absorb}>
+          <GooPanel open={panelOpen} orb={orbDisc(pos, vw, vh)} placement={panelPlacement} onAbsorbed={orbMotion.absorb} skipClose={dockSkipClose}>
             <Panel
               layout="compact"
               assistant={assistant}
@@ -315,7 +367,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
 
           <button
             ref={orbRef}
-            className="g-orb-button"
+            className={`g-orb-button${dockAnim ? " is-hidden" : ""}`}
             data-breathe={orbMotion.breathe || undefined}
             style={{ right: pos.right, bottom: pos.bottom }}
             aria-label={`Glance: ${companies.length} companies found on this page. Click to dock to the side panel. Tap Option ${g.glanceKey} to glance, hold Option ${g.voiceKey} to talk.`}

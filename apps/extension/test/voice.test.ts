@@ -175,7 +175,7 @@ describe("startVoice from a web page (offscreen relay)", () => {
     const s = startVoice({ onInterim: () => {}, onFinal: () => {}, onError: (c) => got.push(c), onEnd: () => got.push("end") });
     s.stop();
     vi.advanceTimersByTime(STOP_TIMEOUT_MS);
-    expect(got).toEqual(["network", "end"]);
+    expect(got).toEqual(["stop-timeout", "end"]);
     expect(sent.map((m) => m.kind)).toEqual(["voice:start", "voice:stop", "voice:abort"]);
     vi.useRealTimers();
   });

@@ -78,23 +78,40 @@ export const motion = {
  * card, or hover cards, and not at all under prefers-reduced-motion.
  */
 export const spring = {
-  /** Open: the liquid grows out of the orb and overshoots the panel's size once, before any text is shown. */
-  panelOpen: { response: 0.26, damping: 0.72 },
-  /** Open and close: the liquid letting go of the orb, or reaching back to it. Never bounces. */
-  panelSettle: { response: 0.18, damping: 1 },
+  /** Open: the liquid grows out of the orb and overshoots the panel's size once (~9.5%), before any text is shown. */
+  panelOpen: { response: 0.32, damping: 0.6 },
+  /** Open: the panel's edge letting go of the orb. Never bounces. */
+  panelSettle: { response: 0.2, damping: 1 },
+  /** Close: the liquid reaching back to the orb and draining into it. Never bounces. */
+  panelClose: { response: 0.18, damping: 1 },
+  /** Open: how slowly the neck between orb and panel thins after the panel lets go (it outlasts the panel's edge). */
+  panelNeck: { response: 0.5, damping: 1 },
   /** Close: the orb swells by `kick` (a scale fraction) as it absorbs the panel, then wobbles back to size. */
-  orbAbsorb: { response: 0.32, damping: 0.55, kick: 0.05 },
+  orbAbsorb: { response: 0.34, damping: 0.5, kick: 0.07 },
   /** Drag: how far the orb lags behind the cursor. Critically damped: it catches up without passing it. */
   dragFollow: { response: 0.12, damping: 1 },
   /** Drag release: one jiggle, scaled by release speed (px/s x perSpeed), never more than `maxKick`. */
   dragRelease: { response: 0.26, damping: 0.5, perSpeed: 0.00003, maxKick: 0.04 },
   /** Blocked: a short horizontal shake, starting `kick` px to the side. */
   blockedShake: { response: 0.14, damping: 0.35, kick: 4 },
-  /** A spring counts as settled within `distance` of its travel, moving slower than `speed` travels per second. */
-  settle: { distance: 0.01, speed: 0.5 },
+  /** Dock: the orb stretches toward the window edge (`dockStretch`), then drains off-screen (`dockDrain`). */
+  dockStretch: { response: 0.26, damping: 1 },
+  dockDrain: { response: 0.42, damping: 1 },
+  /** Undock: a droplet travels in from the edge (`undockTravel`, one small overshoot), then reforms (`undockReform`). */
+  undockTravel: { response: 0.4, damping: 0.75 },
+  undockReform: { response: 0.26, damping: 1 },
+  /**
+   * When a spring counts as done. `distance` and `speed` are fractions of its travel (per second for speed). A leg
+   * that hands straight over to another (the stretch before the panel lets go) may do so at `handoff`, still moving,
+   * so the motion flows; only the final leg settles fully, and only then does text appear.
+   */
+  settle: { distance: 0.01, speed: 0.5, handoff: 0.03 },
   /** Hard cap on any one spring. If a spring would fight the goo filter or the frame rate, the shape wins: it snaps. */
-  maxMs: 520,
+  maxMs: 700,
 } as const;
+
+/** Liquid geometry. `neckWidth` is the neck's width as a fraction of the orb; `dockNeck` the strand's height in px. */
+export const goo = { neckWidth: 0.55, dockNeck: 16, blurFull: 12, blurLite: 7 } as const;
 
 /** Idle: a slow breath so the orb never looks frozen. Noticeable only if you stare. Dropped first on slow pages. */
 export const breathe = { period: "7s", scale: 1.012 } as const;

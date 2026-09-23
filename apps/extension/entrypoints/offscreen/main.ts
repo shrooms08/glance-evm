@@ -13,6 +13,8 @@ import { voiceBlocker } from "../../lib/voiceDiagnostics";
 import type { OffscreenRequest, VoiceEvent } from "../../lib/voiceMessages";
 
 const sessions = new Map<string, Listener>();
+/** A stop or abort that arrived while the session was still starting (checking the microphone): applied once it has. */
+const pending = new Map<string, "stop" | "abort">();
 const seqs = new Map<string, number>();
 
 type EventBody = VoiceEvent extends infer E ? (E extends VoiceEvent ? Omit<E, "kind" | "session" | "seq"> : never) : never;
@@ -26,7 +28,13 @@ function emit(session: string, body: EventBody) {
 async function start(session: string, lang: string) {
   const blocker = await voiceBlocker();
   if (blocker) {
+    pending.delete(session);
     emit(session, { type: "error", code: blocker });
+    emit(session, { type: "end" });
+    return;
+  }
+  if (pending.get(session) === "abort") {
+    pending.delete(session);
     emit(session, { type: "end" });
     return;
   }
@@ -42,11 +50,21 @@ async function start(session: string, lang: string) {
     },
   });
   if (l) sessions.set(session, l);
+  // Released before recognition started: stop as soon as it has, and report what (little) was heard.
+  if (l && pending.get(session) === "stop") l.stop();
+  pending.delete(session);
 }
 
 browser.runtime.onMessage.addListener((msg: OffscreenRequest) => {
   if (msg.kind === "offscreen:start") void start(msg.session, msg.lang);
-  else if (msg.kind === "offscreen:stop") sessions.get(msg.session)?.stop();
-  else if (msg.kind === "offscreen:abort") sessions.get(msg.session)?.abort();
+  else if (msg.kind === "offscreen:stop") {
+    const l = sessions.get(msg.session);
+    if (l) l.stop();
+    else pending.set(msg.session, "stop");
+  } else if (msg.kind === "offscreen:abort") {
+    const l = sessions.get(msg.session);
+    if (l) l.abort();
+    else pending.set(msg.session, "abort");
+  }
   return undefined;
 });

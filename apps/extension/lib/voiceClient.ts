@@ -28,6 +28,10 @@ export interface VoiceSession {
 
 /** How long after a stop we wait for the recognizer's final result before giving up on it. */
 export const STOP_TIMEOUT_MS = 5_000;
+/** How long we wait for recognition to start (or fail) before giving up on it. */
+export const START_TIMEOUT_MS = 6_000;
+/** A hold longer than this is a stuck key, not speech: stop and send what was heard. */
+export const MAX_LISTEN_MS = 60_000;
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
 
@@ -38,7 +42,69 @@ export function inExtensionPage(): boolean {
 
 /** `via: "offscreen"` forces the in-page path from an extension page (settings uses it to test that path). */
 export function startVoice(h: VoiceHandlers, opts: { via?: "offscreen" } = {}): VoiceSession {
-  return inExtensionPage() && opts.via !== "offscreen" ? startLocal(h) : startRemote(h);
+  const guard = guarded(h);
+  const inner = inExtensionPage() && opts.via !== "offscreen" ? startLocal(guard.handlers) : startRemote(guard.handlers);
+  return guard.attach(inner);
+}
+
+/**
+ * Makes a session impossible to leave hanging, whatever the browser does: onEnd fires exactly once, and every way of
+ * ending without words carries a reason. If recognition never starts, never answers a stop, or runs on forever, the
+ * session is ended here with a code the panel can explain ("no-start", "stop-timeout").
+ */
+function guarded(h: VoiceHandlers) {
+  let ended = false;
+  let errored = false;
+  let started = false;
+  let inner: VoiceSession | null = null;
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    timers.forEach(clearTimeout);
+    h.onEnd?.();
+  };
+  const fail = (code: VoiceCode) => {
+    if (ended || errored) return;
+    errored = true;
+    h.onError(code);
+  };
+  const giveUp = (code: VoiceCode) => {
+    if (ended) return;
+    fail(code); // the reason first: aborting the inner session ends it
+    inner?.abort();
+    end();
+  };
+  const handlers: VoiceHandlers = {
+    onStart: () => {
+      started = true;
+      if (!ended) h.onStart?.();
+    },
+    onInterim: (t) => !ended && h.onInterim(t),
+    onFinal: (t) => !ended && !errored && h.onFinal(t),
+    onError: fail,
+    onEnd: end,
+  };
+  timers.push(setTimeout(() => !started && giveUp("no-start"), START_TIMEOUT_MS));
+  timers.push(setTimeout(() => inner?.stop(), MAX_LISTEN_MS));
+  return {
+    handlers,
+    attach(session: VoiceSession): VoiceSession {
+      inner = session;
+      return {
+        stop: () => {
+          if (ended) return;
+          session.stop();
+          timers.push(setTimeout(() => giveUp("stop-timeout"), STOP_TIMEOUT_MS));
+        },
+        abort: () => {
+          if (ended) return;
+          session.abort();
+          end();
+        },
+      };
+    },
+  };
 }
 
 function startLocal(h: VoiceHandlers): VoiceSession {
@@ -113,16 +179,7 @@ function startRemote(h: VoiceHandlers): VoiceSession {
 
   const send = (kind: "voice:stop" | "voice:abort") => void sendSafe({ kind, session } satisfies VoiceRequest).catch(() => {});
   return {
-    stop: () => {
-      send("voice:stop");
-      // If the speech service never answers the stop (it can hang when unreachable), don't leave the orb listening.
-      setTimeout(() => {
-        if (ended) return;
-        send("voice:abort");
-        h.onError("network");
-        finish();
-      }, STOP_TIMEOUT_MS);
-    },
+    stop: () => send("voice:stop"),
     abort: () => {
       send("voice:abort");
       finish();

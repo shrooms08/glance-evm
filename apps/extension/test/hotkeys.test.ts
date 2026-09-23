@@ -65,6 +65,20 @@ describe("glanceLine", () => {
   });
 });
 
+describe("macOS Option combinations", () => {
+  // On a Mac, Option+V types "√" and Option+G types "©": `key` is the symbol, `code` is still the physical key.
+  it("match on code, whatever character Option produces", () => {
+    expect(hotkeyDown(key("KeyV", { key: "√" }), KEYS)).toBe("voice");
+    expect(hotkeyDown(key("KeyG", { key: "©" }), KEYS)).toBe("glance");
+    expect(hotkeyDown(key("KeyX", { key: "v" }), KEYS)).toBeNull(); // a "v" character on another key is not ours
+  });
+  it("releasing Option ends the hold on any layout", () => {
+    expect(endsVoiceHold({ code: "AltRight", key: "AltGraph" }, KEYS)).toBe(true);
+    expect(endsVoiceHold({ code: "KeyV", key: "√" }, KEYS)).toBe(true);
+    expect(endsVoiceHold({ code: "KeyV", key: "v" }, KEYS)).toBe(true);
+  });
+});
+
 describe("useHotkeys", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   let cleanup = () => {};
@@ -109,6 +123,25 @@ describe("useHotkeys", () => {
     expect(calls).toEqual(["voice:start", "voice:end"]);
   });
 
+  it("a macOS-style hold: Option down, V ('√') down with repeats, V up, Option up: one start, one end", () => {
+    const { calls } = mount();
+    press("keydown", "AltLeft", { key: "Alt" });
+    press("keydown", "KeyV", { key: "√" });
+    press("keydown", "KeyV", { key: "√", repeat: true });
+    press("keydown", "KeyV", { key: "√", repeat: true });
+    press("keyup", "KeyV", { key: "√", altKey: true });
+    press("keyup", "AltLeft", { key: "Alt", altKey: false });
+    expect(calls).toEqual(["voice:start", "voice:end"]);
+  });
+
+  it("a macOS-style tap of Option+G ('©') glances once and never listens", () => {
+    const { calls } = mount();
+    press("keydown", "KeyG", { key: "©" });
+    press("keyup", "KeyG", { key: "©", altKey: true });
+    press("keyup", "AltLeft", { key: "Alt", altKey: false });
+    expect(calls).toEqual(["glance0"]);
+  });
+
   it("releasing Option first also sends", () => {
     const { calls } = mount();
     press("keydown", "KeyV");
@@ -116,11 +149,26 @@ describe("useHotkeys", () => {
     expect(calls).toEqual(["voice:start", "voice:end"]);
   });
 
-  it("switching windows mid-hold counts as a release", () => {
+  it("a window blur does not end the hold (starting the mic can blur the page)", () => {
     const { calls } = mount();
-    press("keydown", "KeyV");
+    press("keydown", "KeyV", { key: "√" });
     act(() => {
       window.dispatchEvent(new Event("blur"));
+    });
+    expect(calls).toEqual(["voice:start"]);
+    press("keyup", "KeyV", { key: "√", altKey: true });
+    expect(calls).toEqual(["voice:start", "voice:end"]);
+  });
+
+  it("if Option was let go while the page had no focus, the next pointer event without it ends the hold", () => {
+    const { calls } = mount();
+    press("keydown", "KeyV", { key: "√" });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { altKey: true }));
+    });
+    expect(calls).toEqual(["voice:start"]);
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { altKey: false }));
     });
     expect(calls).toEqual(["voice:start", "voice:end"]);
   });

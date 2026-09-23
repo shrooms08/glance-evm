@@ -64,7 +64,40 @@ export type VoiceCode =
   | "no-speech"
   | "language-not-supported"
   | "aborted"
+  | "ended-before-start" // the browser ended recognition before it started (typically: no speech service)
+  | "ended-early" // it started, then stopped on its own with nothing heard
+  | "no-start" // recognition never started within START_TIMEOUT_MS
+  | "stop-timeout" // it never answered a stop within STOP_TIMEOUT_MS
   | string;
+
+/** The five kinds of failure the panel distinguishes (plus "other"). */
+export type VoiceFailureKind = "no-service" | "mic-denied" | "no-mic" | "no-speech" | "aborted" | "other";
+
+export function failureKind(code: VoiceCode): VoiceFailureKind {
+  switch (code) {
+    case "no-recognition":
+    case "network":
+    case "service-not-allowed":
+    case "ended-before-start":
+    case "ended-early":
+    case "no-start":
+    case "language-not-supported":
+      return "no-service";
+    case "mic-denied":
+    case "not-allowed":
+    case "mic-not-enabled":
+      return "mic-denied";
+    case "no-mic":
+    case "audio-capture":
+      return "no-mic";
+    case "no-speech":
+      return "no-speech";
+    case "aborted":
+      return "aborted";
+    default:
+      return "other";
+  }
+}
 
 export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
   const isGoogleChrome = browser.name === "Google Chrome";
@@ -80,6 +113,14 @@ export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
     case "no-mic":
     case "audio-capture":
       return "I can't find a microphone. Plug one in, or type instead.";
+    case "ended-before-start":
+    case "ended-early":
+    case "no-start":
+      if (browser.name === "Brave") return "Brave stopped listening straight away: it has no speech service. Type instead, or use Google Chrome for voice.";
+      if (!isGoogleChrome) return `This ${browser.name === "Other" ? "browser" : `${browser.name} build`} stopped listening straight away: it has no speech service. Google Chrome has it. Type instead.`;
+      return code === "no-start"
+        ? "Chrome's speech service didn't start. Check your connection and try again, or type instead."
+        : "Chrome stopped listening straight away. Try again, or type instead.";
     case "network":
     case "service-not-allowed":
       if (browser.name === "Brave") return "Brave blocks the speech service. Type instead, or use Google Chrome for voice.";
@@ -89,6 +130,10 @@ export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
       return "I didn't hear anything. Hold the key and speak, or type instead.";
     case "language-not-supported":
       return "Speech recognition doesn't support your browser's language. Type instead.";
+    case "aborted":
+      return "Listening was cut off before I heard you. Hold the voice key while you speak, or type instead.";
+    case "stop-timeout":
+      return "Voice didn't answer after you let go. Try again, or type instead.";
     case "offscreen-failed":
       return "Glance couldn't start its voice helper. Reload the extension, or type instead.";
     default:

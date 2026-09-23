@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GooPanel, orbDisc, stretch, tooSlow } from "../components/GooPanel";
 import { reportFrames, resetMotionBudgetForTests } from "../lib/motionBudget";
-import { motion, orb } from "../lib/tokens";
+import { goo, motion, orb } from "../lib/tokens";
 
 describe("frame budget", () => {
   it("keeps full quality at 60fps and drops it when frames are long", () => {
@@ -118,9 +118,9 @@ describe("GooPanel", () => {
     expect(shadow.getElementById(id)?.tagName.toLowerCase()).toBe("filter");
     expect(document.getElementById(id)).toBeNull();
 
-    // Only the two empty liquid shapes are filtered; the panel's content is outside the stage.
+    // Only the three empty liquid shapes (orb, neck, box) are filtered; the panel's content is outside the stage.
     const blobs = stage()!.querySelectorAll(".g-goo-blob");
-    expect(blobs).toHaveLength(2);
+    expect(blobs).toHaveLength(3);
     blobs.forEach((b) => expect(b.childElementCount + (b.textContent ?? "").length).toBe(0));
     expect(stage()!.contains(shadow.querySelector(".g-figure"))).toBe(false);
     expect(stage()!.contains(shadow.querySelector("button"))).toBe(false);
@@ -135,11 +135,11 @@ describe("GooPanel", () => {
     const shown = frames.filter((f) => f.text);
     expect(shown.length).toBeGreaterThan(0);
 
-    // A visible but small overshoot of the stretched height, while the text is hidden.
+    // A clearly visible overshoot of the stretched height (5-12% of the travel), while the text is hidden.
     const peak = Math.max(...hidden.map((f) => f.h));
     const travel = STRETCH_H - orb.floating;
-    expect(peak).toBeGreaterThan(STRETCH_H + 1);
-    expect(peak - STRETCH_H).toBeLessThan(travel * 0.08);
+    expect(peak - STRETCH_H).toBeGreaterThan(travel * 0.05);
+    expect(peak - STRETCH_H).toBeLessThan(travel * 0.12);
 
     // One bounce at most: the height crosses its target at most twice (out past it, and back).
     const growth = hidden.filter((f) => f.h > orb.floating + 1).map((f) => Math.sign(f.h - STRETCH_H));
@@ -175,15 +175,65 @@ describe("GooPanel", () => {
     expect(onAbsorbed).toHaveBeenCalledTimes(1);
   });
 
-  it("on a page that drops frames, the open loses its overshoot, not its shape", () => {
-    reportFrames(Array(20).fill(40));
-    reportFrames(Array(20).fill(40));
+  it("on a page that drops frames, the filter gets cheaper but the motion stays the same", () => {
     render(false);
     render(true);
-    const frames = film(1_500);
-    expect(Math.max(...frames.map((f) => f.h))).toBeLessThanOrEqual(STRETCH_H + 0.5);
-    expect(stage()).toBeNull();
-    expect(panel()!.dataset.phase).toBe("open");
+    const full = film(1_500);
+    render(false);
+    film(1_500);
+    reportFrames(Array(20).fill(40));
+    reportFrames(Array(20).fill(40));
+    render(true);
+    advance(32);
+    expect(stage()!.dataset.gooQuality).toBe("lite");
+    expect(stage()!.querySelector("feGaussianBlur")!.getAttribute("stdDeviation")).toBe(String(goo.blurLite));
+    const lite = [{ w: 0, h: 0, text: false }, { w: 0, h: 0, text: false }, ...film(1_468)];
+    // Same overshoot, same timing: frame for frame.
+    expect(Math.max(...lite.map((f) => f.h))).toBeCloseTo(Math.max(...full.map((f) => f.h)), 0);
+    expect(lite.findIndex((f) => f.text)).toBe(full.findIndex((f) => f.text));
+  });
+
+  it("reads at screen-recording speed: open ~650ms until the text is in, close ~500ms until the orb absorbs it", () => {
+    render(false);
+    render(true);
+    let t = 0;
+    while (!panel()!.classList.contains("is-shown") && t < 2_000) {
+      advance(16);
+      t += 16;
+    }
+    const open = t + parseFloat(motion.quick); // plus the text's fade
+    film(1_000);
+    onAbsorbed.mockClear();
+    render(false);
+    let c = 0;
+    while (onAbsorbed.mock.calls.length === 0 && c < 2_000) {
+      advance(16);
+      c += 16;
+    }
+    console.info(`[timing] open ${open}ms, close ${c}ms`);
+    expect(open).toBeGreaterThanOrEqual(550);
+    expect(open).toBeLessThanOrEqual(800);
+    expect(c).toBeGreaterThanOrEqual(400);
+    expect(c).toBeLessThanOrEqual(650);
+  });
+
+  it("the neck stretches between orb and panel, and thins after the panel lets go", () => {
+    render(false);
+    render(true);
+    const necks: Array<{ w: number; h: number }> = [];
+    for (let t = 0; t < 1_500; t += 16) {
+      advance(16);
+      const n = stage()?.querySelector<HTMLElement>(".g-goo-neck");
+      if (n) necks.push({ w: parseFloat(n.style.width), h: parseFloat(morph()!.style.height) });
+    }
+    const widest = Math.max(...necks.map((n) => n.w));
+    expect(widest).toBeGreaterThan(orb.floating * goo.neckWidth * 0.8);
+    // The neck lags the panel letting go: with the panel's edge already more than halfway back from the orb, the neck
+    // is still a thick strand (the filter erases strands thinner than about its blur). One substance stretching.
+    const halfway = (STRETCH_H + PANEL.height) / 2;
+    const letGo = necks.findIndex((n, i) => i > 0 && n.h < necks[i - 1]!.h - 0.5 && n.h < STRETCH_H);
+    expect(necks.slice(letGo).some((n) => n.h < halfway && n.w > goo.blurFull)).toBe(true);
+    expect(necks.at(-1)!.w).toBeLessThan(1);
   });
 
   it("with reduced motion, fades with no liquid and no spring", () => {

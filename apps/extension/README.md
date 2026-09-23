@@ -82,8 +82,10 @@ Close the banner.
   are cut to 25%.
 - **Floating or docked.** The orb floats on every page and can be dragged anywhere; it remembers where you put it.
   Its panel melts out of the orb when it opens and flows back into it when it closes. **Click the orb** to dock Glance
-  in the browser's side panel instead (or choose "Dock to the side panel" in the panel). While docked, the orb
-  disappears from pages so it never covers a site's own buttons, and both keys still work.
+  in the browser's side panel instead (or choose "Dock to the side panel" in the panel): the orb pours off toward the
+  window's edge and the side panel opens as it leaves. Close the side panel and a droplet flows back in from that
+  edge and becomes the orb again. While docked, the orb disappears from pages so it never covers a site's own
+  buttons, and both keys still work.
 
 ## Good to know
 
@@ -130,11 +132,15 @@ How it's built:
   failure maps to one sentence in `lib/voiceReasons.ts`. In development builds the console logs
   `[glance] voice: running in <browser> <version>`.
 - **Gooey open and close:** `components/GooPanel.tsx`, built on [liquid-gooey](https://libraries.dev/gooey) (MIT).
-  Only two empty shapes (a disc under the orb and a box that grows to the panel's footprint) are filtered; the panel's
-  text, prices and buttons sit on top, unfiltered, and fade in once the liquid has its shape. The SVG filter renders
-  inside our shadow root, and the liquid layer is removed as soon as the motion ends. Timings are the design tokens
-  `motion.panel` (180ms) and `motion.quick` (120ms). If a page drops frames on two opens in a row, Glance lowers the
-  filter quality (smaller blur, no shadow) rather than the animation.
+  Only empty shapes are filtered (a disc under the orb, a box that grows to the panel's footprint, and the neck
+  between them); the panel's text, prices and buttons sit on top, unfiltered, and fade in only once the box has
+  settled. The SVG filter renders inside our shadow root, and the liquid layer is removed as soon as the motion ends.
+  The shapes move on the springs below; the text fade is `motion.quick` (120ms). If a page drops frames on two opens
+  in a row, Glance lowers the filter quality (smaller blur, no shadow), never the timing.
+- **Docking:** `components/DockTransition.tsx`. The side panel is browser chrome and can't be animated, so the page
+  animates around it: the side panel is requested as the drain begins, and the droplet starts as the panel closes.
+  Chrome opens its side panel on the right by default and a page can't ask which side it is on, so the liquid uses the
+  right edge. If Chrome refuses to open the panel, the orb flows straight back.
 - **Surviving reloads:** `lib/lifecycle.ts` and `lib/pageLifecycle.ts`. Every extension call from the page goes through
   `send()` or `safely()`; a port to the background and a `runtime.id` check notice a reload within moments. The page
   UI then shuts down once (UI removed, listeners gone, underlines cleared) and shows the refresh notice. The expected
@@ -194,4 +200,8 @@ Voice can't be fully tested headlessly (no real microphone or Google speech serv
 - [ ] In Brave (optional): "Brave turns off speech recognition. Type instead, or use Google Chrome for voice."
 - [ ] Turn off Wi-Fi and talk in Chrome: "Chrome couldn't reach its speech service. Check your connection, or type
       instead."
-- [ ] Hold the key and say nothing: "I didn't hear anything."
+- [ ] Hold the key and say nothing: "I didn't hear anything. Hold ⌥ V while you speak, then let go." (No speech heard)
+- [ ] Tap Option+V quickly (release before it starts): the orb goes back to idle with the same sentence; it never
+      stays stuck on listening.
+- [ ] Under the reason, a short label names the kind: No speech service, Microphone not allowed, No microphone found,
+      No speech heard, or Listening was interrupted. In a dev build the console logs the raw SpeechRecognition error.

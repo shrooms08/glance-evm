@@ -67,6 +67,10 @@ const components = /* css */ `
 }
 .g-orb-button:active { cursor: grabbing; }
 .g-orb-button, .g-orb-motion { will-change: transform; }
+.g-orb-button { transition: opacity var(--g-quick) linear; }
+/* While docking or undocking, the liquid stands in for the orb. Under reduced motion this is the whole animation. */
+.g-orb-button.is-hidden { opacity: 0; pointer-events: none; }
+.g-dock-strand { border-radius: 999px; }
 .g-orb-motion { display: inline-flex; }
 .g-float-badge { position: fixed; pointer-events: auto; }
 
@@ -177,7 +181,7 @@ const components = /* css */ `
 .g-name:hover, .g-name:focus-visible { background: var(--g-raised); }
 
 @media (prefers-reduced-motion: reduce) {
-  .g-root *:not(.g-panel-reduced), .g-root *::before, .g-root *::after { animation: none !important; transition: none !important; }
+  .g-root *:not(.g-panel-reduced):not(.g-orb-button), .g-root *::before, .g-root *::after { animation: none !important; transition: none !important; }
   .g-orb-pulse { opacity: .5; transform: scale(1.25); }
 }
 `;

@@ -35,9 +35,12 @@ export function hotkeyDown(e: KeyLike, keys: HotkeyLetters): "glance" | "voice" 
   return null;
 }
 
-/** Whether a keyup ends a voice hold: releasing the letter or Option, whichever comes first. */
+/**
+ * Whether a keyup ends a voice hold: releasing the letter or Option, whichever comes first. Matched on `code`; `key`
+ * is only trusted for Option itself ("Alt", or "AltGraph" on some layouts), since Option+V types "√" on a Mac.
+ */
 export function endsVoiceHold(e: Pick<KeyLike, "code" | "key">, keys: HotkeyLetters): boolean {
-  return e.code === codeFor(keys.voice) || e.key === "Alt";
+  return e.code === codeFor(keys.voice) || e.code === "AltLeft" || e.code === "AltRight" || e.key === "Alt" || e.key === "AltGraph";
 }
 
 /** Settings validation: one letter each, and not the same letter. */
