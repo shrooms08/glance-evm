@@ -1,33 +1,39 @@
-/** Float <-> dock as one movement: the orb drains off the edge before the side panel appears, and flows back after. */
+/** Beat 2 of float <-> dock: the orb pours off to the edge (or flows back) as one staggered, library-driven mass. */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DockTransition, dockLegs, dockStart } from "../components/DockTransition";
+import { DockTransition, dockPieces, panelCueMs } from "../components/DockTransition";
 import { orbDisc } from "../components/GooPanel";
-import { goo, spring } from "../lib/tokens";
+import { readPose } from "../components/liquid";
+import { liquid } from "../lib/tokens";
 
 const VW = 1200;
 const ORB = orbDisc({ right: 24, bottom: 24 }, VW, 800);
+const LAST = liquid.dockTrail.length * liquid.stagger;
 
-describe("dock geometry", () => {
-  it("docking starts on the orb and ends fully past the right edge, thinned to the neck", () => {
-    const start = dockStart("dock", ORB, VW);
-    expect(start.cx).toBe(ORB.left + ORB.width / 2);
-    const [stretch, drain] = dockLegs("dock", ORB, VW);
-    expect(stretch!.to.strandTo).toBeGreaterThan(VW); // the strand reaches the edge first
-    expect(drain!.cue).toBe(true); // the side panel is requested as the drain begins
-    expect(drain!.to.cx - drain!.to.size / 2).toBeGreaterThan(VW);
-    expect(drain!.to.size).toBe(goo.dockNeck);
+describe("dock pieces", () => {
+  it("dock: the orb leads off toward the edge and the trailing droplets follow a stagger apart, all off-screen", () => {
+    const pieces = dockPieces("dock", ORB, VW);
+    expect(pieces).toHaveLength(1 + liquid.dockTrail.length);
+    expect(pieces.map((p) => p.delay)).toEqual(pieces.map((_, i) => i * liquid.stagger));
+    expect(pieces[0]!.size).toBe(ORB.width);
+    for (const p of pieces) {
+      expect(p.from).toEqual({ x: 0, y: 0, scale: 1 });
+      // Its left edge at the end is past the viewport's right edge.
+      expect(ORB.left + ORB.width / 2 + p.to.x - (p.size * p.to.scale) / 2).toBeGreaterThan(VW);
+    }
   });
 
-  it("undocking starts past the edge and reforms exactly into the orb at its saved position", () => {
-    const start = dockStart("undock", ORB, VW);
-    expect(start.cx - start.size / 2).toBeGreaterThan(VW);
-    const [travel, reform] = dockLegs("undock", ORB, VW);
-    expect(travel!.to.strandTo).toBeGreaterThan(VW); // it trails a strand back to the edge
-    expect(reform!.to).toEqual({ cx: ORB.left + ORB.width / 2, size: ORB.width, strandFrom: ORB.left + ORB.width / 2, strandTo: ORB.left + ORB.width / 2 });
-    expect(travel!.cfg).toBe(spring.undockTravel);
+  it("undock: the droplets come in first and the orb-sized lead arrives last, exactly at the saved position", () => {
+    const pieces = dockPieces("undock", ORB, VW);
+    expect(pieces[0]!.delay).toBe(LAST); // the orb arrives last
+    expect(pieces.at(-1)!.delay).toBe(0);
+    for (const p of pieces) expect(p.to).toEqual({ x: 0, y: 0, scale: 1 });
+  });
+
+  it("asks for the side panel just before the last liquid leaves the screen", () => {
+    expect(panelCueMs()).toBe(LAST + liquid.duration - liquid.panelLeadMs);
   });
 });
 
@@ -41,7 +47,14 @@ describe("DockTransition", () => {
     reduced = false;
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance"] });
     vi.stubGlobal("matchMedia", (q: string) => ({ matches: reduced && q.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
-    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     vi.stubGlobal("innerWidth", VW);
     host = document.createElement("div");
     document.body.append(host);
@@ -55,51 +68,47 @@ describe("DockTransition", () => {
 
   function play(kind: "dock" | "undock") {
     const events: Array<[string, number]> = [];
+    const lead: number[] = [];
     let t = 0;
-    const drops: number[] = [];
     act(() =>
       root.render(
-        createElement(DockTransition, {
-          kind,
-          orb: ORB,
-          onPanelCue: () => events.push(["cue", t]),
-          onDone: () => events.push(["done", t]),
-        }),
+        createElement(DockTransition, { kind, orb: ORB, onPanelCue: () => events.push(["cue", t]), onDone: () => events.push(["done", t]) }),
       ),
     );
     while (!events.some(([e]) => e === "done") && t < 3_000) {
       act(() => vi.advanceTimersByTime(16));
       t += 16;
-      const d = host.querySelector<HTMLElement>(".g-dock-drop");
-      // Stage-relative -> viewport (the stage starts 40px left of the orb).
-      if (d) drops.push(parseFloat(d.style.left) + ORB.left - 40);
+      const w = host.querySelector<HTMLElement>(".g-dock-drop")?.parentElement;
+      if (w) lead.push(readPose(w.style.transform)?.x ?? 0);
     }
-    return { events, drops };
+    return { events, lead };
   }
 
-  it("dock: stretches, then drains; the side panel is cued as the liquid starts leaving, and it ends within ~0.6s", () => {
-    const { events, drops } = play("dock");
+  it("dock: one Liquid mass pours off; the side panel is cued as the last liquid leaves; done in about one beat", () => {
+    act(() => root.render(createElement(DockTransition, { kind: "dock", orb: ORB, onDone() {} })));
+    expect(host.querySelectorAll("[data-gooey-svg]")).toHaveLength(1);
+    expect(host.querySelectorAll(".g-goo-blob")).toHaveLength(1 + liquid.dockTrail.length);
+    act(() => root.unmount());
+    root = createRoot(host);
+
+    const { events, lead } = play("dock");
     const cue = events.find(([e]) => e === "cue")![1];
     const done = events.find(([e]) => e === "done")![1];
-    expect(cue).toBeGreaterThan(100); // not before the strand has reached the edge
-    expect(done - cue).toBeGreaterThan(150); // the panel has time to appear as the liquid goes
-    expect(done).toBeLessThan(800);
-    expect(drops.at(-1)!).toBeGreaterThan(VW); // off-screen at the end
+    expect(cue).toBeGreaterThanOrEqual(panelCueMs());
+    expect(done).toBeGreaterThan(cue);
+    expect(done).toBeGreaterThanOrEqual(LAST + liquid.duration);
+    expect(done).toBeLessThanOrEqual(LAST + liquid.duration + 250);
+    // The overshoot curve carries it past its end point before it settles: liquid, not a linear slide.
+    const end = dockPieces("dock", ORB, VW)[0]!.to.x;
+    expect(Math.max(...lead)).toBeGreaterThan(end + 1);
   });
 
-  it("undock: a droplet travels in from the edge and reforms into the orb", () => {
-    const { events, drops } = play("undock");
-    expect(events.map(([e]) => e)).toEqual(["done"]); // no side panel cue when undocking
-    expect(drops[0]!).toBeGreaterThan(VW - 100);
-    expect(drops.at(-1)!).toBeCloseTo(ORB.left, 0); // exactly on the orb's saved position
-    expect(events[0]![1]).toBeLessThan(1_000);
-  });
-
-  it("filters only the droplet and the strand, never text", () => {
-    act(() => root.render(createElement(DockTransition, { kind: "dock", orb: ORB, onDone() {} })));
-    const blobs = host.querySelectorAll(".g-goo-blob");
-    expect(blobs).toHaveLength(2);
-    blobs.forEach((b) => expect(b.textContent).toBe(""));
+  it("undock: flows back in and settles at the orb's position; no side panel cue", () => {
+    const { events, lead } = play("undock");
+    expect(events.map(([e]) => e)).toEqual(["done"]);
+    expect(lead[0]!).toBeGreaterThan(0);
+    expect(Math.min(...lead)).toBeLessThan(-0.5); // overshoots past the orb's spot, then settles
+    expect(lead.at(-1)!).toBeCloseTo(0, 1);
   });
 
   it("with reduced motion: no liquid, the panel is requested at once, and it's over after a short fade", () => {

@@ -67,10 +67,10 @@ const components = /* css */ `
 }
 .g-orb-button:active { cursor: grabbing; }
 .g-orb-button, .g-orb-motion { will-change: transform; }
-.g-orb-button { transition: opacity var(--g-quick) linear; }
-/* While docking or undocking, the liquid stands in for the orb. Under reduced motion this is the whole animation. */
+/* While docking or undocking, the liquid stands in for the orb: it sits exactly where the orb is, so the hand-over is
+   instant (a fade would leave a ghost of the orb over the liquid). Under reduced motion the fade is the animation. */
 .g-orb-button.is-hidden { opacity: 0; pointer-events: none; }
-.g-dock-strand { border-radius: 999px; }
+
 .g-orb-motion { display: inline-flex; }
 .g-float-badge { position: fixed; pointer-events: auto; }
 
@@ -86,7 +86,8 @@ const components = /* css */ `
 /* ---------- Gooey open and close (components/GooPanel.tsx) ---------- */
 /* Only .g-goo-blob shapes are filtered, and they are empty. The panel's content is never inside the filtered layer. */
 .g-goo-stage { position: fixed; pointer-events: none; }
-.g-goo-blob { position: absolute; }
+/* The shapes inside liquid-gooey items: laid out in flow, so the library can measure its wrapper around them. */
+.g-goo-blob { display: block; }
 .g-panel-goo { opacity: 0; transition: opacity var(--g-quick) var(--g-ease); }
 .g-panel-goo .g-card { animation: none; }
 .g-panel-goo.is-shown, .g-panel-reduced.is-shown { opacity: 1; transform: none; }
@@ -181,6 +182,7 @@ const components = /* css */ `
 .g-name:hover, .g-name:focus-visible { background: var(--g-raised); }
 
 @media (prefers-reduced-motion: reduce) {
+  .g-root .g-orb-button { transition: opacity var(--g-quick) linear !important; }
   .g-root *:not(.g-panel-reduced):not(.g-orb-button), .g-root *::before, .g-root *::after { animation: none !important; transition: none !important; }
   .g-orb-pulse { opacity: .5; transform: scale(1.25); }
 }

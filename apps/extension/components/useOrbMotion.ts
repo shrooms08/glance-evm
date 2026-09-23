@@ -2,7 +2,6 @@
  * Physical motion for the orb, on springs from lib/tokens.ts `spring`:
  *   follow()   while dragging, the orb trails the cursor slightly (critically damped, never passes it);
  *   release()  one jiggle on release, scaled by how fast it was thrown;
- *   absorb()   a small swell and wobble as the panel drains back into it;
  *   blocked    a short horizontal shake, once, when a trade is refused;
  *   breathing  a very slow pulse while idle (CSS, on the inner disc), dropped first on slow pages.
  * Only the orb moves: never text, the confirm card or hover cards. Under prefers-reduced-motion nothing here runs.
@@ -28,8 +27,6 @@ export interface OrbMotion {
   follow(dx: number, dy: number): void;
   /** Dropped after a drag moving at `speed` px/s. */
   release(speed: number): void;
-  /** The panel has just drained into the orb. */
-  absorb(): void;
   /** Whether the idle breathing pulse should run now (set it as data-breathe on the element). */
   breathe: boolean;
 }
@@ -39,7 +36,7 @@ export function useOrbMotion(el: RefObject<HTMLElement | null>, state: OrbState,
   const channels = useRef<Record<Name, Channel>>({
     x: { value: 0, velocity: 0, target: 0, cfg: spring.dragFollow, travel: 1, since: 0 },
     y: { value: 0, velocity: 0, target: 0, cfg: spring.dragFollow, travel: 1, since: 0 },
-    scale: { value: 1, velocity: 0, target: 1, cfg: spring.orbAbsorb, travel: 1, since: 0 },
+    scale: { value: 1, velocity: 0, target: 1, cfg: spring.dragRelease, travel: 1, since: 0 },
     shake: { value: 0, velocity: 0, target: 0, cfg: spring.blockedShake, travel: 1, since: 0 },
   });
   const raf = useRef(0);
@@ -112,7 +109,6 @@ export function useOrbMotion(el: RefObject<HTMLElement | null>, state: OrbState,
     [kick],
   );
 
-  const absorb = useCallback(() => kick("scale", 1 + spring.orbAbsorb.kick, spring.orbAbsorb, spring.orbAbsorb.kick), [kick]);
 
   // Blocked: shake once, on the way into the state.
   const prev = useRef(state);
@@ -126,5 +122,5 @@ export function useOrbMotion(el: RefObject<HTMLElement | null>, state: OrbState,
   useEffect(() => subscribeMotion(() => setBudget(idlePulseAllowed())), []);
   const breathe = !reduced && budget && state === "idle" && !opts.still && !opts.dragging;
 
-  return { follow, release, absorb, breathe };
+  return { follow, release, breathe };
 }

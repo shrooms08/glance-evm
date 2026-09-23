@@ -131,24 +131,26 @@ How it's built:
   Either way the microphone permission belongs to `chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj`. Every
   failure maps to one sentence in `lib/voiceReasons.ts`. In development builds the console logs
   `[glance] voice: running in <browser> <version>`.
-- **Gooey open and close:** `components/GooPanel.tsx`, built on [liquid-gooey](https://libraries.dev/gooey) (MIT).
-  Only empty shapes are filtered (a disc under the orb, a box that grows to the panel's footprint, and the neck
-  between them); the panel's text, prices and buttons sit on top, unfiltered, and fade in only once the box has
-  settled. The SVG filter renders inside our shadow root, and the liquid layer is removed as soon as the motion ends.
-  The shapes move on the springs below; the text fade is `motion.quick` (120ms). If a page drops frames on two opens
-  in a row, Glance lowers the filter quality (smaller blur, no shadow), never the timing.
-- **Docking:** `components/DockTransition.tsx`. The side panel is browser chrome and can't be animated, so the page
-  animates around it: the side panel is requested as the drain begins, and the droplet starts as the panel closes.
-  Chrome opens its side panel on the right by default and a page can't ask which side it is on, so the liquid uses the
-  right edge. If Chrome refuses to open the panel, the orb flows straight back.
+- **Liquid motion:** `components/GooPanel.tsx` and `components/DockTransition.tsx`, driven by
+  [liquid-gooey](https://libraries.dev/gooey) (MIT) the way it is meant to be used: the orb, a droplet and the panel's
+  liquid are `<Liquid.Item>`s in one `<Liquid>` container, moved by the library's own transition (`x`, `y`, `scale`)
+  with an overshoot curve and a stagger, so the goo filter merges them as they move and the wobble comes from the
+  curve. Every value is in `liquid` in `lib/tokens.ts`. The panel's text, prices and buttons are never inside an item
+  or the filtered layer: they fade in only once every item has reached its pose (read back from the library's
+  transforms, not timed). The filter renders inside our shadow root and is removed at rest. On slow pages the blur and
+  shadow drop; the timing never changes.
+- **Docking, in three beats:** (1) an open panel drains back into the orb; (2) the orb and three trailing droplets pour
+  off toward the window's right edge, one stagger apart, as one stretching mass; (3) the side panel is requested
+  `liquid.panelLeadMs` before the last liquid leaves, so it appears as it goes. Undocking reverses it: the side panel
+  closes, the liquid flows back in from the edge, the orb reforms at its saved position, and only then can it open
+  again. Chrome opens its side panel on the right by default and a page can't ask which side it is on, so the liquid
+  uses the right edge. If Chrome refuses to open the panel, the orb flows straight back.
 - **Surviving reloads:** `lib/lifecycle.ts` and `lib/pageLifecycle.ts`. Every extension call from the page goes through
   `send()` or `safely()`; a port to the background and a `runtime.id` check notice a reload within moments. The page
   UI then shuts down once (UI removed, listeners gone, underlines cleared) and shows the refresh notice. The expected
   "Extension context invalidated" error is never logged.
-- **Springs:** `lib/spring.ts`, tuned entirely from `spring` and `breathe` in `lib/tokens.ts`. They carry velocity, so
-  they react to distance and speed. The panel's open overshoots once (only while no text is showing); the orb trails a
-  drag, jiggles once on release, wobbles as it absorbs the closing panel, shakes once when a trade is refused, and
-  breathes very slowly when idle. Nothing springs on text, the confirm card or hover cards, and nothing moves under
+- **Springs (the orb's small motions):** `lib/spring.ts`, tuned from `spring` and `breathe` in `lib/tokens.ts`. The
+  orb trails a drag, jiggles once on release, shakes once when a trade is refused, and breathes very slowly when idle. Nothing springs on text, the confirm card or hover cards, and nothing moves under
   reduced motion. `lib/motionBudget.ts` drops the idle breathing first on pages that can't hold frame rate.
 - **Orb states:** idle shows the eye; listening, thinking and speaking each have their own dotted motion
   (`ORB_MOTION` in `components/Orb.tsx`). Speaking follows the speech itself: it starts on the utterance's `start`

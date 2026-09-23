@@ -23,48 +23,35 @@ function simulate(cfg: SpringConfig, opts: { fps?: number; seconds?: number; vel
 /** Peaks visibly past the target (over 1.5%): a damping of 0.6 leaves a second, sub-1% ripple no one can see. */
 const peaks = (xs: number[]) => xs.filter((x, i) => i > 0 && i < xs.length - 1 && x > 1.015 && x >= xs[i - 1]! && x > xs[i + 1]!).length;
 
-describe("spring tokens", () => {
-  it("the panel's open overshoots visibly, once", () => {
-    const xs = simulate(spring.panelOpen);
-    const over = Math.max(...xs) - 1;
-    // Raised deliberately from 1-8% to 5-12%: the old ~4% overshoot was too small to notice in a screen recording.
-    expect(over).toBeGreaterThan(0.05);
-    expect(over).toBeLessThan(0.12);
-    expect(over).toBeCloseTo(overshootFor(spring.panelOpen.damping), 1);
-    expect(peaks(xs)).toBe(1);
+describe("spring tokens (the orb's own small motions)", () => {
+  it("drag-follow never overshoots the cursor", () => {
+    expect(spring.dragFollow.damping).toBe(1);
+    expect(Math.max(...simulate(spring.dragFollow))).toBeLessThanOrEqual(1 + 1e-9);
   });
 
-  it("settling, drag-follow and the liquid letting go never overshoot", () => {
-    for (const cfg of [spring.panelSettle, spring.panelClose, spring.panelNeck, spring.dragFollow, spring.dockStretch, spring.dockDrain, spring.undockReform]) {
-      expect(cfg.damping).toBe(1);
-      expect(Math.max(...simulate(cfg))).toBeLessThanOrEqual(1 + 1e-9);
-    }
-  });
-
-  it("nothing is springier than serious: damping stays at 0.5 or above, except the short blocked shake", () => {
-    for (const cfg of [spring.panelOpen, spring.orbAbsorb, spring.dragRelease, spring.undockTravel]) expect(cfg.damping).toBeGreaterThanOrEqual(0.5);
-    expect(spring.blockedShake.kick).toBeLessThanOrEqual(6); // px
-    // Raised deliberately from 0.06 to 0.08: the absorb wobble has to be visible (the token is 0.07).
-    expect(spring.orbAbsorb.kick).toBeLessThanOrEqual(0.08);
+  it("nothing is springier than serious: the jiggle is small and the shake short", () => {
+    expect(spring.dragRelease.damping).toBeGreaterThanOrEqual(0.5);
     expect(spring.dragRelease.maxKick).toBeLessThanOrEqual(0.05);
+    expect(spring.blockedShake.kick).toBeLessThanOrEqual(6); // px
   });
 
   it("reacts to speed: arriving fast overshoots further than starting from rest", () => {
-    const rest = Math.max(...simulate(spring.panelOpen));
-    const thrown = Math.max(...simulate(spring.panelOpen, { velocity: 6 }));
-    expect(thrown).toBeGreaterThan(rest);
+    const cfg = { response: 0.3, damping: 0.6 };
+    expect(Math.max(...simulate(cfg, { velocity: 6 }))).toBeGreaterThan(Math.max(...simulate(cfg)));
   });
 
   it("moves the same at 30, 60 and 120fps", () => {
-    const at = (fps: number) => simulate(spring.panelOpen, { fps, seconds: 0.2 }).at(-1)!;
+    const cfg = { response: 0.3, damping: 0.6 };
+    const at = (fps: number) => simulate(cfg, { fps, seconds: 0.2 }).at(-1)!;
     expect(at(30)).toBeCloseTo(at(120), 2);
     expect(at(60)).toBeCloseTo(at(120), 2);
   });
 
-  it("overshootFor matches the familiar values", () => {
+  it("overshootFor matches the familiar values, and a visible overshoot peaks once", () => {
     expect(overshootFor(1)).toBe(0);
     expect(overshootFor(0.72)).toBeCloseTo(0.043, 2);
     expect(overshootFor(0.5)).toBeCloseTo(0.163, 2);
+    expect(peaks(simulate({ response: 0.3, damping: 0.6 }))).toBe(1);
   });
 });
 
@@ -83,7 +70,7 @@ describe("runSpring", () => {
 
   it("settles on its own well before the cap when tuned normally", () => {
     const done = vi.fn();
-    runSpring(0, 1, spring.panelSettle, () => {}, done);
+    runSpring(0, 1, spring.dragFollow, () => {}, done);
     vi.advanceTimersByTime(spring.maxMs - 50);
     expect(done).toHaveBeenCalledTimes(1);
   });
@@ -187,16 +174,13 @@ describe("useOrbMotion", () => {
     expect(film(100).every((t) => t === "")).toBe(true);
   });
 
-  it("wobbles as it absorbs the panel, and jiggles on release in proportion to speed", () => {
+  it("jiggles on release in proportion to speed", () => {
     render("idle");
-    act(() => motion.absorb());
-    const scales = film(spring.maxMs + 100).map((t) => Number(/scale\(([\d.]+)\)/.exec(t)?.[1] ?? 1));
-    expect(Math.max(...scales)).toBeGreaterThan(1.02);
-    expect(Math.max(...scales)).toBeLessThanOrEqual(1 + spring.orbAbsorb.kick);
     act(() => motion.release(50));
     expect(film(100).every((t) => t === "")).toBe(true); // a slow drop doesn't jiggle
     act(() => motion.release(5000));
     const jiggle = film(spring.maxMs + 100).map((t) => Number(/scale\(([\d.]+)\)/.exec(t)?.[1] ?? 1));
+    expect(Math.min(...jiggle)).toBeLessThan(1);
     expect(Math.min(...jiggle)).toBeGreaterThanOrEqual(1 - spring.dragRelease.maxKick - 1e-6);
   });
 
@@ -214,7 +198,6 @@ describe("useOrbMotion", () => {
     render("idle");
     expect(motion.breathe).toBe(false);
     act(() => {
-      motion.absorb();
       motion.follow(40, 0);
       motion.release(5000);
     });

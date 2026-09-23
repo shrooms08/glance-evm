@@ -128,6 +128,62 @@ check("clicking the orb docks Glance", mode === "docked", `defaultMode=${mode}`)
 await sw.evaluate(() => chrome.storage.sync.set({ defaultMode: "floating" }));
 await page.waitForTimeout(500);
 
+// 5b. Docking from an open panel runs in beats: the panel drains into the orb, then the orb pours off to the edge.
+// The background's side panel broadcast, sent to every tab (as the background does when the panel opens or closes).
+const panelChanged = (open) =>
+  sw.evaluate(async (o) => {
+    for (const t of await chrome.tabs.query({})) await chrome.tabs.sendMessage(t.id, { kind: "panel:changed", open: o }).catch(() => {});
+  }, open);
+// Step 5 really docked: float again first (the side panel "closes").
+await panelChanged(false);
+await page.locator("glance-orb .g-orb-button:not(.is-hidden)").waitFor({ timeout: 3_000 });
+const stages = async () =>
+  page.evaluate(() => {
+    const r = document.querySelector("glance-orb")?.shadowRoot;
+    return {
+      panelLiquid: Boolean(r?.querySelector(".g-goo-stage:not([data-dock])")),
+      panel: Boolean(r?.querySelector(".g-panel")),
+      dock: r?.querySelector("[data-dock]")?.getAttribute("data-dock") ?? null,
+      orbHidden: Boolean(r?.querySelector(".g-orb-button.is-hidden")),
+    };
+  });
+await page.keyboard.down("Alt");
+await page.keyboard.press("KeyG");
+await page.keyboard.up("Alt");
+await page.locator('glance-orb .g-panel[data-phase="open"]').waitFor({ timeout: 4_000 }).catch(() => {});
+await page.locator("glance-orb .g-orb-button").click();
+const beats = [];
+const tStart = Date.now();
+while (Date.now() - tStart < 2_500) {
+  beats.push({ t: Date.now() - tStart, ...(await stages()) });
+  await page.waitForTimeout(25);
+}
+const lastPanel = Math.max(...beats.filter((b) => b.panel || b.panelLiquid).map((b) => b.t));
+const firstDock = Math.min(...beats.filter((b) => b.dock === "dock").map((b) => b.t));
+check(
+  "dock beats in order: the panel drains into the orb, then the orb pours off, with no dead pause",
+  Number.isFinite(firstDock) && firstDock >= lastPanel && firstDock - lastPanel <= 150,
+  `panel gone by ${lastPanel}ms, pour starts at ${firstDock}ms`,
+);
+await sw.evaluate(() => chrome.storage.sync.set({ defaultMode: "floating" }));
+
+// 5c. Undocking: the droplet flows back in and the orb reforms; nothing opens until it has.
+await panelChanged(true);
+await page.waitForTimeout(400);
+await panelChanged(false);
+await page.waitForTimeout(60);
+await page.keyboard.down("Alt");
+await page.keyboard.press("KeyG");
+await page.keyboard.up("Alt");
+const during = await stages();
+await page.waitForTimeout(1_200);
+const after = await stages();
+check(
+  "undock: the orb stays hidden while the liquid flows back, and Option+G can't open anything until it has reformed",
+  during.dock === "undock" && during.orbHidden && !during.panel && after.dock === null && !after.orbHidden,
+  `during: ${JSON.stringify(during)} · after: ${JSON.stringify(after)}`,
+);
+
 // 6. Reload the extension under the open tab: quiet shutdown and a refresh notice.
 const highlightsBefore = await page.evaluate(() => CSS.highlights?.size ?? 0);
 await sw.evaluate(() => chrome.runtime.reload()).catch(() => {});

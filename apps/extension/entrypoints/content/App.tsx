@@ -60,8 +60,8 @@ function Floating({ underliner }: { underliner: Underliner }) {
   /** The float <-> dock movement in progress, if any (components/DockTransition.tsx). */
   const [dockAnim, setDockAnim] = useState<null | "dock" | "undock">(null);
   const wasDocked = useRef(false);
-  /** Docking closes the floating panel at once: the orb drains away instead of absorbing it. */
-  const [dockSkipClose, setDockSkipClose] = useState(false);
+  /** Docking waits for beat 1 (the open panel draining into the orb) before the orb pours off (beat 2). */
+  const dockAfterClose = useRef(false);
   const [pos, setPos] = useState<OrbPosition>({ right: 24, bottom: 24 });
   const [hover, setHover] = useState<{ symbol: string; rect: DOMRect; range: Range } | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -119,6 +119,8 @@ function Floating({ underliner }: { underliner: Underliner }) {
 
   // ---- glance (Option+G, tap) --------------------------------------------------------------------------------
   const glance = useCallback(async () => {
+    // Mid dock or undock: the orb isn't back yet, so nothing opens until it has reformed.
+    if (dockAnim) return;
     await underliner.scan();
     const found = companiesFrom(underliner.current(), g.catalog);
     if (docked) {
@@ -127,10 +129,11 @@ function Floating({ underliner }: { underliner: Underliner }) {
     }
     setPanelOpen(true);
     g.setOrb({ state: "idle", line: glanceLine(host, found), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
-  }, [underliner, g, docked, host]);
+  }, [underliner, g, docked, host, dockAnim]);
 
   // ---- voice (Option+V, hold) --------------------------------------------------------------------------------
   const startTalking = useCallback(() => {
+    if (dockAnim) return;
     if (docked) {
       // The side panel owns the conversation; listen (in the offscreen document) and hand the words over.
       if (dockedListener.current) return;
@@ -156,7 +159,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
     }
     setPanelOpen(true);
     assistant.startListening();
-  }, [docked, assistant]);
+  }, [docked, assistant, dockAnim]);
 
   const stopTalking = useCallback(() => {
     if (dockedListener.current) dockedListener.current.stop();
@@ -278,10 +281,16 @@ function Floating({ underliner }: { underliner: Underliner }) {
    * the click's activation lasts seconds, and the cue comes about a quarter of a second after it.
    */
   const switchToDocked = () => {
+    if (dockAnim) return;
     void safely(() => defaultMode.setValue("docked"), Promise.resolve());
-    setDockSkipClose(true);
-    setPanelOpen(false);
-    setDockAnim("dock");
+    if (panelOpen) {
+      // Beat 1: the panel drains back into the orb first; GooPanel's onClosed starts beat 2.
+      dockAfterClose.current = true;
+      setPanelOpen(false);
+      assistant.setCard(null);
+    } else {
+      setDockAnim("dock");
+    }
   };
   /** Chrome refused the side panel (no user gesture left, or no side panel support): the orb flows back instead. */
   const panelRefused = useRef(false);
@@ -328,16 +337,14 @@ function Floating({ underliner }: { underliner: Underliner }) {
           onPanelCue={requestSidePanel}
           onDone={() => {
             const finished = dockAnim;
-            setDockSkipClose(false);
             if (finished === "dock" && panelRefused.current) {
               panelRefused.current = false;
               void safely(() => defaultMode.setValue("floating"), Promise.resolve());
               setDockAnim("undock");
               return;
             }
+            // Undock: the orb has reformed (the curve's overshoot was its wobble); only now can it open again.
             setDockAnim(null);
-            // The droplet has reformed into the orb: it settles with the same small wobble as absorbing the panel.
-            if (finished === "undock") orbMotion.absorb();
           }}
         />
       )}
@@ -349,7 +356,16 @@ function Floating({ underliner }: { underliner: Underliner }) {
             </div>
           )}
 
-          <GooPanel open={panelOpen} orb={orbDisc(pos, vw, vh)} placement={panelPlacement} onAbsorbed={orbMotion.absorb} skipClose={dockSkipClose}>
+          <GooPanel
+            open={panelOpen}
+            orb={orbDisc(pos, vw, vh)}
+            placement={panelPlacement}
+            onClosed={() => {
+              if (!dockAfterClose.current) return;
+              dockAfterClose.current = false;
+              setDockAnim("dock"); // beat 2
+            }}
+          >
             <Panel
               layout="compact"
               assistant={assistant}

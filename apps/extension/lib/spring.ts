@@ -33,11 +33,9 @@ export function stepSpring(s: SpringState, target: number, cfg: SpringConfig, dt
 }
 
 /** Settled: within `settle.distance` of the travel (or of 1 for zero-travel springs) and nearly still. */
-export function isSettled(s: SpringState, target: number, travel: number, distance: number = tokens.settle.distance): boolean {
+export function isSettled(s: SpringState, target: number, travel: number): boolean {
   const scale = Math.max(Math.abs(travel), 1e-3);
-  // A looser distance (a handoff) allows proportionally more speed: the next leg carries the motion on.
-  const speed = tokens.settle.speed * (distance / tokens.settle.distance);
-  return Math.abs(s.value - target) / scale < distance && Math.abs(s.velocity) / scale < speed;
+  return Math.abs(s.value - target) / scale < tokens.settle.distance && Math.abs(s.velocity) / scale < tokens.settle.speed;
 }
 
 /** The peak overshoot for a damping ratio, as a fraction of the travel. 0 when critically damped or over. */
@@ -60,7 +58,7 @@ export function runSpring(
   cfg: SpringConfig,
   onFrame: (value: number) => void,
   onDone?: () => void,
-  opts: { velocity?: number; maxMs?: number; snap?: boolean; settleDistance?: number } = {},
+  opts: { velocity?: number; maxMs?: number; snap?: boolean } = {},
 ): SpringRun {
   const s: SpringState = { value: from, velocity: opts.velocity ?? 0 };
   const maxMs = opts.maxMs ?? tokens.maxMs;
@@ -79,7 +77,7 @@ export function runSpring(
   const tick = (now: number) => {
     stepSpring(s, to, cfg, Math.max(0, (now - last) / 1000));
     last = now;
-    if (isSettled(s, to, to - from || 1, opts.settleDistance) || now - start >= maxMs) return finish();
+    if (isSettled(s, to, to - from || 1) || now - start >= maxMs) return finish();
     onFrame(s.value);
     raf = requestAnimationFrame(tick);
   };
