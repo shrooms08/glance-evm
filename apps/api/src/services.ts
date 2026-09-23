@@ -17,6 +17,7 @@ import {
 import { erc20Abi, glanceVaultAbi, stockDeskAbi, testPriceFeedAbi } from "./abi.generated.js";
 import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
+import { primaryVault } from "./deployment.js";
 import {
   decodeRevert,
   explainRevert,
@@ -134,7 +135,7 @@ export async function readPrice(ctx: AppContext, stock: CatalogEntry, vault: Add
 
 export async function priceView(ctx: AppContext, symbol: string, vaultParam?: string) {
   const stock = stockBySymbol(ctx, symbol);
-  const vault = vaultParam ? getAddress(vaultParam) : ctx.deployment.demoVaultTestUSDG.address;
+  const vault = vaultParam ? getAddress(vaultParam) : ctx.defaultVault;
   const p = await readPrice(ctx, stock, vault);
   return {
     symbol: stock.symbol,
@@ -731,7 +732,7 @@ const FEED_WRITE_LOOKBACK_BLOCKS = 1_200_000n;
  * from, and when it was last written on chain (the keeper, or the deploy script), read from PriceSet events.
  */
 async function feedStatus(ctx: AppContext, latest: bigint, now: number) {
-  const vault = ctx.deployment.demoVaultTestUSDG.address;
+  const vault = ctx.defaultVault;
   const fromBlock = startBlock(ctx, latest, FEED_WRITE_LOOKBACK_BLOCKS);
   return Promise.all(
     ctx.catalog.entries.map(async (stock) => {
@@ -779,7 +780,8 @@ export async function healthView(ctx: AppContext) {
   const [chainId, blockNumber] = await Promise.all([ctx.client.getChainId(), ctx.client.getBlockNumber({ cacheTime: 0 })]);
   const feeds = await feedStatus(ctx, blockNumber, await latestTimestamp(ctx));
   const lastKeeperWrite = feeds.reduce<number | null>((max, f) => (f.lastWrite?.at && (max === null || f.lastWrite.at > max) ? f.lastWrite.at : max), null);
-  const agent = ctx.signer?.account.address ?? ctx.deployment.demoVaultTestUSDG.agent;
+  const primary = primaryVault(ctx.deployment);
+  const agent = ctx.signer?.account.address ?? primary.agent;
   const balance = await ctx.client.getBalance({ address: agent });
   return {
     ok: chainId === ctx.deployment.chainId,
@@ -789,7 +791,7 @@ export async function healthView(ctx: AppContext) {
     agent: {
       address: agent,
       keyLoaded: ctx.signer !== null,
-      matchesDemoVault: isAddressEqual(agent, ctx.deployment.demoVaultTestUSDG.agent),
+      matchesDemoVault: isAddressEqual(agent, primary.agent),
       ethBalance: toDecimalString(balance, 18),
       ethBalanceWei: balance.toString(),
     },
@@ -803,6 +805,13 @@ export async function healthView(ctx: AppContext) {
     demoVaults: {
       testUSDG: ctx.deployment.demoVaultTestUSDG.address,
       paxosUSDG: ctx.deployment.demoVaultPaxosUSDG?.address ?? null,
+      /** The headline vault (real Paxos USDG once funded); the TestUSDG vault stays as a fallback with its own faucet. */
+      primary: primary.address,
+      defaultVault: ctx.defaultVault,
+      faucets: {
+        paxosUSDG: ctx.deployment.demoVaultPaxosUSDG?.faucetUrl ?? null,
+        testUSDG: ctx.deployment.demoVaultTestUSDG.faucetUrl ?? null,
+      },
     },
   };
 }

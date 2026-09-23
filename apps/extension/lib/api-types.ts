@@ -58,7 +58,14 @@ export interface Health {
   llmFallback: boolean;
   keeper?: { pausedLocally: boolean; lastWriteAt: number | null };
   feeds?: FeedStatus[];
-  demoVaults: { testUSDG: string; paxosUSDG: string | null };
+  demoVaults: {
+    testUSDG: string;
+    paxosUSDG: string | null;
+    /** Present on APIs from after the move to real Paxos USDG. */
+    primary?: string;
+    defaultVault?: string;
+    faucets?: { paxosUSDG: string | null; testUSDG: string | null };
+  };
 }
 
 export interface CatalogStock {

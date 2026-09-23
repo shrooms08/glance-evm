@@ -5,7 +5,7 @@ export
 NETWORK ?= robinhood
 
 .PHONY: help build test test-fork fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
-	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume feeds set-freshness
+	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume feeds set-freshness fund-paxos check-vaults create-vault
 
 TESTNET_RPC_URL ?= https://rpc.testnet.chain.robinhood.com
 MAINNET_RPC_URL ?= https://rpc.mainnet.chain.robinhood.com
@@ -19,7 +19,10 @@ help:
 	@echo "make dry-run-robinhood     simulate the Robinhood Chain testnet deploy (sends nothing)"
 	@echo "make deploy-robinhood      deploy + verify on Robinhood Chain testnet (46630)"
 	@echo "make deploy-arbsepolia     deploy + verify on Arbitrum Sepolia (421614)"
-	@echo "make seed                  fund the demo vault [NETWORK=robinhood|arbsepolia DEMO_RECIPIENT=0x...]"
+	@echo "make fund-paxos            stock the Paxos desk and fund the primary Paxos USDG vault (idempotent) [DRY_RUN=1]"
+	@echo "make create-vault          your own vault, configured for the Glance agent and funded [VAULT_USDG=paxos|test DEPOSIT=10 AGENT=0x...]"
+	@echo "make check-vaults          read-only: both demo vaults quote a \$$10 TSLA buy and pass the on-chain preflight"
+	@echo "make seed                  fund the TestUSDG demo vault [NETWORK=robinhood|arbsepolia DEMO_RECIPIENT=0x...]"
 	@echo "make verify-commands       print manual verification commands [NETWORK=...]"
 	@echo "make keeper                mirror the mainnet Chainlink feeds (price AND updatedAt) onto the testnet feeds, once"
 	@echo "make keeper-watch          the same, every 120s, until Ctrl-C (use while recording)"
@@ -68,6 +71,25 @@ seed:
 
 verify-commands:
 	@script/verify-commands.sh $(NETWORK)
+
+# Real Paxos USDG demo: 2 of each stock and 40 USDG on the Paxos desk, 60 USDG in the Paxos vault, config checked.
+# Prints its plan and asks y/N. Safe to re-run: it only sends what is missing.
+fund-paxos:
+	@script/fund-paxos.sh
+
+# Anyone's own vault: create (or reuse) it, configure it like the demo vaults, deposit. Simulates first, then asks.
+create-vault:
+	@test -n "$${PRIVATE_KEY:-}" || { echo "Set PRIVATE_KEY in .env to your own testnet wallet's key"; exit 1; }
+	@echo "== Your Glance vault on Robinhood Chain testnet: $(or $(VAULT_USDG),paxos) USDG, deposit $(or $(DEPOSIT),10) USDG"
+	@VAULT_USDG=$(or $(VAULT_USDG),paxos) DEPOSIT=$(or $(DEPOSIT),10) forge script script/CreateVault.s.sol \
+		--rpc-url "$${ROBINHOOD_TESTNET_RPC:-$(TESTNET_RPC_URL)}" --private-key "$$PRIVATE_KEY" 2>&1 | sed -n '/== Logs ==/,/^$$/p'
+	@read -p "Send these transactions? [y/N] " answer; [ "$$answer" = y ] || [ "$$answer" = Y ] || { echo "Aborted"; exit 1; }
+	@VAULT_USDG=$(or $(VAULT_USDG),paxos) DEPOSIT=$(or $(DEPOSIT),10) forge script script/CreateVault.s.sol \
+		--rpc-url "$${ROBINHOOD_TESTNET_RPC:-$(TESTNET_RPC_URL)}" --private-key "$$PRIVATE_KEY" --broadcast 2>&1 | sed -n '/== Logs ==/,/^$$/p'
+
+# Read-only: quotes a $$10 TSLA buy on both demo vaults and simulates it through every vault guard. Sends nothing.
+check-vaults:
+	@RPC_URL="$${ROBINHOOD_TESTNET_RPC:-$(TESTNET_RPC_URL)}" pnpm --silent --filter api check-vaults
 
 weekend:
 	@script/set-market.sh $(NETWORK) weekend $(or $(SYMBOL),all)

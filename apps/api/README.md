@@ -91,10 +91,14 @@ curl localhost:8790/health
                "marketState": "CLOSED", "source": "mainnet-mirror", "mainnetFeed": "0x4A11…7C38",
                "lastWrite": { "at": 1790167636, "agoSeconds": 12, "txHash": "0x9045…" } },
              { "symbol": "NFLX", "source": "public-quote", "sourceDetail": "Yahoo Finance NFLX regularMarketPrice (…)", "…": "…" } ],
-  "demoVaults": { "testUSDG": "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D", "paxosUSDG": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113" } }
+  "demoVaults": { "testUSDG": "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D", "paxosUSDG": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113",
+                  "primary": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113", "defaultVault": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113",
+                  "faucets": { "paxosUSDG": "https://faucet.paxos.com/", "testUSDG": "TestUSDG.faucet(amount) on 0x2315…375E (1,000 per address per UTC day)" } } }
 ```
 
-`feeds` gives each stand-in feed's price, age, and the market state the demo vault would apply to it. `source` is
+`demoVaults.primary` is the headline vault, on real Paxos USDG (marked `primaryVault` in the deployment record);
+the TestUSDG vault stays as a fallback. `feeds` gives each stand-in feed's price, age, and the market state the
+default vault would apply to it. `source` is
 `mainnet-mirror` (kept current by the keeper) or `public-quote` (NFLX). `lastWrite` is the most recent on-chain
 `PriceSet`, whether written by the keeper or the deploy script.
 
@@ -138,7 +142,8 @@ curl -X POST localhost:8790/resolve -H 'content-type: application/json' \
 ### `GET /price/:symbol[?vault=0x…]`
 
 This returns the oracle price and its age. The market state is classified with the freshness settings that vault
-holds for the token. The vault defaults to the TestUSDG demo vault.
+holds for the token. The vault defaults to `DEFAULT_VAULT`, or else the deployment's primary vault (the Paxos USDG demo
+vault).
 
 ```json
 { "symbol": "TSLA", "price": { "raw": "38025740000", "decimals": 8, "value": "380.2574" },
@@ -251,3 +256,9 @@ The integration tests remove `AGENT_PRIVATE_KEY` and use `eth_call` only, so the
 ```sh
 forge build && pnpm --filter api abi
 ```
+
+## Checking both demo vaults
+
+`pnpm --filter api check-vaults` (or `make check-vaults` from the repository root) quotes a $10 TSLA buy on the Paxos
+USDG vault and the TestUSDG vault and simulates each through every vault guard. It is read-only: it never loads the
+agent key and sends nothing. It exits 1, with the vault's own reason, if either could not trade right now.

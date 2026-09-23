@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
-    "abi": "node scripts/gen-abi.mjs"
+    "abi": "node scripts/gen-abi.mjs",
+    "check-vaults": "tsx --env-file-if-exists=.env scripts/check-vaults.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

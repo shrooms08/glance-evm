@@ -45,7 +45,10 @@ Close the banner.
 2. **Open Glance's settings.** Right-click the Glance icon and choose Options.
 3. **API base URL:** leave `http://localhost:8790` unless the API runs elsewhere. For any other address Glance asks
    your permission once.
-4. **Vault address:** paste your vault, or click **Use the demo vault** after running the connection test.
+4. **Vault address:** Glance starts on our demo vault on real Paxos USDG (`0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113`).
+   Paste your own vault (`make create-vault` makes one, see the main README's "Try it yourself"), or pick
+   **Demo vault · TestUSDG** (`0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D`), the fallback funded from its own
+   on-chain faucet.
 5. Click **Save**. The connection test then shows the chain, the agent's ETH balance, and how fresh each price is.
 6. **Voice (optional):** in the Voice section, click **Enable voice**. Chrome asks "Glance wants to use your
    microphone"; click **Allow**. You only do this once, and it covers every website. The diagnostics below the button

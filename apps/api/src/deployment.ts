@@ -22,6 +22,13 @@ const vault = z.object({
   agentExpiry: z.number(),
   fundableFromFaucet: z.boolean(),
   note: z.string(),
+  /** Where anyone can get this vault's USDG. */
+  faucetUrl: z.string().optional(),
+  /** The vault the demo points at by default. */
+  primary: z.boolean().optional(),
+  /** USDG balance when this record was last written (live balances come from the chain). */
+  usdgBalance: z.number().optional(),
+  fundedAt: z.string().optional(),
 });
 
 const stock = z.union([
@@ -55,6 +62,8 @@ export const deploymentSchema = z.object({
   stockDeskPaxosUSDG: contract.optional(),
   demoVaultTestUSDG: vault,
   demoVaultPaxosUSDG: vault.optional(),
+  /** Which demo vault is the headline. Missing in older records, which meant the TestUSDG vault. */
+  primaryVault: z.enum(["demoVaultPaxosUSDG", "demoVaultTestUSDG"]).optional(),
   stocks: z.record(z.string(), stock),
 });
 
@@ -73,6 +82,22 @@ export function loadDeployment(path: string): Deployment {
     throw new Error(`Deployment file ${path} is invalid: ${z.prettifyError(parsed.error)}`);
   }
   return parsed.data;
+}
+
+/** The headline demo vault: the one marked primary, else the TestUSDG vault (always present). */
+export function primaryVault(d: Deployment): DeployedVault {
+  if (d.primaryVault === "demoVaultPaxosUSDG" && d.demoVaultPaxosUSDG) return d.demoVaultPaxosUSDG;
+  return d.demoVaultTestUSDG;
+}
+
+/** Every demo vault, primary first, with a short label. */
+export function demoVaults(d: Deployment): Array<{ key: "paxosUSDG" | "testUSDG"; vault: DeployedVault; primary: boolean }> {
+  const primary = primaryVault(d);
+  const all = [
+    ...(d.demoVaultPaxosUSDG ? [{ key: "paxosUSDG" as const, vault: d.demoVaultPaxosUSDG }] : []),
+    { key: "testUSDG" as const, vault: d.demoVaultTestUSDG },
+  ].map((v) => ({ ...v, primary: v.vault.address === primary.address }));
+  return all.sort((a, b) => Number(b.primary) - Number(a.primary));
 }
 
 /** Every StockDesk in the deployment, so a vault can be matched to the desk that quotes its USDG. */

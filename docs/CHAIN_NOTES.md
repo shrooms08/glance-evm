@@ -9,32 +9,42 @@ back as listed.
 
 ## What runs on real contracts, what is a stand-in, and why
 
-- **Glance's own contracts** (vault, factory, libraries) are the production code on every chain.
-- **Stock Tokens are real** on Robinhood Chain testnet: the five tokens the official faucet hands out.
-- **Paxos USDG is real, and the vault is deployed against it.** On Robinhood Chain testnet the deploy script creates
-  `demoVaultPaxosUSDG` on the real Paxos USDG, with the same token approvals, limits and freshness settings as the
-  public demo vault. `test/fork/GlanceVaultFork.t.sol` runs the whole vault flow against that real USDG and the real
-  Stock Tokens on a fork: deposit, buy, sell, owner withdraw, agent withdraw refused. It repeats the flow on a
-  Robinhood mainnet fork against the real Chainlink TSLA feed (`make test-fork`).
-- **The interactive demo uses a stand-in USDG** (`TestUSDG`, `demoVaultTestUSDG`). Nothing hands out Paxos USDG on
-  testnet (the organizers confirmed there is no faucet), so the Paxos vault is configured but unfunded, and a judge
-  could not fund it. That is the only reason for the stand-in.
-- **Prices mirror Chainlink mainnet, including the time.** Chainlink has no feeds on Robinhood testnet, so each stock
-  has a `TestPriceFeed` stand-in. A keeper (`apps/keeper`) copies the live Chainlink feed on Robinhood mainnet onto it
-  every few minutes: **both the price and that feed's own `updatedAt`, never "now"**. See
-  [The mainnet mirror](#the-mainnet-mirror-how-the-stand-in-feeds-stay-honest) below. NFLX has no Chainlink feed, so
-  it mirrors a public quote and that quote's own market timestamp instead.
-- **The trading venue is a stand-in** (`StockDesk`) because no DEX pool holds these tokens on testnet.
+The demo on Robinhood Chain testnet (46630):
+
+| Part | Real or ours | Why | Anyone can get it? |
+| --- | --- | --- | --- |
+| USDG | **Real Paxos USDG** `0x7E955252…802F`, held by the primary demo vault (`demoVaultPaxosUSDG`) | It exists on testnet | Yes: https://faucet.paxos.com/ |
+| Stock Tokens (TSLA, AMZN, PLTR, NFLX, AMD) | **Real**: the official Robinhood Chain testnet Stock Tokens | They exist on testnet | Yes: https://faucet.testnet.chain.robinhood.com (5 of each per claim, plus 0.01 ETH) |
+| Price feeds | **Ours**: a `TestPriceFeed` per stock, mirroring the live Robinhood Chain **mainnet** Chainlink feeds, price **and** timestamp | Chainlink has no feeds on testnet | Read-only |
+| Trading desk | **Ours**: `StockDesk`, an oracle-priced desk (not an AMM) holding real Stock Tokens and real USDG | No DEX pool exists for these tokens on testnet | Only through a vault |
+| Vault, factory, libraries | **Glance production code** | | `make create-vault` gives anyone their own |
+
+Details and limits, so nothing is overstated:
+
+- **Prices are a mirror, not Chainlink on testnet.** A keeper (`apps/keeper`) copies each mainnet Chainlink feed onto
+  its stand-in every few minutes, with that feed's own `updatedAt`, never "now", so the testnet market opens and
+  closes when the real one does. See [The mainnet mirror](#the-mainnet-mirror-how-the-stand-in-feeds-stay-honest).
+  NFLX has no Chainlink feed, so it mirrors a public quote and that quote's own market timestamp. If the keeper stops,
+  prices age as they would on mainnet: after 20h the vault treats the market as closed (caps cut to 25%), and after
+  96h it refuses to trade.
+- **The desk is small and ours.** The Paxos desk holds what we moved into it (`make fund-paxos`: 2 of each stock and
+  40 USDG for sells). Its price is the mirrored oracle price minus a fixed spread; there is no order book or pool.
+- **A fallback stays for anyone without Paxos USDG:** `demoVaultTestUSDG` runs the same vault code on our `TestUSDG`
+  stand-in, whose on-chain faucet gives 1,000 per address per day, with its own desk.
+- **No L2 sequencer uptime feed exists** on the testnet, so that check is left disabled.
+- `test/fork/GlanceVaultFork.t.sol` and `test/fork/CreateVaultFork.t.sol` run the vault flow against the real Paxos
+  USDG and the real Stock Tokens on forks (`make test-fork`), including a Robinhood mainnet fork against the real
+  Chainlink TSLA feed.
 
 ## Summary
 
 | Component | Robinhood Chain testnet (46630) | Arbitrum Sepolia (421614) |
 | --- | --- | --- |
 | Stock tokens (TSLA, AMZN, PLTR, NFLX, AMD) | **REAL**: official faucet Stock Tokens | STAND-IN: `TestStockToken` |
-| USDG | **REAL** Paxos USDG for `demoVaultPaxosUSDG` (configured, unfunded); STAND-IN `TestUSDG` for the fundable demo vault | STAND-IN: `TestUSDG` |
-| Stock price feeds | STAND-IN: `TestPriceFeed`, seeded from live Chainlink **mainnet** prices | STAND-IN: `TestPriceFeed` |
+| USDG | **REAL** Paxos USDG for the primary vault `demoVaultPaxosUSDG` (faucet: https://faucet.paxos.com/); STAND-IN `TestUSDG` for the fallback vault | STAND-IN: `TestUSDG` |
+| Stock price feeds | STAND-IN: `TestPriceFeed`, mirroring live Chainlink **mainnet** prices and timestamps | STAND-IN: `TestPriceFeed` |
 | L2 sequencer uptime feed | None exists: check left disabled | None exists: check left disabled |
-| Trading venue | STAND-IN: `StockDesk` (no DEX pools exist); a second desk quotes Paxos USDG for the Paxos vault | STAND-IN: `StockDesk` |
+| Trading venue | STAND-IN: `StockDesk` (no DEX pools exist); one desk per USDG | STAND-IN: `StockDesk` |
 | Vault, factory, libraries | Glance production code | Glance production code |
 
 The stand-ins live in `src/testnet/`. Each one says so in its header, the deploy script prints `[STAND-IN]` or
@@ -73,37 +83,33 @@ for TSLA, AMZN, and NFLX with mock Chainlink feeds"
 https://faucet.testnet.chain.robinhood.com. It rate-limited our automated requests (HTTP 429), so the token list
 above comes from the faucet contract itself.
 
-### USDG: real Paxos USDG, used by a configured but unfunded vault
+### USDG: real Paxos USDG, used by the primary demo vault
 
 | Candidate | Address | Status | Evidence |
 | --- | --- | --- | --- |
-| "Global Dollar" (USDG, 6 dp) | `0x7E955252E15c84f5768B83c41a71F9eba181802F` | **Verified, used by `demoVaultPaxosUSDG`** | Proxy bytecode is byte-identical to mainnet Paxos USDG (codehash `0x864cc9ad…`); implementation `USDG` verified on the explorer; moves only by `transfer` / `transferWithAuthorization`; no faucet |
+| "Global Dollar" (USDG, 6 dp) | `0x7E955252E15c84f5768B83c41a71F9eba181802F` | **Verified, used by `demoVaultPaxosUSDG`** | Proxy bytecode is byte-identical to mainnet Paxos USDG (codehash `0x864cc9ad…`); implementation `USDG` verified on the explorer; dispensed by the Paxos faucet at https://faucet.paxos.com/ (our deployer claimed 100 there) |
 | "USDG" (6 dp) | `0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec` | Community token, not used | Different bytecode; owner-controlled mint by `0x99F7F9d6…` |
 | "USD Gold (testnet)", "Mock USDG" ×2, others | several | Community tokens, not used | Explorer search for `USDG` returns at least 8 contracts |
 | `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` | - | **Mainnet only** | Listed on docs.robinhood.com/chain/contracts. It is Paxos USDG on mainnet 4663 (verified there), with no code on testnet |
 
-### The Paxos USDG demo vault
+### The two demo vaults
 
-Nothing dispenses Paxos USDG on testnet (the organizers confirmed there is no faucet). So on chain 46630 the deploy
-script creates two demo vaults:
+| Vault | USDG | Desk | Funded by | Role |
+| --- | --- | --- | --- | --- |
+| `demoVaultPaxosUSDG` `0xCafa07ac…0113` | Real Paxos USDG | `stockDeskPaxosUSDG` `0xBe32F06E…89c0` | `make fund-paxos`: 60 USDG in the vault; 40 USDG and 2 of each stock in the desk | **Primary**: the API's and the extension's default |
+| `demoVaultTestUSDG` `0xacfE90d3…Ee2D` | `TestUSDG` stand-in | `stockDesk` `0x78090980…7619` | `TestUSDG.faucet()`, 1,000 per address per UTC day | Fallback for anyone without Paxos USDG |
 
-| Vault | USDG | Funded | Purpose |
-| --- | --- | --- | --- |
-| `demoVaultTestUSDG` | `TestUSDG` stand-in | Yes, from `TestUSDG.faucet()` (1,000 per address per UTC day) | The clickable demo a judge can fund |
-| `demoVaultPaxosUSDG` | Paxos USDG `0x7E955252E15c84f5768B83c41a71F9eba181802F` | **No**: no faucet exists for this token | The same vault code, approvals, limits and freshness settings, wired to the real stablecoin |
+- A `StockDesk` quotes exactly one USDG, so each vault has its own desk over the same feeds and spread. The real Stock
+  Tokens can only come from the Robinhood faucet (only it can mint them), so `make fund-paxos` moves 2 of each from
+  the TestUSDG desk to the Paxos desk with the desks' owner `withdraw` and `seed`.
+- The factory allows one vault per owner, so the deploy script deploys the Paxos vault directly. It is the same
+  `GlanceVault` contract. Anyone else gets their own through the factory with `make create-vault`.
+- `make check-vaults` quotes a $10 TSLA buy on both vaults and simulates it through every vault guard, read-only.
 
-The Paxos vault is not a shortcut or a mock. It holds no funds only because nobody can obtain testnet Paxos USDG.
-Two details:
-
-- A `StockDesk` quotes exactly one USDG, so the Paxos vault has its own desk (`stockDeskPaxosUSDG`) over the same
-  feeds and spread. It is listed but not stocked, because the few faucet Stock Tokens go to the fundable desk.
-- The factory allows one vault per owner, so the script deploys the Paxos vault directly. It is the same `GlanceVault`
-  contract.
-
-What proves it works with the real token is `test/fork/GlanceVaultFork.t.sol`. It uses `deal()` to give a test user
-real Paxos USDG, asserts that the balance really moved, and runs deposit, buy, sell, owner withdraw and a refused agent
-withdraw against the real USDG and real Stock Tokens. `deal()` finds the balance slot of both the Paxos proxy and the
-Stock Token beacon proxies without help, so no manual slot was needed.
+`test/fork/GlanceVaultFork.t.sol` gives a test user real Paxos USDG with `deal()`, asserts that the balance really
+moved, and runs deposit, buy, sell, owner withdraw and a refused agent withdraw against the real USDG and real Stock
+Tokens. `test/fork/CreateVaultFork.t.sol` runs the README's "Try it yourself" path: a new owner's vault, configured by
+the same code as `make create-vault`, and a $10 TSLA buy by the Glance agent through the real desk.
 
 Sources: https://docs.robinhood.com/chain/contracts, the explorer (`/api/v2/search?q=USDG`), RPC bytecode comparison
 against `https://rpc.mainnet.chain.robinhood.com`.

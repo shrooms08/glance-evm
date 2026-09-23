@@ -12,7 +12,7 @@ import {TestUSDG} from "../src/testnet/TestUSDG.sol";
 /// @title SeedDemo
 /// @notice Funds a deployed Glance demo: mints TestUSDG to a named address, deposits USDG into the TestUSDG demo vault,
 ///         and prints a ready-to-use summary. Run by the vault owner (the deployer) after script/Deploy.s.sol.
-///         The Paxos USDG demo vault on Robinhood testnet is left unfunded: nothing dispenses Paxos USDG on testnet.
+///         This seeds the TestUSDG fallback vault. The primary Paxos USDG vault is funded by `make fund-paxos`.
 /// @dev Environment:
 ///        DEMO_RECIPIENT       address to receive demo USDG (optional; skipped when unset)
 ///        DEMO_USDG_AMOUNT     raw USDG minted to DEMO_RECIPIENT (default 1,000 USDG)
@@ -88,7 +88,7 @@ contract SeedDemo is Script {
         if (vm.keyExistsJson(json, ".demoVaultPaxosUSDG")) {
             console2.log("");
             console2.log("Paxos USDG demo vault ", vm.parseJsonAddress(json, ".demoVaultPaxosUSDG.address"));
-            console2.log("  configured on the real Paxos USDG, UNFUNDED (no testnet faucet); proven in test/fork");
+            console2.log("  the primary vault, on the real Paxos USDG: fund it with make fund-paxos");
         }
         console2.log("");
         console2.log("Agent buy example (from the agent key), minOut from the desk's own quote:");

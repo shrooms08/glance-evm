@@ -16,6 +16,12 @@ const envSchema = z.object({
   /** The keeper's pause switch file, reported by /health. */
   KEEPER_PAUSE_FILE: z.string().default(resolve(import.meta.dirname, "../../../keeper.paused")),
   EXPLORER_URL: z.url().default("https://explorer.testnet.chain.robinhood.com"),
+  /** Vault used when a request names none (GET /price, /health's feed states). Defaults to the deployment's primary. */
+  DEFAULT_VAULT: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, "DEFAULT_VAULT must be a 0x address")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
   AGENT_PRIVATE_KEY: z
     .string()
     .regex(hexKey, "AGENT_PRIVATE_KEY must be 0x followed by 64 hex characters")

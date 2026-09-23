@@ -5,23 +5,27 @@
     "address": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113",
     "agent": "0xa7078432F7Aa4db99F88cB181049872d1ea697a9",
     "agentExpiry": 1792668663,
-    "fundableFromFaucet": false,
-    "note": "Fully configured on the real Paxos USDG but unfunded: no testnet faucet exists for it. Proven in test/fork.",
+    "fundableFromFaucet": true,
+    "note": "Primary demo vault, on the real Paxos USDG. Anyone can claim Paxos USDG at https://faucet.paxos.com/. Stocked and funded by make fund-paxos.",
     "owner": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
     "stockDesk": "0xBe32F06E626e8cEE97cC5368Fb5e76FAaC1289c0",
     "usdg": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
-    "usdgBalance": 0
+    "usdgBalance": 0,
+    "primary": true,
+    "faucetUrl": "https://faucet.paxos.com/"
   },
   "demoVaultTestUSDG": {
     "address": "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D",
     "agent": "0xa7078432F7Aa4db99F88cB181049872d1ea697a9",
     "agentExpiry": 1792668663,
     "fundableFromFaucet": true,
-    "note": "",
+    "note": "Fallback vault on our TestUSDG stand-in, for anyone without Paxos USDG: fund it from the on-chain faucet.",
     "owner": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
     "stockDesk": "0x78090980265fc28D92A3a2f7bBA7a956b1257619",
     "usdg": "0x231504A1abC63BefC7FFa9930EB085b448b3375E",
-    "usdgBalance": 0
+    "usdgBalance": 0,
+    "primary": false,
+    "faucetUrl": "TestUSDG.faucet(amount) on 0x231504A1abC63BefC7FFa9930EB085b448b3375E (1,000 per address per UTC day)"
   },
   "deployer": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
   "factory": {
@@ -115,5 +119,6 @@
     "address": "0x231504A1abC63BefC7FFa9930EB085b448b3375E",
     "real": false,
     "source": "TestUSDG (public faucet)"
-  }
+  },
+  "primaryVault": "demoVaultPaxosUSDG"
 }

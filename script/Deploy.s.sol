@@ -21,8 +21,9 @@ import {TestUSDG} from "../src/testnet/TestUSDG.sol";
 ///      deployments/<chainid>.json is written only on a real broadcast; dry runs write <chainid>.dry-run.json.
 ///
 ///      On Robinhood Chain testnet it deploys two demo vaults:
-///        demoVaultTestUSDG   on TestUSDG, which anyone can fund from its faucet (the clickable demo)
-///        demoVaultPaxosUSDG  on the real Paxos USDG, fully configured but unfunded: no faucet exists for it
+///        demoVaultPaxosUSDG  on the real Paxos USDG (https://faucet.paxos.com/): the primary demo vault. The deploy
+///                            configures it; `make fund-paxos` stocks its desk and funds it.
+///        demoVaultTestUSDG   on TestUSDG, which anyone can fund from its on-chain faucet: the fallback
 ///
 ///      Environment (all optional except the broadcaster key, which is passed on the command line):
 ///        AGENT_ADDRESS          agent key to authorise on the demo vaults
@@ -50,8 +51,11 @@ contract Deploy is Script {
 
     string internal constant RH_FAUCET = "https://faucet.testnet.chain.robinhood.com";
     string internal constant SNAPSHOT_SOURCE = "snapshot: Chainlink Robinhood mainnet, 2026-09-23";
+    string internal constant PAXOS_FAUCET = "https://faucet.paxos.com/";
     string internal constant PAXOS_NOTE =
-        "Fully configured on the real Paxos USDG but unfunded: no testnet faucet exists for it. Proven in test/fork.";
+        "Primary demo vault, on the real Paxos USDG. Anyone can claim Paxos USDG at https://faucet.paxos.com/. Stocked and funded by make fund-paxos.";
+    string internal constant TEST_NOTE =
+        "Fallback vault on our TestUSDG stand-in, for anyone without Paxos USDG: fund it from the on-chain faucet.";
 
     /// @dev One listed stock and where each of its parts came from.
     struct Stock {
@@ -342,7 +346,7 @@ contract Deploy is Script {
             console2.log("demoVaultPaxosUSDG        [glance]  ", address(_paxosVault));
             console2.log("  on Paxos USDG           [REAL]    ", PAXOS_USDG_RH_TESTNET);
             console2.log("  StockDesk (Paxos USDG)  [STAND-IN]", address(_paxosDesk));
-            console2.log("  configured, UNFUNDED: no testnet faucet exists for Paxos USDG");
+            console2.log("  primary demo vault; next: make fund-paxos (Paxos USDG from https://faucet.paxos.com/)");
         }
         for (uint256 i; i < _stocks.length; ++i) {
             Stock memory s = _stocks[i];
@@ -385,8 +389,25 @@ contract Deploy is Script {
             "stockDesk",
             _contractJson("desk", address(_desk), "testnet stand-in (oracle-priced desk, not an AMM)")
         );
-        vm.serializeString(root, "demoVaultTestUSDG", _vaultJson("vaultTest", _vault, _usdg, _desk, true, ""));
-        if (address(_paxosVault) != address(0)) {
+        bool paxosPrimary = address(_paxosVault) != address(0);
+        vm.serializeString(root, "primaryVault", paxosPrimary ? "demoVaultPaxosUSDG" : "demoVaultTestUSDG");
+        vm.serializeString(
+            root,
+            "demoVaultTestUSDG",
+            _vaultJson(
+                "vaultTest",
+                _vault,
+                _usdg,
+                _desk,
+                VaultMeta({
+                    fundable: true,
+                    primary: !paxosPrimary,
+                    faucetUrl: _testFaucet(),
+                    note: paxosPrimary ? TEST_NOTE : ""
+                })
+            )
+        );
+        if (paxosPrimary) {
             vm.serializeString(
                 root,
                 "stockDeskPaxosUSDG",
@@ -395,7 +416,13 @@ contract Deploy is Script {
             vm.serializeString(
                 root,
                 "demoVaultPaxosUSDG",
-                _vaultJson("vaultPaxos", _paxosVault, PAXOS_USDG_RH_TESTNET, _paxosDesk, false, PAXOS_NOTE)
+                _vaultJson(
+                    "vaultPaxos",
+                    _paxosVault,
+                    PAXOS_USDG_RH_TESTNET,
+                    _paxosDesk,
+                    VaultMeta({fundable: true, primary: true, faucetUrl: PAXOS_FAUCET, note: PAXOS_NOTE})
+                )
             );
         }
         string memory json = vm.serializeString(root, "stocks", _stocksJson());
@@ -417,14 +444,23 @@ contract Deploy is Script {
         return vm.serializeString(key, "kind", kind);
     }
 
-    function _vaultJson(
-        string memory key,
-        GlanceVault vault,
-        address usdg,
-        StockDesk desk,
-        bool fundable,
-        string memory note
-    ) internal returns (string memory) {
+    /// @dev What the deployment record says about a demo vault beyond its on-chain state.
+    struct VaultMeta {
+        bool fundable;
+        bool primary;
+        string faucetUrl;
+        string note;
+    }
+
+    function _testFaucet() internal view returns (string memory) {
+        if (_usdgReal) return "";
+        return string.concat("TestUSDG.faucet(amount) on ", vm.toString(_usdg), " (1,000 per address per UTC day)");
+    }
+
+    function _vaultJson(string memory key, GlanceVault vault, address usdg, StockDesk desk, VaultMeta memory meta)
+        internal
+        returns (string memory)
+    {
         vm.serializeAddress(key, "address", address(vault));
         vm.serializeAddress(key, "usdg", usdg);
         vm.serializeAddress(key, "stockDesk", address(desk));
@@ -432,8 +468,10 @@ contract Deploy is Script {
         vm.serializeAddress(key, "agent", vault.agent());
         vm.serializeUint(key, "agentExpiry", vault.agentExpiry());
         vm.serializeUint(key, "usdgBalance", IERC20(usdg).balanceOf(address(vault)));
-        vm.serializeBool(key, "fundableFromFaucet", fundable);
-        return vm.serializeString(key, "note", note);
+        vm.serializeBool(key, "fundableFromFaucet", meta.fundable);
+        vm.serializeBool(key, "primary", meta.primary);
+        vm.serializeString(key, "faucetUrl", meta.faucetUrl);
+        return vm.serializeString(key, "note", meta.note);
     }
 
     function _stocksJson() internal returns (string memory out) {

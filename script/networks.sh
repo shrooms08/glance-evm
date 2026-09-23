@@ -6,7 +6,7 @@ case "$1" in
     RPC="${ROBINHOOD_TESTNET_RPC:-https://rpc.testnet.chain.robinhood.com}"
     VERIFIER_URL="https://explorer.testnet.chain.robinhood.com/api/"
     EXPLORER="https://explorer.testnet.chain.robinhood.com"
-    PLAN="factory, StockDesk, TestUSDG, TestPriceFeeds; list the REAL faucet Stock Tokens; seed desk; demoVaultTestUSDG; demoVaultPaxosUSDG + its desk on the REAL Paxos USDG (configured, unfunded)"
+    PLAN="factory, StockDesk, TestUSDG, TestPriceFeeds; list the REAL faucet Stock Tokens; seed desk; demoVaultTestUSDG; demoVaultPaxosUSDG + its desk on the REAL Paxos USDG (then make fund-paxos stocks and funds it)"
     ;;
   arbsepolia)
     NETWORK_NAME="Arbitrum Sepolia"; CHAIN_ID=421614

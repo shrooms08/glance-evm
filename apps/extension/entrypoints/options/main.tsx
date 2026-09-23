@@ -17,6 +17,8 @@ import {
   apiBaseUrl,
   consoleUrl,
   DEFAULT_API_URL,
+  DEFAULT_VAULT,
+  DEMO_VAULTS,
   defaultMode,
   hotkeyLetter,
   isAddress,
@@ -28,6 +30,8 @@ import {
 
 type Test = { state: "idle" } | { state: "running" } | { state: "ok"; health: Health } | { state: "failed"; message: string };
 
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.toLowerCase();
+
 function isLocal(url: string) {
   try {
     return ["localhost", "127.0.0.1"].includes(new URL(url).hostname);
@@ -37,7 +41,7 @@ function isLocal(url: string) {
 }
 
 function Settings() {
-  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: "", hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true });
+  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: DEFAULT_VAULT as string, hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true });
   const [saved, setSaved] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [test, setTest] = useState<Test>({ state: "idle" });
@@ -119,14 +123,19 @@ function Settings() {
           <Field label="API base URL" hint="Where the Glance API runs. Default http://localhost:8790." error={errors.api}>
             <input className="g-input" value={form.api} onChange={(e) => set("api", e.target.value.trim())} spellCheck={false} />
           </Field>
-          <Field label="Vault address" hint="The vault the agent trades for." error={errors.vault}>
-            <div className="g-row">
-              <input className="g-input g-mono g-grow" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
-              {test.state === "ok" && test.health.demoVaults.testUSDG !== form.vault && (
-                <button className="g-btn" onClick={() => set("vault", test.health.demoVaults.testUSDG)}>
-                  Use the demo vault
-                </button>
-              )}
+          <Field
+            label="Vault address"
+            hint="The vault the agent trades for. The default is the demo vault on real Paxos USDG. No Paxos USDG? The TestUSDG demo vault works the same, funded from its own on-chain faucet."
+            error={errors.vault}
+          >
+            <input className="g-input g-mono" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
+            <div className="g-chips" role="group" aria-label="Demo vaults">
+              <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.paxosUSDG)} onClick={() => set("vault", DEMO_VAULTS.paxosUSDG)} style={{ fontFamily: "var(--g-font)" }}>
+                Demo vault · Paxos USDG
+              </button>
+              <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.testUSDG)} onClick={() => set("vault", DEMO_VAULTS.testUSDG)} style={{ fontFamily: "var(--g-font)" }}>
+                Demo vault · TestUSDG
+              </button>
             </div>
           </Field>
           <div className="g-row">

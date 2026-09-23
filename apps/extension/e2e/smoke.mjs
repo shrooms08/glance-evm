@@ -8,6 +8,7 @@ const url = process.argv[2] || "https://www.cnbc.com/2026/09/04/teslas-stock-dro
 const out = resolve(process.argv[3] || "e2e/out");
 mkdirSync(out, { recursive: true });
 const ext = resolve(".output/chrome-mv3");
+// The TestUSDG fallback vault: its $150 -> $100 retry needs more than the Paxos vault's 60 USDG to reach a review.
 const DEMO_VAULT = process.env.DEMO_VAULT ?? "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D";
 
 const ctx = await chromium.launchPersistentContext("", {

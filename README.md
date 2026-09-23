@@ -4,27 +4,80 @@ Buy tokenized stocks from any headline, through an agent that cannot overspend.
 
 Built for the Arbitrum Open House Singapore Buildathon (Sep 14 to Oct 4, 2026), targeting Robinhood Chain.
 
-- An onchain vault holds the funds and enforces every limit: per-buy cap, rolling 24h cap, approved token list, agent expiry, pause, and a maximum price deviation checked against Chainlink.
-- A weekend guard reads Chainlink's market status. When the stock market is closed and the price goes stale, the vault tightens caps and refuses trades.
+- An onchain vault holds the funds and enforces every limit: per-buy cap, rolling 24h caps for buys and sells,
+  approved token list, agent expiry, pause, and a maximum slippage checked against the oracle price.
+- A market guard reads each price's age: when the stock market is closed the vault cuts its caps to 25%, and when a
+  price is too old it refuses to trade.
 - The browser extension recognises companies on a page and buys in one tap, with no wallet popup.
 
-Status: in development. Contracts, deployed addresses and demo video to follow.
+Status: deployed on Robinhood Chain testnet (addresses in [deployments/46630.json](deployments/46630.json)). The demo
+runs on real Paxos USDG.
+
+## What is real, and what is ours
+
+On Robinhood Chain testnet:
+
+| Part | Real or ours | Why |
+| --- | --- | --- |
+| USDG | **Real Paxos USDG**, claimable by anyone at https://faucet.paxos.com/ | It exists on testnet |
+| Stock Tokens (TSLA, AMZN, PLTR, NFLX, AMD) | **Real**: the official ones from the Robinhood faucet, https://faucet.testnet.chain.robinhood.com | They exist on testnet |
+| Price feeds | **Ours**, mirroring the live Robinhood Chain **mainnet** Chainlink feeds, including their timestamps (NFLX, which has no Chainlink feed, mirrors a public quote) | The testnet has no Chainlink feeds |
+| Trading desk | **Ours**: an oracle-priced desk holding real Stock Tokens and real USDG, not an AMM | No DEX pool exists for these tokens on testnet |
+| Vault, factory, extension, API | Glance's own code | |
+
+A second demo vault on our `TestUSDG` stand-in, with its own on-chain faucet, stays available as a fallback for anyone
+without Paxos USDG. Every address, how it was verified, and the limits of each stand-in are in
+[docs/CHAIN_NOTES.md](docs/CHAIN_NOTES.md).
+
+## Try it yourself
+
+You need a browser wallet (for example MetaMask) on Robinhood Chain testnet, and about 10 minutes.
+
+1. **Add Robinhood Chain testnet** to your wallet: RPC `https://rpc.testnet.chain.robinhood.com`, chain ID `46630`,
+   currency ETH, explorer `https://explorer.testnet.chain.robinhood.com`.
+2. **Claim testnet ETH** (for gas) at https://faucet.testnet.chain.robinhood.com. The same claim also sends a few real
+   Stock Tokens; you won't need them.
+3. **Claim USDG** at https://faucet.paxos.com/ for Robinhood Chain testnet, to your wallet address.
+   (No Paxos USDG? Use the TestUSDG fallback in step 4; it takes test USDG from its own faucet for you.)
+4. **Create and fund your vault.** You need [Foundry](https://getfoundry.sh) and this repository:
+   ```sh
+   git clone <this repository> && cd glance-evm && forge install
+   cp .env.example .env            # put your testnet wallet's private key in PRIVATE_KEY
+   make create-vault               # real Paxos USDG, deposits 10 USDG
+   # or: make create-vault VAULT_USDG=test DEPOSIT=100   (TestUSDG fallback)
+   ```
+   It creates your vault, lets the Glance agent trade for it within the vault's limits ($100 per trade, $500 per day,
+   25% of that when the market is closed), approves the five stocks with their price feeds, and deposits. It shows
+   the transactions and asks before sending. Note the vault address it prints. You stay the owner: you can withdraw,
+   pause or revoke the agent at any time.
+5. **Install the extension**: follow [apps/extension/README.md](apps/extension/README.md) (load it unpacked in Chrome).
+   In Glance's settings, set the **API base URL** to the Glance API you were given for judging (or run your own, see
+   [apps/api/README.md](apps/api/README.md)) and paste **your vault address**. Click Save; the connection test should
+   show the chain and fresh prices.
+6. **Buy from a headline.** Open a news article about Tesla, Amazon, Palantir, Netflix or AMD. Hover the underlined
+   name, pick $10, check the preflight, and confirm. The receipt links to your transaction on the explorer. Try $150
+   to see the vault refuse it and explain why.
+
+Just want to look? The extension defaults to our demo vault on real Paxos USDG, so steps 5 and 6 work without steps 1
+to 4 (trades then spend the demo vault's USDG).
 
 ## Contracts and deployment
 
 - `src/`: the vault (`GlanceVault`), its factory, and the libraries it uses. This is the production code.
-- `src/testnet/`: clearly labelled stand-ins for what the testnets lack: `TestUSDG` (public faucet),
-  `TestStockToken`, `TestPriceFeed`, and `StockDesk`, an oracle-priced demo venue (not an AMM).
+- `src/testnet/`: clearly labelled stand-ins for what the testnets lack: `TestPriceFeed`, `StockDesk` (an
+  oracle-priced demo venue, not an AMM), `TestUSDG` (the fallback's faucet token) and `TestStockToken` (Arbitrum
+  Sepolia only).
 - [docs/CHAIN_NOTES.md](docs/CHAIN_NOTES.md) lists every address we found on Robinhood Chain testnet and
-  Arbitrum Sepolia, how each was verified, and what is real versus stand-in. On Robinhood Chain testnet, Glance trades
-  the real faucet Stock Tokens (TSLA, AMZN, PLTR, NFLX, AMD) at prices mirrored from live Chainlink mainnet feeds.
+  Arbitrum Sepolia, how each was verified, and what is real versus stand-in.
 
 ```sh
 cp .env.example .env         # set PRIVATE_KEY, optionally AGENT_ADDRESS
 make test
 make dry-run-robinhood       # simulate, sends nothing
 make deploy-robinhood        # deploy + verify on Blockscout; writes deployments/46630.json
-make seed                    # fund the demo vault
+make fund-paxos              # stock the Paxos desk and fund the primary vault with real Paxos USDG (idempotent)
+make check-vaults            # read-only: both demo vaults quote a $10 TSLA buy and pass the on-chain preflight
+make seed                    # fund the TestUSDG fallback vault
 make weekend                 # back-date the stand-in feeds to demo the closed-market caps
 ```
 

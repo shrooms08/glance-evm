@@ -1,12 +1,12 @@
 /**
  * Everything a request handler needs, built once at startup.
  */
-import type { Address, Chain, PublicClient } from "viem";
+import { getAddress, type Address, type Chain, type PublicClient } from "viem";
 
 import { buildCatalog, loadCatalogText, loadPriceSources, type Catalog } from "./catalog.js";
 import { chainFor, createChainClient } from "./chain.js";
 import type { Config } from "./config.js";
-import { desksOf, loadDeployment, type Deployment } from "./deployment.js";
+import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
 import { Resolver } from "./resolver.js";
 import { loadAgentSigner, type AgentSigner } from "./signer.js";
@@ -21,6 +21,8 @@ export interface AppContext {
   resolver: Resolver;
   llm: LlmResolver | null;
   desks: Address[];
+  /** The vault used when a request names none: DEFAULT_VAULT, else the deployment's primary vault. */
+  defaultVault: Address;
 }
 
 export function createContext(config: Config): AppContext {
@@ -38,5 +40,6 @@ export function createContext(config: Config): AppContext {
     resolver: new Resolver(catalog.text),
     llm: createLlmResolver(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, catalog.text),
     desks: desksOf(deployment),
+    defaultVault: config.DEFAULT_VAULT ? getAddress(config.DEFAULT_VAULT) : primaryVault(deployment).address,
   };
 }

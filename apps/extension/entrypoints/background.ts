@@ -6,7 +6,7 @@ import { browser } from "wxt/browser";
 import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
-import { apiBaseUrl, vaultAddress } from "../lib/settings";
+import { apiBaseUrl } from "../lib/settings";
 import type { OffscreenRequest, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
 
 const READ_TIMEOUT_MS = 15_000;
@@ -126,7 +126,8 @@ export default defineBackground(() => {
   browser.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
-    if (reason === "install" && !(await vaultAddress.getValue())) await browser.runtime.openOptionsPage();
+    // First install: open settings (the connection test, the extension ID for CORS, and "Enable voice").
+    if (reason === "install") await browser.runtime.openOptionsPage();
   });
 
   browser.runtime.onConnect.addListener((port) => {

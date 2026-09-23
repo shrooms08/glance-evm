@@ -44,6 +44,10 @@ describe.skipIf(!online)("live testnet", () => {
     expect(body.agent.address).toBe(ctx!.deployment.demoVaultTestUSDG.agent);
     expect(body.agent.keyLoaded).toBe(false);
     expect(Number(body.agent.ethBalance)).toBeGreaterThanOrEqual(0);
+    // Real Paxos USDG is the headline; the TestUSDG vault stays available as the fallback.
+    expect(body.demoVaults.primary).toBe(ctx!.deployment.demoVaultPaxosUSDG!.address);
+    expect(body.demoVaults.testUSDG).toBe(ctx!.deployment.demoVaultTestUSDG.address);
+    expect(body.demoVaults.faucets.paxosUSDG).toBe("https://faucet.paxos.com/");
     // No key material, ever: no key-like field names, and no 32-byte hex value outside a transaction hash.
     const text = JSON.stringify(body);
     expect(text).not.toMatch(/private|secret|mnemonic/i);
@@ -84,14 +88,15 @@ describe.skipIf(!online)("live testnet", () => {
     expect(BigInt(body.price.raw)).toBeGreaterThan(0n);
     expect(body.price.decimals).toBe(8);
     expect(["OPEN", "CLOSED", "STALE"]).toContain(body.marketState);
-    // Whatever the vault's owner has set for TSLA on chain (defaults 1h/80h; the demo uses 20h/96h).
+    // With no vault named, the default (the primary, Paxos USDG, vault) and whatever its owner set for TSLA on chain.
+    const defaultVault = ctx!.defaultVault;
     const [, , openMaxAge, closedMaxAge] = await ctx!.client.readContract({
-      address: vault!,
+      address: defaultVault,
       abi: glanceVaultAbi,
       functionName: "tokenConfig",
       args: [(ctx!.deployment.stocks.TSLA as any).token],
     });
-    expect(body.freshness).toMatchObject({ vault, openMaxAge, closedMaxAge });
+    expect(body.freshness).toMatchObject({ vault: defaultVault, openMaxAge, closedMaxAge });
     expect(body.ageSeconds).toBeGreaterThanOrEqual(0);
     expect(body.priceSourceKind).toBe("mainnet-mirror");
     expect(body.mainnetFeed).toBe("0x4A1166a659A55625345e9515b32adECea5547C38");
