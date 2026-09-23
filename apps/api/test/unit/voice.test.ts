@@ -1,12 +1,22 @@
 import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
 import { extractAmounts, wordsToNumber } from "../../src/voice/amounts.js";
 import { blocksTrade, rulesIntent, understand, validateIntent, type Intent, type IntentModel } from "../../src/voice/intent.js";
-import { deepgram, fish, looksLikePlaceholder, selectVoiceProviders, withPhraseCache, type Speaker } from "../../src/voice/providers.js";
+import {
+  deepgram,
+  deepgramSpeaker,
+  fish,
+  looksLikePlaceholder,
+  ProviderError,
+  selectVoiceProviders,
+  withFallThrough,
+  withPhraseCache,
+  type Speaker,
+} from "../../src/voice/providers.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const baseEnv = { NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" };
@@ -130,17 +140,31 @@ describe("provider selection and fallback", () => {
     FISH_VOICE_ID: "790560d72d4d455ba0464995cd534f27",
     FISH_LATENCY: "balanced" as const,
     INTENT_MODEL: "claude-haiku-4-5",
+    DEEPGRAM_TTS_VOICE: "aura-2-athena-en",
+    VOICE_TTS: "deepgram" as const,
   };
   it("recognises placeholder keys", () => {
     for (const k of [undefined, "", "PASTE_YOUR_KEY_HERE", "YOUR_API_KEY", "changeme", "xxxxxxxxxxxxxxxxxxxx", "short"]) expect(looksLikePlaceholder(k)).toBe(true);
     expect(looksLikePlaceholder(REAL_LOOKING)).toBe(false);
   });
-  it("uses Deepgram and Fish when both keys are real", () => {
-    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING });
+  it("speaks with Deepgram Aura by default, with Fish as the fall-through", () => {
+    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING }, { log: () => {} });
     expect(v.stt?.name).toBe("deepgram");
-    expect(v.tts?.name).toBe("fish");
-    expect(v.status.transcription).toBe("deepgram (nova-3)");
+    expect(v.tts?.name).toBe("deepgram");
+    expect(v.tts?.voice).toBe("aura-2-athena-en");
+    expect(v.status.speech).toBe("deepgram aura (aura-2-athena-en), falls through to fish (s2.1-pro, voice 790560d72d4d455ba0464995cd534f27) on 401/402/429");
     expect(v.status.warnings).toEqual([]);
+  });
+  it("VOICE_TTS=fish puts Fish first, with Deepgram as the fall-through", () => {
+    const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING, FISH_MODEL: "s1" }, { log: () => {} });
+    expect(v.tts?.name).toBe("fish");
+    expect(v.tts?.model).toBe("s1");
+    expect(v.status.speech).toMatch(/^fish \(s1, .*falls through to deepgram aura/);
+  });
+  it("VOICE_TTS=fish without a Fish key uses Deepgram, and says so", () => {
+    const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: REAL_LOOKING }, { log: () => {} });
+    expect(v.tts?.name).toBe("deepgram");
+    expect(v.status.warnings.join()).toMatch(/VOICE_TTS=fish but FISH_API_KEY is not set/);
   });
   it("falls back to the browser (no server provider) without keys, and warns about placeholders", () => {
     const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: "PASTE_YOUR_KEY_HERE", FISH_API_KEY: undefined });
@@ -165,7 +189,7 @@ describe("Deepgram adapter", () => {
       return new Response(JSON.stringify({ results: { channels: [{ alternatives: [{ transcript: "buy $10 of Tesla", confidence: 0.97 }] }] } }));
     });
     const dg = deepgram({ apiKey: REAL_LOOKING, model: "nova-3", fetch: fetchFn as unknown as typeof fetch });
-    expect(await dg.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", ["Tesla"])).toEqual({ text: "buy $10 of Tesla", confidence: 0.97 });
+    expect(await dg.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", ["Tesla"])).toMatchObject({ text: "buy $10 of Tesla", confidence: 0.97 });
   });
   it("errors name the status, never the key", async () => {
     const dg = deepgram({ apiKey: REAL_LOOKING, model: "nova-3", fetch: (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch });
@@ -174,39 +198,239 @@ describe("Deepgram adapter", () => {
     expect(String(err)).not.toContain(REAL_LOOKING);
   });
 
-  it("live: streams chunks as they come, buffers them until the socket opens, and CloseStream returns the transcript", async () => {
-    const sent: unknown[] = [];
-    let socket: FakeSocket;
+  describe("live, with Finalize and a warm connection", () => {
+    const sockets: FakeSocket[] = [];
     class FakeSocket {
+      readyState = 0;
       binaryType = "";
+      sent: unknown[] = [];
       onopen: (() => void) | null = null;
       onmessage: ((m: { data: string }) => void) | null = null;
-      onclose: ((e: { code: number }) => void) | null = null;
+      onclose: (() => void) | null = null;
       onerror: (() => void) | null = null;
+      /** What to answer when Finalize arrives: a from_finalize result (default), or nothing. */
+      answer: string | null = "what's Tesla at";
+      /** Or a custom handler (for timeline tests): called on each Finalize. */
+      onFinalize: (() => void) | null = null;
+      finalizes = 0;
       constructor(
         public url: string,
         public init: { headers: Record<string, string> },
       ) {
-        socket = this;
+        sockets.push(this);
+      }
+      open() {
+        this.readyState = 1;
+        this.onopen?.();
+      }
+      result(text: string, fromFinalize = false, window?: { start: number; duration: number }, isFinal = true) {
+        this.onmessage?.({
+          data: JSON.stringify({ type: "Results", is_final: isFinal, from_finalize: fromFinalize, ...window, channel: { alternatives: [{ transcript: text, confidence: 0.9 }] } }),
+        });
       }
       send(d: unknown) {
-        sent.push(d);
-        if (typeof d === "string" && JSON.parse(d).type === "CloseStream") {
-          this.onmessage?.({ data: JSON.stringify({ type: "Results", is_final: true, channel: { alternatives: [{ transcript: "what's Tesla at", confidence: 0.9 }] } }) });
-          this.onclose?.({ code: 1000 });
-        }
+        this.sent.push(d);
+        if (typeof d !== "string" || JSON.parse(d).type !== "Finalize") return;
+        this.finalizes++;
+        if (this.onFinalize) this.onFinalize();
+        else if (this.answer !== null) this.result(this.answer, true);
       }
-      close() {}
+      close() {
+        this.readyState = 3;
+        this.onclose?.();
+      }
     }
-    const dg = deepgram({ apiKey: REAL_LOOKING, model: "nova-3", WebSocket: FakeSocket as never });
-    const live = dg.stream(["Tesla"]);
-    expect(socket!.init.headers.Authorization).toBe(`Token ${REAL_LOOKING}`);
-    live.send(new Uint8Array([1])); // before open: buffered
-    socket!.onopen!();
-    live.send(new Uint8Array([2]));
-    expect(sent).toHaveLength(2);
-    expect(await live.finish()).toEqual({ text: "what's Tesla at", confidence: 0.9 });
-    expect(sent.at(-1)).toBe(JSON.stringify({ type: "CloseStream" }));
+    const make = (o: object = {}) => deepgram({ apiKey: REAL_LOOKING, model: "nova-3", WebSocket: FakeSocket as never, finishTimeoutMs: 500, ...o });
+    const audio = (n: number) => sockets[n]!.sent.filter((d) => d instanceof Uint8Array);
+    const json = (n: number) => sockets[n]!.sent.filter((d): d is string => typeof d === "string").map((d) => JSON.parse(d).type);
+
+    beforeEach(() => {
+      sockets.length = 0;
+    });
+
+    it("asks for raw 16kHz PCM with our keyterms, the key only in the Authorization header", () => {
+      make().stream(["Tesla", "TSLA"]);
+      const u = new URL(sockets[0]!.url);
+      expect(u.origin + u.pathname).toBe("wss://api.deepgram.com/v1/listen");
+      expect(Object.fromEntries([...u.searchParams].filter(([k]) => k !== "keyterm"))).toMatchObject({ model: "nova-3", encoding: "linear16", sample_rate: "16000", channels: "1", endpointing: "100", smart_format: "true" });
+      expect(u.searchParams.getAll("keyterm")).toEqual(["Tesla", "TSLA"]);
+      expect(sockets[0]!.init.headers.Authorization).toBe(`Token ${REAL_LOOKING}`);
+      expect(sockets[0]!.url).not.toContain(REAL_LOOKING);
+    });
+
+    it("on release sends Finalize and answers with the first from_finalize result, without waiting for silence", async () => {
+      const live = make().stream(["Tesla"]);
+      live.send(new Uint8Array([1])); // before open: buffered
+      sockets[0]!.open();
+      live.send(new Uint8Array([2])); // just after open: must still go out after the buffered chunk
+      await new Promise((r) => setTimeout(r, 0));
+      expect(audio(0).map((c) => [...(c as Uint8Array)])).toEqual([[1], [2]]);
+      const t = await live.finish();
+      expect(json(0)).toEqual(["Finalize"]);
+      expect(t).toMatchObject({ text: "what's Tesla at", timing: { warm: false } });
+    });
+
+    it("reuses the warm connection for the next command: no second handshake", async () => {
+      const dg = make();
+      const first = dg.stream(["Tesla"]);
+      sockets[0]!.open();
+      first.send(new Uint8Array([1]));
+      await first.finish();
+      const second = dg.stream(["Tesla"]);
+      second.send(new Uint8Array([2]));
+      const t = await second.finish();
+      expect(sockets).toHaveLength(1);
+      expect(t.timing).toMatchObject({ warm: true, connectMs: 0 });
+    });
+
+    it("warm() opens the connection ahead of the first command", async () => {
+      const dg = make();
+      dg.warm!(["Tesla"]);
+      sockets[0]!.open();
+      const live = dg.stream(["Tesla"]);
+      live.send(new Uint8Array([1]));
+      expect((await live.finish()).timing?.warm).toBe(true);
+      expect(sockets).toHaveLength(1);
+    });
+
+    it("if Deepgram had already finalised everything, takes what it has after a short grace", async () => {
+      const live = make().stream([]);
+      sockets[0]!.open();
+      sockets[0]!.answer = null; // no from_finalize will come
+      sockets[0]!.result("buy ten dollars of Tesla"); // finalised by endpointing, before release
+      await expect(live.finish()).resolves.toMatchObject({ text: "buy ten dollars of Tesla" });
+    });
+
+    it("a second command while the warm connection is busy gets its own connection, closed after", async () => {
+      const dg = make();
+      const a = dg.stream([]);
+      sockets[0]!.open();
+      const b = dg.stream([]);
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.open();
+      await b.finish();
+      expect(sockets[1]!.readyState).toBe(3);
+      await a.finish();
+      expect(sockets[0]!.readyState).toBe(1); // the warm one stays
+    });
+
+    /** 1s of 16kHz 16-bit mono PCM. */
+    const second = () => new Uint8Array(32_000);
+
+    it("a Finalize answer that stops short of the audio is asked again, and the parts are joined", async () => {
+      const live = make().stream([]);
+      const s = sockets[0]!;
+      s.open();
+      live.send(second());
+      live.send(second());
+      let n = 0;
+      s.onFinalize = () => {
+        n++;
+        if (n === 1) s.result("buy ten dollars of", true, { start: 0, duration: 1.2 }); // only what it had processed
+        else s.result("Tesla", true, { start: 1.2, duration: 0.8 });
+      };
+      const t = await live.finish();
+      expect(t.text).toBe("buy ten dollars of Tesla");
+      expect(s.finalizes).toBe(2);
+    });
+
+    it("ignores a late result that belongs to the previous command on the reused connection", async () => {
+      const dg = make();
+      const first = dg.stream([]);
+      const s = sockets[0]!;
+      s.open();
+      first.send(second());
+      s.onFinalize = () => s.result("what's Tesla at", true, { start: 0, duration: 1 });
+      await first.finish();
+      const next = dg.stream([]);
+      next.send(second());
+      s.onFinalize = () => {
+        s.result("stale", true, { start: 0, duration: 0.9 }); // ends before this command began
+        s.result("buy Amazon", true, { start: 1, duration: 1 });
+      };
+      expect((await next.finish()).text).toBe("buy Amazon");
+    });
+
+    it("a connection that opened late (a burst of backlog) lets Deepgram catch up before finalising", async () => {
+      vi.useFakeTimers();
+      const live = make({ finishTimeoutMs: 5_000 }).stream([]);
+      const s = sockets[0]!;
+      s.answer = null; // this test plays Deepgram's answers itself
+      live.send(second()); // buffered while connecting: arrives as a 1s burst
+      s.open();
+      await vi.advanceTimersByTimeAsync(0);
+      const done = live.finish();
+      expect(s.finalizes).toBe(0); // not yet: Deepgram is still processing the burst
+      s.result("buy ten dollars", false, { start: 0, duration: 0.8 }, false); // interim: processed up to 0.8s
+      expect(s.finalizes).toBe(1); // within 0.3s of the release: finalise now
+      s.result("buy ten dollars of Tesla", true, { start: 0, duration: 1 });
+      await expect(done).resolves.toMatchObject({ text: "buy ten dollars of Tesla" });
+      vi.useRealTimers();
+    });
+
+    it("an abandoned command closes its connection, so the next starts clean", async () => {
+      const dg = make();
+      const a = dg.stream([]);
+      sockets[0]!.open();
+      a.send(new Uint8Array([1]));
+      a.abort();
+      expect(sockets[0]!.readyState).toBe(3);
+      dg.stream([]);
+      expect(sockets).toHaveLength(2);
+    });
+  });
+});
+
+describe("Deepgram Aura speech", () => {
+  it("posts the text to /v1/speak with the Aura voice, mp3, the key only in the header", async () => {
+    const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("https://api.deepgram.com/v1/speak?model=aura-2-athena-en&encoding=mp3");
+      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${REAL_LOOKING}`);
+      expect(JSON.parse(String(init!.body))).toEqual({ text: "Tesla is at $380." });
+      return new Response(new Uint8Array([1, 2]), { headers: { "content-type": "audio/mpeg" } });
+    });
+    const s = deepgramSpeaker({ apiKey: REAL_LOOKING, voice: "aura-2-athena-en", fetch: fetchFn as unknown as typeof fetch });
+    expect([...(await s.speak("Tesla is at $380.")).audio]).toEqual([1, 2]);
+  });
+});
+
+describe("speech fall-through", () => {
+  const speaker = (name: string, fail?: number): Speaker & { calls: number } => {
+    const s = {
+      name,
+      model: "m",
+      voice: "v",
+      calls: 0,
+      speak: async () => {
+        s.calls++;
+        if (fail) throw new ProviderError(name, fail, `${name} answered ${fail}`);
+        return { audio: new Uint8Array([name.length]), mime: "audio/mpeg" };
+      },
+    };
+    return s;
+  };
+
+  it.each([401, 402, 429])("hands the request to the next provider on %i, with one warning", async (status) => {
+    const warn = vi.fn();
+    const first = speaker("deepgram", status);
+    const second = speaker("fish");
+    const chain = withFallThrough([first, second], warn);
+    expect([...(await chain.speak("hi")).audio]).toEqual([4]);
+    await chain.speak("again");
+    expect(second.calls).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatch(new RegExp(`deepgram answered ${status}.*using fish instead`));
+    expect(warn.mock.calls[0]![0]).not.toContain(REAL_LOOKING);
+  });
+
+  it("any other failure is final (a server error isn't a billing problem)", async () => {
+    const chain = withFallThrough([speaker("deepgram", 500), speaker("fish")], () => {});
+    await expect(chain.speak("hi")).rejects.toThrow("deepgram answered 500");
+  });
+
+  it("the last provider's refusal is reported", async () => {
+    const chain = withFallThrough([speaker("fish", 402)], () => {});
+    await expect(chain.speak("hi")).rejects.toThrow("fish answered 402");
   });
 });
 

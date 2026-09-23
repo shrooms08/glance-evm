@@ -238,10 +238,11 @@ page) and never holds a key.
 
 | Endpoint | In | Out | Provider |
 | --- | --- | --- | --- |
-| `WS /voice/stream[?vault=0x…]` | audio chunks while Option+V is held; `{"type":"stop"}` on release | `{"type":"transcript","text","confidence","ms"}` | Deepgram live, `nova-3`, keyterms = our companies and tickers |
+| `WS /voice/stream[?vault=0x…]` | raw 16kHz 16-bit mono PCM in 40ms slices while Option+V is held; `{"type":"stop"}` on release | `{"type":"transcript","text","confidence","ms","timing"}` | Deepgram live, `nova-3`, keyterms = our companies and tickers; `Finalize` on release |
 | `POST /voice/transcribe` | a whole recording (fallback when the stream can't open) | `{ text, confidence, provider, ms }` | Deepgram pre-recorded |
 | `POST /voice/command` | `{ transcript, context?, vault? }` | `{ intent, symbol, amount, reply, source, note?, ms }` | Claude (`INTENT_MODEL`), else the rules parser; always validated |
-| `POST /voice/speak` / `GET /voice/speak?text=` | text | `audio/mpeg` (the GET streams, so playback starts early) | Fish Audio, voice `FISH_VOICE_ID` |
+| `POST /voice/speak` / `GET /voice/speak?text=` | text | `audio/mpeg` (the GET streams, so playback starts early) | Deepgram Aura (`DEEPGRAM_TTS_VOICE`) or Fish (`VOICE_TTS=fish`); the other catches 401/402/429 |
+| `POST /voice/warm` | | `{ ok }` | opens the Deepgram connection and the speech provider's HTTPS connection ahead of a command |
 | `GET /voice/status` | | which providers are active (never keys) | |
 
 - **Intents:** `buy`, `sell`, `price`, `spend-so-far`, `explain`, `unknown`. The symbol must be in our catalog and the
@@ -254,6 +255,17 @@ page) and never holds a key.
   held, and may be up to 15s old in speech; quotes and trades always read fresh). Claude's sentence is used only for
   `explain` and `unknown`, from the context it was given.
 - **Speech cache:** identical short phrases (up to 64, 200 characters each) are served from memory.
+- **Latency, measured from Lagos** (round trip to Deepgram ~140-300ms): release to transcript 260-500ms on the warm
+  connection (1.8s on a cold first command, when the connection opened while the user was speaking); speech first byte
+  ~370-460ms on a kept-alive connection; release to the voice playing ~1.0s (a cached phrase ~0.5s). How:
+  - one Deepgram streaming connection is kept warm (KeepAlive every 4s, closed after `VOICE_WARM_IDLE_MS` unused) and
+    reused command after command; the extension warms it when the panel opens and on key down;
+  - on release the server sends `Finalize` and answers as soon as final results cover all the audio sent (no waiting
+    for silence); a connection that opened late gets up to 1.5s to process its backlog first, so no word is cut;
+  - provider HTTPS connections are kept alive and re-warmed on each key press (Deepgram's edge drops idle ones ~5s);
+  - replies stream: the extension plays the MP3 through MediaSource as it arrives.
+  - The server logs each request's breakdown: `[voice] transcription: connect …, release to final …` and
+    `[voice] speech …: first byte …, complete …` (timings only, never the words).
 - **Fallback:** with no provider configured (or the API unreachable), the extension uses the browser's own speech APIs
   and says so in the panel. The startup log shows which provider is active; placeholder keys are reported and ignored.
 

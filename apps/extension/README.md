@@ -92,8 +92,8 @@ Close the banner.
 
 - **Voice works in any Chromium browser** (Chrome, Brave, Arc, Edge), because transcription is server-side: Glance
   records your voice in its own extension context (never in the web page), the Glance API transcribes it (Deepgram),
-  works out what you meant (Claude), and answers in a calm voice (Fish Audio). The API needs `DEEPGRAM_API_KEY` and
-  `FISH_API_KEY` in `apps/api/.env`. If it can't be reached, Glance falls back to the browser's own speech
+  works out what you meant (Claude), and answers in a calm voice (Deepgram Aura). The API needs `DEEPGRAM_API_KEY` in
+  `apps/api/.env` (one key for listening and speaking). If it can't be reached, Glance falls back to the browser's own speech
   recognition (which Brave and Arc lack) and says so in the panel. You can always type.
   Websites never see your microphone: Glance listens in its own extension context, under the permission you gave it
   once in settings, so a site that blocks microphones doesn't stop it.
@@ -163,10 +163,11 @@ How it's built:
 ## Voice: manual test checklist
 
 Run this by hand after any change to voice, in **Brave** (or any Chromium browser): transcription is server-side, so
-Brave's missing speech recognition doesn't matter. Start the API with real `DEEPGRAM_API_KEY` and `FISH_API_KEY` (its
-startup log names the active providers), and reload the extension first.
+Brave's missing speech recognition doesn't matter. Start the API with a real `DEEPGRAM_API_KEY` (its startup log names
+the active providers), and reload the extension first.
 
-- [ ] Settings → Voice: "Transcription (Glance API)" reads `deepgram (nova-3)` and "Spoken replies" reads `fish (…)`.
+- [ ] Settings → Voice: "Transcription (Glance API)" reads `deepgram (nova-3, live, …)` and "Spoken replies" reads
+      `deepgram aura (aura-2-athena-en)…`.
 - [ ] Hold **Option + V**, say "what's Tesla at", let go: lime (listening) while held, thinking on release, then the orb
       moves while a calm voice says the price, and returns to the eye when it stops.
 - [ ] Say "buy ten dollars of Tesla": the voice says "$10 of Tesla. Checking your vault's limits.", the confirm card

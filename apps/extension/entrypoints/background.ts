@@ -179,6 +179,15 @@ export default defineBackground(() => {
         return startVoice(message, sender.tab?.id);
       case "voice:speak":
         return speakVoice(message, sender.tab?.id);
+      case "voice:warm":
+        // Only if the offscreen document already exists: warming must never create one (or ask for the mic).
+        void (async () => {
+          const url = browser.runtime.getURL("/offscreen.html");
+          const existing = await browser.runtime.getContexts?.({ contextTypes: ["OFFSCREEN_DOCUMENT" as never], documentUrls: [url] });
+          if (existing?.length) await browser.runtime.sendMessage({ kind: "offscreen:warm", api: await apiBase() } satisfies OffscreenRequest).catch(() => {});
+          else await fetch(`${await apiBase()}/voice/warm`, { method: "POST" }).catch(() => {});
+        })();
+        return undefined;
       case "voice:hush":
         void browser.runtime.sendMessage({ kind: "offscreen:hush" } satisfies OffscreenRequest).catch(() => {});
         return undefined;

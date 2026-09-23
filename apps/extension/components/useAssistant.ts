@@ -4,7 +4,7 @@
  *
  * Voice (Option+V): the offscreen document records and streams the audio to the Glance API, which transcribes it
  * (Deepgram), works out what was meant (Claude, validated against our catalog and against what was actually said),
- * and speaks a reply (Fish Audio). The orb shows listening while the key is held, thinking from the release, and
+ * and speaks a reply (Deepgram Aura). The orb shows listening while the key is held, thinking from the release, and
  * speaking exactly while the reply's audio plays. A spoken command lands on the same cards as a typed one; a spoken
  * "yes" never confirms a trade (the confirm is a tap). If the API can't be reached, the browser's own speech
  * recognition is tried instead, and the panel says so.

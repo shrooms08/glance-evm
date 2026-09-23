@@ -2,12 +2,13 @@
  * The voice worker, run by Glance's offscreen document for every surface (the floating orb, the docked side panel,
  * the settings test). It never runs in a web page.
  *
- *   key down   check the microphone; open a WebSocket to the Glance API's /voice/stream; start MediaRecorder and send
- *              each 100ms chunk as it is recorded (so almost nothing is left to upload on release)
- *   key up     stop the recorder, send {"type":"stop"}, and get the transcript (Deepgram, server side). If the stream
- *              couldn't open, POST the recording to /voice/transcribe instead
+ *   key down   warm the API's provider connections (/voice/warm), check the microphone, open a WebSocket to the
+ *              API's /voice/stream, and stream raw 16kHz PCM in 40ms slices as it is captured (an AudioWorklet: no
+ *              encoder buffering, and a format the API's warm Deepgram connection can take utterance after utterance)
+ *   key up     flush the capture, send {"type":"stop"} (the API sends Deepgram's Finalize at once), and get the
+ *              transcript. If the stream couldn't open, POST the recording as WAV to /voice/transcribe instead
  *   then       POST the transcript to /voice/command (intent + one-sentence reply), and play the reply from
- *              GET /voice/speak (Fish Audio), which starts playing while it downloads
+ *              GET /voice/speak (Deepgram Aura), streamed into a MediaSource so it starts playing on the first chunks
  *
  * Fallback: only if the Glance API can't be reached, or has no transcription provider, the browser's own speech
  * recognition is used instead, and a "fallback" event says so, so the panel can say it plainly. Replies fall back to
@@ -23,9 +24,18 @@ export interface WorkerDeps {
   fetch: typeof fetch;
   WebSocket: new (url: string) => WebSocket;
   getUserMedia(): Promise<MediaStream>;
-  MediaRecorder: new (stream: MediaStream, opts?: MediaRecorderOptions) => MediaRecorder;
+  /**
+   * Captures the microphone as 16-bit PCM at 16kHz, calling onChunk with each slice as it is recorded. Resolves once
+   * capturing has started; the returned stop() flushes the last slice before it resolves.
+   */
+  capturePcm(stream: MediaStream, onChunk: (pcm: Uint8Array) => void): Promise<{ stop(): Promise<void> }>;
   /** Creates the element a reply plays in. */
   createAudio(): HTMLAudioElement;
+  /**
+   * Points the element at a URL whose MP3 streams in, so playback starts on the first chunks rather than when the
+   * whole file has arrived (MediaSource). Absent (tests, or no MediaSource): the element loads the URL itself.
+   */
+  streamInto?(el: HTMLAudioElement, url: string): Promise<void>;
   micBlocker(): Promise<VoiceCode | null>;
   /** The browser's speech recognition, for the fallback only. */
   listen(lang: string, h: ListenHandlers): Listener | null;
@@ -59,9 +69,9 @@ interface Session {
   mode: "server" | "browser";
   pending: "stop" | "abort" | null;
   stream?: MediaStream;
-  recorder?: MediaRecorder;
-  chunks: Blob[];
-  mime: string;
+  capture?: { stop(): Promise<void> };
+  capturing: boolean;
+  chunks: Uint8Array[];
   ws?: WebSocket;
   wsOpen?: Promise<boolean>;
   transcript?: Promise<string | null>;
@@ -71,6 +81,37 @@ interface Session {
 }
 
 const httpToWs = (api: string) => api.replace(/^http/, "ws");
+
+/** 16-bit PCM slices -> one WAV file (16kHz mono), for the whole-recording upload. */
+export function wav(chunks: Uint8Array[], sampleRate = 16_000): Blob {
+  const size = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const h = new DataView(new ArrayBuffer(44));
+  const text = (at: number, s: string) => [...s].forEach((ch, i) => h.setUint8(at + i, ch.charCodeAt(0)));
+  text(0, "RIFF");
+  h.setUint32(4, 36 + size, true);
+  text(8, "WAVE");
+  text(12, "fmt ");
+  h.setUint32(16, 16, true);
+  h.setUint16(20, 1, true); // PCM
+  h.setUint16(22, 1, true); // mono
+  h.setUint32(24, sampleRate, true);
+  h.setUint32(28, sampleRate * 2, true);
+  h.setUint16(32, 2, true);
+  h.setUint16(34, 16, true);
+  text(36, "data");
+  h.setUint32(40, size, true);
+  return new Blob([h.buffer, ...chunks.map((c) => c.slice().buffer)], { type: "audio/wav" });
+}
+
+/** Float samples (-1..1) -> 16-bit little-endian PCM. */
+export function toPcm16(samples: Float32Array): Uint8Array {
+  const out = new DataView(new ArrayBuffer(samples.length * 2));
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.max(-1, Math.min(1, samples[i]!));
+    out.setInt16(i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return new Uint8Array(out.buffer);
+}
 
 export class VoiceWorker {
   private sessions = new Map<string, Session>();
@@ -105,9 +146,15 @@ export class VoiceWorker {
     return value;
   }
 
+  /** Asks the API to warm its provider connections (fire and forget). Called on key down and when the panel opens. */
+  warm(api: string) {
+    void this.d.fetch(`${api}/voice/warm`, { method: "POST", signal: AbortSignal.timeout(2_000) }).catch(() => {});
+  }
+
   async start(id: string, lang: string, api: string, context: VoiceCommandContext, vault?: string) {
     this.hush();
-    const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", pending: null, chunks: [], mime: "audio/webm", released: 0, ended: false };
+    this.warm(api);
+    const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", pending: null, chunks: [], capturing: false, released: 0, ended: false };
     this.sessions.set(id, s);
 
     const [blocker, status] = await Promise.all([this.d.micBlocker(), this.apiStatus(api)]);
@@ -128,7 +175,7 @@ export class VoiceWorker {
       return this.emit(s, { type: "end" });
     }
 
-    // The stream to the API opens alongside the recorder; chunks recorded before it opens are sent once it does.
+    // The stream to the API opens alongside the capture; audio captured before it opens is sent once it does.
     if (status.stream) {
       const q = s.vault ? `?vault=${encodeURIComponent(s.vault)}` : "";
       const ws = new this.d.WebSocket(`${httpToWs(api)}/voice/stream${q}`);
@@ -156,31 +203,30 @@ export class VoiceWorker {
       });
     }
 
-    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((m) => (this.d.MediaRecorder as unknown as { isTypeSupported?(m: string): boolean }).isTypeSupported?.(m) ?? m === "audio/webm");
-    const recorder = new this.d.MediaRecorder(s.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32_000 } : undefined);
-    s.recorder = recorder;
-    s.mime = recorder.mimeType || mime || "audio/webm";
-    recorder.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0) return;
-      s.chunks.push(e.data);
-      void this.forward(s, e.data);
-    };
-    recorder.onstart = () => {
-      this.emit(s, { type: "started" });
-      if (s.pending === "stop") void this.stop(id);
-      if (s.pending === "abort") this.abort(id);
-    };
-    recorder.start(100);
+    try {
+      s.capture = await this.d.capturePcm(s.stream, (pcm) => {
+        s.chunks.push(pcm);
+        void this.forward(s, pcm);
+      });
+    } catch {
+      s.stream.getTracks().forEach((t) => t.stop());
+      this.emit(s, { type: "error", code: "audio-capture" });
+      return this.emit(s, { type: "end" });
+    }
+    s.capturing = true;
+    this.emit(s, { type: "started" });
+    if (s.pending === "stop") void this.stop(id);
+    else if (s.pending === "abort") this.abort(id);
   }
 
   /** Sends a chunk down the stream, in order, once it is open. */
   private sendQueue = Promise.resolve();
-  private forward(s: Session, chunk: Blob) {
+  private forward(s: Session, chunk: Uint8Array) {
     if (!s.ws || !s.wsOpen) return;
     const ws = s.ws;
     this.sendQueue = this.sendQueue.then(async () => {
       if (!(await s.wsOpen)) return;
-      if (ws.readyState === 1) ws.send(await chunk.arrayBuffer());
+      if (ws.readyState === 1) ws.send(chunk as Uint8Array<ArrayBuffer>);
     });
     return this.sendQueue;
   }
@@ -214,17 +260,14 @@ export class VoiceWorker {
       else s.pending = "stop";
       return;
     }
-    if (!s.recorder || s.recorder.state === "inactive") {
-      s.pending = "stop"; // released before the recorder started: stop as soon as it does
+    if (!s.capturing) {
+      s.pending = "stop"; // released before capture started: stop as soon as it does
       return;
     }
+    s.capturing = false;
     s.released = this.d.now();
     this.emit(s, { type: "released" });
-    const recorder = s.recorder;
-    await new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
-      recorder.stop();
-    });
+    await s.capture!.stop();
     s.stream?.getTracks().forEach((t) => t.stop());
     await this.sendQueue;
 
@@ -240,8 +283,8 @@ export class VoiceWorker {
       try {
         const res = await this.d.fetch(`${s.api}/voice/transcribe`, {
           method: "POST",
-          headers: { "content-type": s.mime },
-          body: new Blob(s.chunks, { type: s.mime }),
+          headers: { "content-type": "audio/wav" },
+          body: wav(s.chunks),
           signal: AbortSignal.timeout(TRANSCRIPT_TIMEOUT_MS),
         });
         if (res.ok) text = ((await res.json()) as { text?: string }).text ?? "";
@@ -292,14 +335,16 @@ export class VoiceWorker {
     if (!s) return;
     s.pending = "abort";
     if (s.listener) s.listener.abort();
-    if (s.recorder && s.recorder.state !== "inactive") s.recorder.stop();
+    const capturing = s.capturing;
+    s.capturing = false;
+    if (s.capture) void s.capture.stop();
     s.stream?.getTracks().forEach((t) => t.stop());
     s.ws?.close();
-    if (s.recorder || s.listener) this.emit(s, { type: "end" });
+    if (capturing || s.capture || s.listener) this.emit(s, { type: "end" });
   }
 
   /**
-   * Speaks `text`: the API's voice (Fish Audio) when it has one, else the browser's. The "start" event fires when the
+   * Speaks `text`: the API's voice (Deepgram Aura, or Fish) when it has one, else the browser's. The "start" event fires when the
    * audio element actually starts playing and "end" when it stops, so the speaking orb moves exactly with the voice.
    * `onStarted` fires once playback begins (or when it's clear nothing will play).
    */
@@ -347,7 +392,10 @@ export class VoiceWorker {
         el.onended = done(true);
         el.onpause = done(true);
         el.onerror = done(false);
-        el.src = `${api}/voice/speak?text=${encodeURIComponent(text)}`;
+        const url = `${api}/voice/speak?text=${encodeURIComponent(text)}`;
+        if (this.d.streamInto) {
+          void this.d.streamInto(el, url).catch(() => resolve(false));
+        } else el.src = url;
         void el.play().catch(() => resolve(false));
       });
       if (played) return;

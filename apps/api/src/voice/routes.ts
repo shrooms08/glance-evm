@@ -162,11 +162,22 @@ export function registerVoice(
     }),
   );
 
+  /**
+   * Warms both directions before they're needed: the Deepgram streaming connection (reused by the next command) and
+   * the speech provider's HTTPS connection. The extension calls it when the panel opens and when Option+V goes down.
+   */
+  app.post("/voice/warm", (c) => {
+    v.stt?.warm?.(keyterms(ctx));
+    v.prewarmSpeech();
+    return send(c, { ok: true });
+  });
+
   app.post("/voice/transcribe", async (c) => {
     if (!v.stt) unavailable("transcription");
     const started = performance.now();
     const audio = await readAudio(c);
     const t = await v.stt.transcribe(audio, c.req.header("content-type") ?? "application/octet-stream", keyterms(ctx));
+    console.log(`[voice] transcription (upload): ${t.timing?.releaseToFinalMs ?? "?"}ms at the provider, ${Math.round(performance.now() - started)}ms here`);
     return send(c, { text: t.text, confidence: t.confidence, provider: v.stt.name, ms: Math.round(performance.now() - started) });
   });
 
@@ -225,6 +236,7 @@ export function registerVoice(
         let live: ReturnType<NonNullable<typeof v.stt>["stream"]> | null = null;
         let bytes = 0;
         let timer: ReturnType<typeof setTimeout> | undefined;
+        let rewarm: ReturnType<typeof setInterval> | undefined;
         return {
           onOpen(_e, ws) {
             if (!allowed) return ws.close(1008, "origin not allowed");
@@ -235,6 +247,10 @@ export function registerVoice(
               return ws.close(1000);
             }
             live = v.stt.stream(keyterms(ctx));
+            // The reply will need the speech provider soon: open its connection while the user is still speaking, and
+            // keep it open through a long hold (the provider's edge drops idle connections after about 5s).
+            v.prewarmSpeech();
+            rewarm = setInterval(() => v.prewarmSpeech(), 3_000);
             timer = setTimeout(() => ws.close(1000, "too long"), MAX_STREAM_MS);
           },
           async onMessage(e, ws) {
@@ -247,10 +263,17 @@ export function registerVoice(
                 return;
               }
               if (msg.type !== "stop") return;
+              clearInterval(rewarm);
               const stoppedAt = performance.now();
               try {
                 const t = await live.finish();
-                ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms: Math.round(performance.now() - stoppedAt) }));
+                const ms = Math.round(performance.now() - stoppedAt);
+                const tm = t.timing;
+                // Where the time went (timings only: the words stay out of the logs).
+                console.log(
+                  `[voice] transcription: connect ${tm?.warm ? "0ms (warm connection reused)" : `${tm?.connectMs ?? "?"}ms (new connection, during speech)`}, release to final ${tm?.releaseToFinalMs ?? ms}ms, ${t.text.length} chars`,
+                );
+                ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms, timing: tm }));
               } catch (err) {
                 ws.send(JSON.stringify({ type: "error", code: "TRANSCRIPTION_FAILED", message: (err as Error).message }));
               }
@@ -264,6 +287,7 @@ export function registerVoice(
           },
           onClose() {
             clearTimeout(timer);
+            clearInterval(rewarm);
             live?.abort();
             live = null;
           },

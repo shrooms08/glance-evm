@@ -21,6 +21,7 @@ import { reportIdleFrames, sampleFrames } from "../../lib/motionBudget";
 import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
+import { warmVoice } from "../../lib/voiceClient";
 import type { VoiceCommandContext } from "../../lib/voiceMessages";
 import type { Message, PageMatchesReply } from "../../lib/messages";
 import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
@@ -168,6 +169,15 @@ function Floating({ underliner }: { underliner: Underliner }) {
     { onGlance: () => void glance(), onVoiceStart: startTalking, onVoiceEnd: stopTalking, onEscape: closePanel },
     { capture: true },
   );
+
+  // While the panel is open a command is likely: keep the API's provider connections warm (it lets them lapse after
+  // a minute unused), so Option+V doesn't pay the connection handshakes to Deepgram.
+  useEffect(() => {
+    if (!panelOpen) return;
+    warmVoice();
+    const t = setInterval(warmVoice, 45_000);
+    return () => clearInterval(t);
+  }, [panelOpen]);
 
   // A voice buy or price question opens the panel to show its card.
   useEffect(() => {

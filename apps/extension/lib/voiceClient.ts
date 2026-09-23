@@ -1,7 +1,7 @@
 /**
  * Push-to-talk and spoken replies for every Glance surface (floating orb, docked side panel, settings), with one
  * interface. The work happens in the offscreen document (lib/voiceWorker.ts): it records, streams the audio to the
- * Glance API (Deepgram), asks what was meant (Claude, validated), and plays the reply (Fish Audio). Events come back
+ * Glance API (Deepgram), asks what was meant (Claude, validated), and plays the reply (Deepgram Aura by default). Events come back
  * over runtime messaging: relayed by the background to content scripts, and straight to extension pages.
  */
 import { browser } from "wxt/browser";
@@ -207,7 +207,7 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
 }
 
 /**
- * Speaks a reply in Glance's voice (Fish Audio through the API; the browser's voice if the API can't). onStart and
+ * Speaks a reply in Glance's voice (Deepgram Aura or Fish through the API; the browser's voice if the API can't). onStart and
  * onEnd come from the audio's real playback, so the speaking orb moves exactly while the voice is heard. Resolves when
  * it has finished (or when it's clear nothing will play). With `enabled` false, nothing is spoken.
  */
@@ -238,6 +238,11 @@ export function speak(text: string, enabled: boolean, h: { onStart?(): void; onE
       () => finish(),
     );
   });
+}
+
+/** The panel opened: have the API warm its provider connections, so a command that follows skips the handshakes. */
+export function warmVoice() {
+  void sendSafe({ kind: "voice:warm" } satisfies VoiceRequest).catch(() => {});
 }
 
 /** Stops any reply that is playing. */

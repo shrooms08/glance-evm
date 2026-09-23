@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ListenHandlers } from "../lib/voice";
 import type { SpeechEvent, VoiceEvent } from "../lib/voiceMessages";
-import { VoiceWorker, type WorkerDeps } from "../lib/voiceWorker";
+import { toPcm16, VoiceWorker, wav, type WorkerDeps } from "../lib/voiceWorker";
 
 const API = "http://localhost:8790";
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -50,31 +50,20 @@ class FakeWS {
   }
 }
 
-class FakeRecorder {
-  static last: FakeRecorder;
-  static isTypeSupported = (m: string) => m === "audio/webm;codecs=opus";
-  state: "inactive" | "recording" = "inactive";
-  mimeType = "audio/webm;codecs=opus";
-  ondataavailable: ((e: { data: Blob }) => void) | null = null;
-  onstart: (() => void) | null = null;
-  onstop: (() => void) | null = null;
-  constructor(
-    public stream: MediaStream,
-    public opts?: MediaRecorderOptions,
-  ) {
-    FakeRecorder.last = this;
+/** The PCM capture: the test "records" slices and decides when capture has flushed. */
+class FakeCapture {
+  static last: FakeCapture;
+  onChunk!: (pcm: Uint8Array) => void;
+  stopped = false;
+  constructor() {
+    FakeCapture.last = this;
   }
-  start() {
-    this.state = "recording";
-    setTimeout(() => this.onstart?.(), 0);
+  chunk(n: number) {
+    this.onChunk(new Uint8Array([n, n]));
   }
-  chunk(text: string) {
-    this.ondataavailable?.({ data: new Blob([text]) });
-  }
-  stop() {
-    this.state = "inactive";
-    this.chunk("tail"); // the last chunk comes out on stop, before onstop
-    setTimeout(() => this.onstop?.(), 0);
+  async stop() {
+    this.stopped = true;
+    this.chunk(99); // the last slice comes out on stop
   }
 }
 
@@ -114,6 +103,7 @@ function setup(o: Setup = {}) {
   const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
     requests.push({ url: u, init });
+    if (u.endsWith("/voice/warm")) return Response.json({ ok: true });
     if (u.endsWith("/voice/status")) {
       if (status === "unreachable") throw new TypeError("Failed to fetch");
       return Response.json({ available: status });
@@ -140,7 +130,11 @@ function setup(o: Setup = {}) {
     fetch: fetchFn as unknown as typeof fetch,
     WebSocket: FakeWS as never,
     getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) as unknown as MediaStream,
-    MediaRecorder: FakeRecorder as never,
+    capturePcm: async (_stream, onChunk) => {
+      const c = new FakeCapture();
+      c.onChunk = onChunk;
+      return c;
+    },
     createAudio: () => new FakeAudio() as unknown as HTMLAudioElement,
     micBlocker: async () => (o.blocker ?? null) as never,
     listen: listen as never,
@@ -166,11 +160,16 @@ describe("voice worker: the server path", () => {
     expect(t.types()).toEqual(["started"]);
 
     // Chunks recorded before the socket opens are sent, in order, once it does; later ones go straight out.
-    FakeRecorder.last.chunk("a");
+    FakeCapture.last.chunk(1);
     FakeWS.last.open();
-    FakeRecorder.last.chunk("b");
+    FakeCapture.last.chunk(2);
     await flush();
-    expect(FakeWS.last.sent).toHaveLength(2);
+    expect(FakeWS.last.sent.map((c) => [...(c as Uint8Array)])).toEqual([
+      [1, 1],
+      [2, 2],
+    ]);
+    // Key down also asked the API to warm its provider connections.
+    expect(t.requests[0]!.url).toBe(`${API}/voice/warm`);
 
     const stopping = t.worker.stop("s1");
     await flush();
@@ -211,7 +210,7 @@ describe("voice worker: the server path", () => {
     await flush();
     FakeWS.last.open();
     await flush();
-    expect(FakeRecorder.last.state).toBe("inactive");
+    expect(FakeCapture.last.stopped).toBe(true);
     expect(t.types()).toContain("released");
   });
 
@@ -220,11 +219,14 @@ describe("voice worker: the server path", () => {
     void t.worker.start("s3", "en-US", API, {});
     await flush();
     FakeWS.last.fail();
-    FakeRecorder.last.chunk("a");
+    FakeCapture.last.chunk(1);
     await t.worker.stop("s3");
     await flush();
     const upload = t.requests.find((r) => r.url.endsWith("/voice/transcribe"))!;
-    expect((upload.init!.headers as Record<string, string>)["content-type"]).toBe("audio/webm;codecs=opus");
+    expect((upload.init!.headers as Record<string, string>)["content-type"]).toBe("audio/wav");
+    const body = new Uint8Array(await (upload.init!.body as Blob).arrayBuffer());
+    expect(new TextDecoder().decode(body.subarray(0, 4))).toBe("RIFF");
+    expect(body.byteLength).toBe(44 + 4); // header + the two 2-byte slices
     expect(t.types()).toContain("final");
     expect((t.events.find((e) => e.kind === "voice:event" && e.type === "final") as { text: string }).text).toBe("what's Tesla at");
   });
@@ -305,5 +307,18 @@ describe("voice worker: spoken replies", () => {
     await t.worker.speak("r3", "Tesla is at $380.", API);
     expect(t.speakLocally).toHaveBeenCalledWith("Tesla is at $380.", expect.any(Function));
     expect(t.events.filter((e) => e.kind === "voice:speech").map((e) => (e as SpeechEvent).type)).toEqual(["start", "end"]);
+  });
+});
+
+describe("PCM helpers", () => {
+  it("converts float samples to 16-bit little-endian PCM, clipped", () => {
+    const pcm = new DataView(toPcm16(new Float32Array([0, 1, -1, 2])).buffer);
+    expect([pcm.getInt16(0, true), pcm.getInt16(2, true), pcm.getInt16(4, true), pcm.getInt16(6, true)]).toEqual([0, 32767, -32768, 32767]);
+  });
+  it("wraps PCM in a 16kHz mono WAV header", async () => {
+    const bytes = new DataView(await wav([new Uint8Array(8)]).arrayBuffer());
+    expect(bytes.getUint32(24, true)).toBe(16_000);
+    expect(bytes.getUint16(22, true)).toBe(1);
+    expect(bytes.getUint32(40, true)).toBe(8);
   });
 });

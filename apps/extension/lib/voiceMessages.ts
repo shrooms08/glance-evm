@@ -1,7 +1,7 @@
 /**
  * The voice relay. Audio is never recorded in a web page (a site's Permissions-Policy can block the microphone there,
  * and the permission would be the site's). Glance's offscreen document records it, streams it to the Glance API
- * (Deepgram transcribes), asks the API what was meant (/voice/command), and plays the spoken reply (Fish Audio). The
+ * (Deepgram transcribes), asks the API what was meant (/voice/command), and plays the spoken reply (Deepgram Aura by default). The
  * background routes each session's events back to the tab that asked; extension pages receive them directly.
  */
 import type { VoiceCode } from "./voiceReasons";
@@ -59,7 +59,9 @@ export type VoiceRequest =
   | { kind: "voice:stop"; session: string }
   | { kind: "voice:abort"; session: string }
   | { kind: "voice:speak"; id: string; text: string }
-  | { kind: "voice:hush" };
+  | { kind: "voice:hush" }
+  /** The panel opened: have the API warm its provider connections for a command that may be coming. */
+  | { kind: "voice:warm" };
 
 /** Background -> offscreen document. The background adds the API's address, which the offscreen document can't read. */
 export type OffscreenRequest =
@@ -67,4 +69,5 @@ export type OffscreenRequest =
   | { kind: "offscreen:stop"; session: string }
   | { kind: "offscreen:abort"; session: string }
   | { kind: "offscreen:speak"; id: string; text: string; api: string }
-  | { kind: "offscreen:hush" };
+  | { kind: "offscreen:hush" }
+  | { kind: "offscreen:warm"; api: string };

@@ -11,14 +11,91 @@ import { browser } from "wxt/browser";
 import { listen, speak as speakWithBrowser } from "../../lib/voice";
 import { micBlocker } from "../../lib/voiceDiagnostics";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent } from "../../lib/voiceMessages";
-import { VoiceWorker } from "../../lib/voiceWorker";
+import { toPcm16, VoiceWorker } from "../../lib/voiceWorker";
+
+/** 40ms of audio per message to the API: small enough that little is left to send on release. */
+const SLICE_SAMPLES = 640;
+
+/** The microphone as 16kHz 16-bit PCM, via an AudioWorklet (public/pcm-worklet.js). */
+async function capturePcm(stream: MediaStream, onChunk: (pcm: Uint8Array) => void) {
+  const ctx = new AudioContext({ sampleRate: 16_000 });
+  await ctx.audioWorklet.addModule(browser.runtime.getURL("/pcm-worklet.js"));
+  const source = ctx.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(ctx, "glance-pcm");
+  let buffer = new Float32Array(SLICE_SAMPLES);
+  let filled = 0;
+  const flush = () => {
+    if (filled === 0) return;
+    onChunk(toPcm16(buffer.subarray(0, filled)));
+    buffer = new Float32Array(SLICE_SAMPLES);
+    filled = 0;
+  };
+  node.port.onmessage = (e: MessageEvent<Float32Array>) => {
+    let block = e.data;
+    while (block.length) {
+      const take = Math.min(block.length, SLICE_SAMPLES - filled);
+      buffer.set(block.subarray(0, take), filled);
+      filled += take;
+      block = block.subarray(take);
+      if (filled === SLICE_SAMPLES) flush();
+    }
+  };
+  // A worklet only runs while the graph pulls it: route it into a muted gain so nothing is heard.
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  source.connect(node).connect(mute).connect(ctx.destination);
+  await ctx.resume();
+  return {
+    async stop() {
+      // Let the worklet hand over its last block (one render quantum is 8ms at 16kHz), then send the remainder.
+      await new Promise((r) => setTimeout(r, 20));
+      source.disconnect();
+      node.port.onmessage = null;
+      flush();
+      await ctx.close();
+    },
+  };
+}
+
+/**
+ * Plays an MP3 as it downloads: each chunk goes into a MediaSource buffer the moment it arrives, so the voice starts
+ * about when the provider's first bytes do (an <audio> element given the URL waits for the whole file). The element's
+ * own playing/ended events still drive the speaking orb.
+ */
+async function streamInto(el: HTMLAudioElement, url: string) {
+  if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported("audio/mpeg")) {
+    el.src = url;
+    return;
+  }
+  const ms = new MediaSource();
+  el.src = URL.createObjectURL(ms);
+  await new Promise((r) => ms.addEventListener("sourceopen", r, { once: true }));
+  const sb = ms.addSourceBuffer("audio/mpeg");
+  const res = await fetch(url);
+  if (!res.ok || !res.body) {
+    ms.endOfStream("network");
+    throw new Error(`speech answered ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    await new Promise<void>((resolve, reject) => {
+      sb.addEventListener("updateend", () => resolve(), { once: true });
+      sb.addEventListener("error", () => reject(new Error("audio buffer error")), { once: true });
+      sb.appendBuffer(value);
+    });
+  }
+  if (ms.readyState === "open") ms.endOfStream();
+}
 
 const worker = new VoiceWorker({
   fetch: (...args) => fetch(...args),
   WebSocket,
   getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } }),
-  MediaRecorder,
+  capturePcm,
   createAudio: () => new Audio(),
+  streamInto,
   micBlocker,
   listen,
   speakLocally: async (text, onStart) => {
@@ -51,6 +128,9 @@ browser.runtime.onMessage.addListener((msg: OffscreenRequest) => {
       break;
     case "offscreen:hush":
       worker.hush();
+      break;
+    case "offscreen:warm":
+      worker.warm(msg.api);
       break;
   }
   return undefined;

@@ -12,6 +12,7 @@ import { GlanceProvider, useGlance } from "../../components/context";
 import { Panel, type PageCompany } from "../../components/Panel";
 import { useAssistant } from "../../components/useAssistant";
 import { useHotkeys } from "../../components/useHotkeys";
+import { warmVoice } from "../../lib/voiceClient";
 import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { mountPageStyles } from "../../lib/extensionPage";
 import type { AssistantMessage } from "../../lib/messages-assistant";
@@ -55,6 +56,13 @@ function SidePanel() {
       browser.tabs.onActivated.removeListener(onActivated);
     };
   }, [refreshPage]);
+
+  // Docked, Glance is always one key away: keep the API's provider connections warm while the panel is open.
+  useEffect(() => {
+    warmVoice();
+    const t = setInterval(warmVoice, 45_000);
+    return () => clearInterval(t);
+  }, []);
 
   // The page's hotkeys while docked.
   useEffect(() => {

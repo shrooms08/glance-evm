@@ -33,6 +33,14 @@ const envSchema = z.object({
   DEEPGRAM_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
   /** Deepgram model: nova-3 is its current general model and supports keyterm prompting. */
   DEEPGRAM_MODEL: z.string().default("nova-3"),
+  /** Silence (ms) after which Deepgram finalises a segment mid-speech. Release sends Finalize regardless. */
+  DEEPGRAM_ENDPOINTING_MS: z.coerce.number().int().min(10).max(5_000).default(100),
+  /** Deepgram Aura-2 voice for replies. Default "athena": calm, smooth, professional (American, feminine). */
+  DEEPGRAM_TTS_VOICE: z.string().default("aura-2-athena-en"),
+  /** Which speech provider is tried first; the other (if its key is set) catches 401/402/429. */
+  VOICE_TTS: z.enum(["deepgram", "fish"]).default("deepgram"),
+  /** How long an unused warm Deepgram streaming connection stays open (ms). */
+  VOICE_WARM_IDLE_MS: z.coerce.number().int().min(0).max(600_000).default(60_000),
   FISH_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
   /** Fish Audio model header (the API's default is s2.1-pro). */
   FISH_MODEL: z.string().default("s2.1-pro"),
