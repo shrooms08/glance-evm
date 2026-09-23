@@ -58,6 +58,7 @@ const line = (await page.locator("glance-orb .g-panel .g-body").first().innerTex
 check("Option+G opens the panel with what was found", /^Reading cnbc\.com, (\d+ names? found|no names found)/.test(line), line);
 check("Option+G never listens", !statesAfterG.includes("listening"), `orb states seen: ${statesAfterG.join(", ")}`);
 const panel = page.locator("glance-orb .g-panel");
+await page.locator('glance-orb .g-panel[data-phase="open"]').waitFor({ timeout: 2_000 }).catch(() => {});
 check("panel settled open, liquid stage gone", (await panel.getAttribute("data-phase")) === "open" && (await page.locator("glance-orb .g-goo-stage").count()) === 0);
 const frames = await panel.getAttribute("data-goo-frames");
 const quality = await panel.getAttribute("data-goo-quality");
@@ -66,7 +67,7 @@ check("goo frame timing measured", Boolean(frames && quality), `${frames} · qua
 
 // 2. Escape closes (collapsing back into the orb).
 await page.keyboard.press("Escape");
-await page.waitForTimeout(700);
+await panel.waitFor({ state: "detached", timeout: 2_000 }).catch(() => {});
 check("Escape closes the panel", (await panel.count()) === 0);
 
 // 3. Visual: a mid-animation frame of the open and the close.
@@ -100,6 +101,22 @@ check("Option+V listens while held", held === "listening", `data-state=${held}`)
 check("release ends listening", afterRelease.at(-1) !== "listening", `states after release: ${afterRelease.join(", ")}`);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(600);
+
+// 4b. Springs: the orb trails a drag and settles exactly under the cursor; idle breathing depends on the page's budget.
+const orbBox = await page.locator("glance-orb .g-orb-button").boundingBox();
+await page.mouse.move(orbBox.x + 32, orbBox.y + 32);
+await page.mouse.down();
+await page.mouse.move(orbBox.x - 60, orbBox.y - 40, { steps: 4 });
+const trailing = await page.locator("glance-orb .g-orb-button").evaluate((b) => b.style.transform);
+await page.mouse.up();
+await page.waitForTimeout(900);
+const settledT = await page.locator("glance-orb .g-orb-button").evaluate((b) => b.style.transform);
+check("the orb trails the cursor while dragged, then settles on it", trailing.includes("translate") && settledT === "", `while dragging: "${trailing}" · after: "${settledT}"`);
+const breathing = await page.locator("glance-orb .g-orb-button").getAttribute("data-breathe");
+console.log(`INFO  idle breathing on this page: ${breathing ? "on" : "off (page can't hold frame rate, or not idle)"}`);
+// Put the orb back where it was for the next steps.
+await sw.evaluate(() => chrome.storage.sync.set({ orbPosition: { right: 24, bottom: 24 } }));
+await page.waitForTimeout(500);
 
 // 5. Clicking the orb docks to the side panel.
 await page.locator("glance-orb .g-orb-button").click();

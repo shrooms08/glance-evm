@@ -7,42 +7,28 @@
  * taken its shape (and out before it collapses). The filter's SVG is rendered by <Liquid> right here, inside our
  * shadow root, so its url(#id) reference resolves.
  *
+ * The liquid box moves on springs (lib/tokens.ts `spring`), not easing curves:
+ *   open   orb -> stretch on `panelOpen`: it overshoots the panel's size once, while no text is showing yet;
+ *          stretch -> panel on `panelSettle`: it lets go of the orb, no bounce; only then does the text fade in, so
+ *          text never appears over moving liquid;
+ *   close  text fades out; panel -> stretch -> orb on `panelSettle`; then the orb wobbles as it absorbs it (onAbsorbed).
+ * Each spring is capped at `spring.maxMs`: if it would outlast the shape, it snaps, so the goo always wins.
+ *
  * The liquid stage exists only while moving; at rest the panel is an ordinary card and the filter costs nothing.
- * Timings come from the design tokens (motion.panel for the shape, motion.quick for the content fade). Under
- * prefers-reduced-motion there is no goo: the panel scales and fades. If a page is too heavy to hold frame rate, the
- * filter quality drops (a smaller blur, no shadow) rather than the animation.
+ * Under prefers-reduced-motion there is no goo and no spring: the panel fades. If a page is too heavy to hold frame
+ * rate, the idle pulse goes first, then the filter quality (lib/motionBudget.ts), never the animation.
  */
 import { Liquid } from "liquid-gooey";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
-import { color, motion, orb as orbTokens } from "../lib/tokens";
+import { gooQuality, prefersReducedMotion, reportFrames } from "../lib/motionBudget";
+import { runSpring, type SpringConfig, type SpringRun } from "../lib/spring";
+import { color, motion, orb as orbTokens, radius, spring } from "../lib/tokens";
 
-const SHAPE_MS = parseFloat(motion.panel); // 180ms: the liquid's travel
+export { tooSlow } from "../lib/motionBudget";
+export { prefersReducedMotion };
+
 const FADE_MS = parseFloat(motion.quick); // 120ms: the content's fade
-/** A frame or two of slack after the last transition before the liquid stage is removed. */
-const SETTLE_MS = 40;
-
-export type GooQuality = "full" | "lite";
-
-/**
- * Per page: once a page proves too heavy for full quality, it stays lite. Busy pages (CNBC's ads and video) hiccup on
- * their own, so one slow open is not enough; two in a row is.
- */
-let quality: GooQuality = "full";
-let slowOpens = 0;
-export const gooQuality = () => quality;
-
-/** Frame budget: a mean frame over 22ms, or more than a quarter of frames over 34ms, means we are dropping frames. */
-export function tooSlow(deltas: number[]): boolean {
-  if (deltas.length < 4) return false;
-  const mean = deltas.reduce((a, b) => a + b, 0) / deltas.length;
-  const long = deltas.filter((d) => d > 34).length / deltas.length;
-  return mean > 22 || long > 0.25;
-}
-
-export function prefersReducedMotion(): boolean {
-  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 type Phase = "closed" | "opening" | "open" | "closing";
 /**
@@ -50,7 +36,8 @@ type Phase = "closed" | "opening" | "open" | "closing";
  * nearest the orb pulls away, and the neck to the orb stretches and pinches off). Closing runs the same path back.
  */
 type Target = "orb" | "stretch" | "panel";
-interface Box {
+
+export interface Box {
   left: number;
   top: number;
   width: number;
@@ -63,12 +50,13 @@ interface Props {
   orb: Box;
   /** The panel's fixed placement (left/right/top/bottom). */
   placement: CSSProperties;
+  /** The panel has fully drained into the orb (the orb's cue to wobble). */
+  onAbsorbed?(): void;
   children?: ReactNode;
 }
 
-export function GooPanel({ open, orb, placement, children }: Props) {
+export function GooPanel({ open, orb, placement, onAbsorbed, children }: Props) {
   const [phase, setPhase] = useState<Phase>(open ? "open" : "closed");
-  /** The liquid box's target: the orb's disc, one piece spanning orb and panel, or the panel's footprint. */
   const [target, setTarget] = useState<Target>("orb");
   const [contentShown, setContentShown] = useState(open);
   const [panelBox, setPanelBox] = useState<Box | null>(null);
@@ -76,8 +64,9 @@ export function GooPanel({ open, orb, placement, children }: Props) {
   const reduced = prefersReducedMotion();
   const frames = useRef<number[]>([]);
   const frameLoop = useRef(0);
+  const absorbed = useRef(onAbsorbed);
+  absorbed.current = onAbsorbed;
 
-  // Drive the phases from `open`.
   useEffect(() => {
     if (open && (phase === "closed" || phase === "closing")) {
       setPhase("opening");
@@ -85,11 +74,12 @@ export function GooPanel({ open, orb, placement, children }: Props) {
       setContentShown(false);
     } else if (!open && (phase === "open" || phase === "opening")) {
       setPhase("closing");
+      // The liquid starts from the panel's footprint (a panel that mounted open never had a liquid position).
+      if (phase === "open") setTarget("panel");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Measure the panel's footprint whenever the liquid needs it.
   useLayoutEffect(() => {
     if ((phase === "opening" || phase === "closing") && panelRef.current) {
       const r = panelRef.current.getBoundingClientRect();
@@ -97,88 +87,95 @@ export function GooPanel({ open, orb, placement, children }: Props) {
     }
   }, [phase]);
 
-  // The timeline for each phase.
+  const startFrames = useCallback(() => {
+    frames.current = [];
+    let last = 0;
+    const tick = (now: number) => {
+      if (last) frames.current.push(now - last);
+      last = now;
+      frameLoop.current = requestAnimationFrame(tick);
+    };
+    cancelAnimationFrame(frameLoop.current);
+    frameLoop.current = requestAnimationFrame(tick);
+  }, []);
+
+  const stopFrames = useCallback(() => {
+    cancelAnimationFrame(frameLoop.current);
+    // The first frames carry React mounting the panel, which isn't the motion's cost.
+    const deltas = frames.current.slice(2);
+    reportFrames(deltas);
+    if (panelRef.current) {
+      const mean = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
+      panelRef.current.dataset.gooFrames = `${deltas.length} frames, mean ${mean.toFixed(1)}ms, max ${Math.max(0, ...deltas).toFixed(1)}ms`;
+      panelRef.current.dataset.gooQuality = gooQuality();
+    }
+  }, []);
+
+  // Phase entry: reduced motion fades on timers; otherwise start the first leg (the rest follows onSettled).
   useEffect(() => {
     const timers: Array<ReturnType<typeof setTimeout>> = [];
-    const at = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
     let raf = 0;
     if (phase === "opening") {
       if (reduced) {
         raf = requestAnimationFrame(() => setContentShown(true));
-        at(FADE_MS, () => setPhase("open"));
+        timers.push(setTimeout(() => setPhase("open"), FADE_MS));
       } else {
         startFrames();
-        // Two frames: the liquid first paints on the orb, then swells out of it into one piece over the panel's area.
+        // Two frames: the liquid first paints on the orb, then swells out of it.
         raf = requestAnimationFrame(() => (raf = requestAnimationFrame(() => setTarget("stretch"))));
-        // Then it lets go of the orb, and the content fades in as the neck pinches off.
-        at(SHAPE_MS, () => {
-          setTarget("panel");
-          setContentShown(true);
-        });
-        at(SHAPE_MS + FADE_MS + SETTLE_MS, () => {
-          stopFrames();
-          setPhase("open");
-        });
       }
     } else if (phase === "closing") {
       setContentShown(false);
       if (reduced) {
-        at(FADE_MS, () => setPhase("closed"));
+        timers.push(setTimeout(() => setPhase("closed"), FADE_MS));
       } else {
         startFrames();
         setTarget("panel");
-        // The content fades first; the liquid reaches back down to the orb, then drains into it.
-        at(FADE_MS, () => setTarget("stretch"));
-        at(FADE_MS * 2, () => setTarget("orb"));
-        at(FADE_MS * 2 + SHAPE_MS + SETTLE_MS, () => {
-          stopFrames();
-          setPhase("closed");
-        });
+        // The text fades out first; only then does the liquid move.
+        timers.push(setTimeout(() => setTarget("stretch"), FADE_MS));
       }
     }
     return () => {
       timers.forEach(clearTimeout);
       cancelAnimationFrame(raf);
-      cancelAnimationFrame(frameLoop.current);
     };
+  }, [phase, reduced, startFrames]);
 
-    function startFrames() {
-      frames.current = [];
-      let last = 0;
-      const tick = (now: number) => {
-        if (last) frames.current.push(now - last);
-        last = now;
-        frameLoop.current = requestAnimationFrame(tick);
-      };
-      cancelAnimationFrame(frameLoop.current);
-      frameLoop.current = requestAnimationFrame(tick);
-    }
-    function stopFrames() {
-      cancelAnimationFrame(frameLoop.current);
-      // The first frames carry React mounting the panel, which isn't the filter's cost: judge the liquid's motion.
-      const deltas = frames.current.slice(2);
-      slowOpens = tooSlow(deltas) ? slowOpens + 1 : 0;
-      if (slowOpens >= 2) quality = "lite";
-      if (panelRef.current) {
-        const mean = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
-        panelRef.current.dataset.gooFrames = `${deltas.length} frames, mean ${mean.toFixed(1)}ms, max ${Math.max(0, ...deltas).toFixed(1)}ms`;
-        panelRef.current.dataset.gooQuality = quality;
+  useEffect(() => () => cancelAnimationFrame(frameLoop.current), []);
+
+  const onSettled = useCallback(
+    (reached: Target) => {
+      if (phase === "opening") {
+        if (reached === "stretch") {
+          // The overshoot is over: let go of the orb.
+          setTarget("panel");
+        } else if (reached === "panel") {
+          // Only now, with the liquid still and exactly the panel's shape, does any text appear.
+          stopFrames();
+          setContentShown(true);
+          setTimeout(() => setPhase((p) => (p === "opening" ? "open" : p)), FADE_MS);
+        }
+      } else if (phase === "closing") {
+        if (reached === "stretch") setTarget("orb");
+        else if (reached === "orb") {
+          stopFrames();
+          setPhase("closed");
+          absorbed.current?.();
+        }
       }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+    },
+    [phase, stopFrames],
+  );
 
   if (phase === "closed") return null;
 
   const moving = phase === "opening" || phase === "closing";
   const showStage = moving && !reduced && panelBox !== null;
-  const q = quality;
-
   const panelClass = ["g-panel", reduced ? "g-panel-reduced" : "g-panel-goo", contentShown ? "is-shown" : ""].filter(Boolean).join(" ");
 
   return (
     <>
-      {showStage && panelBox && <GooStage orb={orb} panel={panelBox} target={target} quality={q} />}
+      {showStage && panelBox && <GooStage orb={orb} panel={panelBox} target={target} quality={gooQuality()} onSettled={onSettled} />}
       <div
         ref={panelRef}
         className={panelClass}
@@ -192,19 +189,92 @@ export function GooPanel({ open, orb, placement, children }: Props) {
   );
 }
 
-function GooStage({ orb, panel, target, quality: q }: { orb: Box; panel: Box; target: Target; quality: GooQuality }) {
+interface Shape extends Box {
+  radius: number;
+}
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const mix = (a: Shape, b: Shape, t: number): Shape => ({
+  left: lerp(a.left, b.left, t),
+  top: lerp(a.top, b.top, t),
+  width: Math.max(0, lerp(a.width, b.width, t)),
+  height: Math.max(0, lerp(a.height, b.height, t)),
+  // The corner never overshoots into a sharper or blobbier shape than either end.
+  radius: Math.min(Math.max(lerp(a.radius, b.radius, t), Math.min(a.radius, b.radius)), Math.max(a.radius, b.radius)),
+});
+
+/** Which spring drives the leg that arrives at `to`: only the growth out of the orb may overshoot. */
+export function legSpring(from: Target, to: Target): SpringConfig {
+  return from === "orb" && to === "stretch" ? spring.panelOpen : spring.panelSettle;
+}
+
+function GooStage({ orb, panel, target, quality: q, onSettled }: { orb: Box; panel: Box; target: Target; quality: "full" | "lite"; onSettled(t: Target): void }) {
   // A tight stage around the orb and the panel: the filter's cost scales with its area, never the whole viewport.
   const left = Math.min(orb.left, panel.left);
   const top = Math.min(orb.top, panel.top);
   const width = Math.max(orb.left + orb.width, panel.left + panel.width) - left;
   const height = Math.max(orb.top + orb.height, panel.top + panel.height) - top;
   const rel = (b: Box) => ({ left: b.left - left, top: b.top - top, width: b.width, height: b.height });
-  const to =
-    target === "orb"
-      ? { ...rel(orb), borderRadius: "50%" }
-      : target === "panel"
-        ? { ...rel(panel), borderRadius: "var(--g-r-card)" }
-        : { ...rel(stretch(orb, panel)), borderRadius: "var(--g-r-card)" };
+  const shapes: Record<Target, Shape> = {
+    orb: { ...rel(orb), radius: orb.width / 2 },
+    stretch: { ...rel(stretch(orb, panel)), radius: radius.card },
+    panel: { ...rel(panel), radius: radius.card },
+  };
+
+  const blob = useRef<HTMLDivElement>(null);
+  /** Where the liquid is: at rest on a target, or "moving" between them. */
+  const current = useRef<{ at: Target | "moving"; shape: Shape }>({ at: target, shape: shapes[target] });
+  const run = useRef<SpringRun | null>(null);
+  const settledCb = useRef(onSettled);
+  settledCb.current = onSettled;
+
+  const paint = (s: Shape) => {
+    const el = blob.current;
+    if (!el) return;
+    el.style.left = `${s.left}px`;
+    el.style.top = `${s.top}px`;
+    el.style.width = `${s.width}px`;
+    el.style.height = `${s.height}px`;
+    el.style.borderRadius = `${s.radius}px`;
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => paint(current.current.shape), []);
+
+  useEffect(() => {
+    const from = current.current;
+    if (from.at === target) return;
+    const a = from.shape;
+    const b = shapes[target];
+    // On a slow page the goo filter can't keep up with a bouncy shape: the spring loses its overshoot, not the shape.
+    const leg = from.at === "moving" ? spring.panelSettle : legSpring(from.at, target);
+    const cfg = q === "lite" ? { ...leg, damping: 1 } : leg;
+    run.current?.cancel();
+    run.current = runSpring(
+      0,
+      1,
+      cfg,
+      (t) => {
+        const s = mix(a, b, t);
+        current.current = { at: "moving", shape: s };
+        paint(s);
+      },
+      () => {
+        // The stretch hands over to the next leg mid-motion, from exactly where it is; end shapes snap the last 1%
+        // where the card (open) or the orb (close) covers it.
+        if (target === "stretch") current.current = { at: target, shape: current.current.shape };
+        else {
+          current.current = { at: target, shape: b };
+          paint(b);
+        }
+        settledCb.current(target);
+      },
+      { snap: target !== "stretch" },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  useEffect(() => () => run.current?.cancel(), []);
 
   return (
     <div className="g-goo-stage" style={{ left, top, width, height }} aria-hidden data-goo-quality={q}>
@@ -219,10 +289,9 @@ function GooStage({ orb, panel, target, quality: q }: { orb: Box; panel: Box; ta
         <Liquid.Item observe>
           <div className="g-goo-blob" style={{ ...rel(orb), borderRadius: "50%" }} />
         </Liquid.Item>
-        {/* No spring physics: the liquid follows the token-timed CSS transition exactly, so the panel's content never
-            fades in over bare page. The melt itself comes from the goo filter joining this shape to the orb's. */}
+        {/* Geometry is written by the spring each frame; liquid-gooey follows the rendered rect. */}
         <Liquid.Item observe>
-          <div className="g-goo-blob g-goo-morph" style={to} />
+          <div ref={blob} className="g-goo-blob g-goo-morph" />
         </Liquid.Item>
       </Liquid>
     </div>

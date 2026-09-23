@@ -69,6 +69,36 @@ export const motion = {
   ease: "cubic-bezier(.2,.8,.2,1)",
 } as const;
 
+/**
+ * Springs: the weight behind the orb and panel. Each is { response, damping }:
+ *   response  seconds for one natural oscillation. Lower is snappier, higher is heavier.
+ *   damping   damping ratio. 1 = critically damped (no overshoot). Below 1 overshoots once, by about
+ *             0.72 -> 4%, 0.8 -> 1.5%, 0.6 -> 9.5%, 0.5 -> 16%. Keep it at 0.5 or above: this product handles money.
+ * Springs react to distance and speed (they carry velocity), unlike easing curves. They never run on text, the confirm
+ * card, or hover cards, and not at all under prefers-reduced-motion.
+ */
+export const spring = {
+  /** Open: the liquid grows out of the orb and overshoots the panel's size once, before any text is shown. */
+  panelOpen: { response: 0.26, damping: 0.72 },
+  /** Open and close: the liquid letting go of the orb, or reaching back to it. Never bounces. */
+  panelSettle: { response: 0.18, damping: 1 },
+  /** Close: the orb swells by `kick` (a scale fraction) as it absorbs the panel, then wobbles back to size. */
+  orbAbsorb: { response: 0.32, damping: 0.55, kick: 0.05 },
+  /** Drag: how far the orb lags behind the cursor. Critically damped: it catches up without passing it. */
+  dragFollow: { response: 0.12, damping: 1 },
+  /** Drag release: one jiggle, scaled by release speed (px/s x perSpeed), never more than `maxKick`. */
+  dragRelease: { response: 0.26, damping: 0.5, perSpeed: 0.00003, maxKick: 0.04 },
+  /** Blocked: a short horizontal shake, starting `kick` px to the side. */
+  blockedShake: { response: 0.14, damping: 0.35, kick: 4 },
+  /** A spring counts as settled within `distance` of its travel, moving slower than `speed` travels per second. */
+  settle: { distance: 0.01, speed: 0.5 },
+  /** Hard cap on any one spring. If a spring would fight the goo filter or the frame rate, the shape wins: it snaps. */
+  maxMs: 520,
+} as const;
+
+/** Idle: a slow breath so the orb never looks frozen. Noticeable only if you stare. Dropped first on slow pages. */
+export const breathe = { period: "7s", scale: 1.012 } as const;
+
 /** Orb geometry. */
 export const orb = {
   floating: 56,
@@ -104,6 +134,8 @@ export function cssVariables(selector = ":host"): string {
     `--g-quick: ${motion.quick};`,
     `--g-panel: ${motion.panel};`,
     `--g-ease: ${motion.ease};`,
+    `--g-breathe-period: ${breathe.period};`,
+    `--g-breathe-scale: ${breathe.scale};`,
     `--g-layer: ${layer.host};`,
   );
   return `${selector} {\n  ${vars.join("\n  ")}\n}`;

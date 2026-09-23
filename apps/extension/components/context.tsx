@@ -37,6 +37,10 @@ export interface Glance {
   usdgDecimals: number;
   markUrl: string;
   orb: OrbLine;
+  /** Something that must feel still and certain is on screen (a confirm card): no idle motion. */
+  still: boolean;
+  /** Hold the orb still until the returned function is called. */
+  holdStill(): () => void;
   setOrb(next: Partial<OrbLine> & { state: OrbState }): void;
   refreshVault(): Promise<void>;
   openSettings(): void;
@@ -84,6 +88,16 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const [offlineMessage, setOfflineMessage] = useState("");
   const [orb, setOrbState] = useState<OrbLine>({ state: "idle", line: idleLine, meta: "" });
   const successTimer = useRef<ReturnType<typeof setTimeout>>();
+  const [stillCount, setStillCount] = useState(0);
+  const holdStill = useCallback(() => {
+    setStillCount((n) => n + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      setStillCount((n) => n - 1);
+    };
+  }, []);
 
   const setOrb = useCallback(
     (next: Partial<OrbLine> & { state: OrbState }) => {
@@ -155,12 +169,14 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       usdgDecimals: 6,
       markUrl: safely(() => browser.runtime.getURL("/glance-mark.png"), ""),
       orb,
+      still: stillCount > 0,
+      holdStill,
       setOrb,
       refreshVault,
       openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
       openConsole: () => window.open(consoleLink, "_blank", "noopener"),
     }),
-    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, catalog, health, vault, offline, offlineMessage, orb, setOrb, refreshVault],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, catalog, health, vault, offline, offlineMessage, orb, stillCount, holdStill, setOrb, refreshVault],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

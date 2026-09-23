@@ -136,6 +136,11 @@ How it's built:
   `send()` or `safely()`; a port to the background and a `runtime.id` check notice a reload within moments. The page
   UI then shuts down once (UI removed, listeners gone, underlines cleared) and shows the refresh notice. The expected
   "Extension context invalidated" error is never logged.
+- **Springs:** `lib/spring.ts`, tuned entirely from `spring` and `breathe` in `lib/tokens.ts`. They carry velocity, so
+  they react to distance and speed. The panel's open overshoots once (only while no text is showing); the orb trails a
+  drag, jiggles once on release, wobbles as it absorbs the closing panel, shakes once when a trade is refused, and
+  breathes very slowly when idle. Nothing springs on text, the confirm card or hover cards, and nothing moves under
+  reduced motion. `lib/motionBudget.ts` drops the idle breathing first on pages that can't hold frame rate.
 - **Orb states:** idle shows the eye; listening, thinking and speaking each have their own dotted motion
   (`ORB_MOTION` in `components/Orb.tsx`). Speaking follows the speech itself: it starts on the utterance's `start`
   event and stops on its `end`, not on a timer.

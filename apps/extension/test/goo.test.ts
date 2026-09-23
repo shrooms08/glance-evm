@@ -7,10 +7,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GooPanel, orbDisc, stretch, tooSlow } from "../components/GooPanel";
+import { reportFrames, resetMotionBudgetForTests } from "../lib/motionBudget";
 import { motion, orb } from "../lib/tokens";
-
-const SHAPE = parseFloat(motion.panel);
-const FADE = parseFloat(motion.quick);
 
 describe("frame budget", () => {
   it("keeps full quality at 60fps and drops it when frames are long", () => {
@@ -40,9 +38,12 @@ describe("GooPanel", () => {
   let shadow: ShadowRoot;
   let root: Root;
   let reduced = false;
+  const PANEL = { left: 816, top: 200, width: 360, height: 500 };
+  const STRETCH_H = 572; // panel top (200) down to the orb disc's bottom (772)
 
   beforeEach(() => {
     reduced = false;
+    resetMotionBudgetForTests();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "cancelAnimationFrame", "performance"] });
     vi.stubGlobal("matchMedia", (q: string) => ({ matches: reduced && q.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
     vi.stubGlobal(
@@ -53,6 +54,11 @@ describe("GooPanel", () => {
         disconnect() {}
       },
     );
+    // jsdom has no layout: give the panel its real footprint so the liquid's geometry can be checked.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const r = this.classList.contains("g-panel") ? PANEL : { left: 0, top: 0, width: 0, height: 0 };
+      return { ...r, x: r.left, y: r.top, right: r.left + r.width, bottom: r.top + r.height, toJSON() {} } as DOMRect;
+    });
     const host = document.createElement("div");
     document.body.append(host);
     shadow = host.attachShadow({ mode: "open" });
@@ -64,14 +70,16 @@ describe("GooPanel", () => {
     act(() => root.unmount());
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
+  const onAbsorbed = vi.fn();
   const render = (open: boolean) =>
     act(() =>
       root.render(
         createElement(
           GooPanel,
-          { open, orb: orbDisc({ right: 24, bottom: 24 }, 1200, 800), placement: { right: 24, bottom: 96 } },
+          { open, orb: orbDisc({ right: 24, bottom: 24 }, 1200, 800), placement: { right: 24, bottom: 96 }, onAbsorbed },
           createElement("div", { className: "g-card" }, createElement("span", { className: "g-figure" }, "$250.00"), createElement("button", null, "Buy")),
         ),
       ),
@@ -79,6 +87,18 @@ describe("GooPanel", () => {
   const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
   const panel = () => shadow.querySelector<HTMLElement>(".g-panel");
   const stage = () => shadow.querySelector<HTMLElement>(".g-goo-stage");
+  const morph = () => stage()?.querySelector<HTMLElement>(".g-goo-morph") ?? null;
+
+  /** Steps frame by frame, recording the liquid box and whether text is showing. */
+  function film(ms: number) {
+    const frames: Array<{ w: number; h: number; text: boolean }> = [];
+    for (let t = 0; t < ms; t += 16) {
+      advance(16);
+      const m = morph();
+      if (m) frames.push({ w: parseFloat(m.style.width), h: parseFloat(m.style.height), text: Boolean(panel()?.classList.contains("is-shown")) });
+    }
+    return frames;
+  }
 
   it("renders nothing while closed", () => {
     render(false);
@@ -89,7 +109,7 @@ describe("GooPanel", () => {
   it("opens by melting out of the orb, with the filter inside our shadow root", () => {
     render(false);
     render(true);
-    advance(16);
+    advance(32);
     expect(stage()).not.toBeNull();
 
     // The filter and its reference live in the same shadow tree, so url(#id) resolves.
@@ -98,42 +118,75 @@ describe("GooPanel", () => {
     expect(shadow.getElementById(id)?.tagName.toLowerCase()).toBe("filter");
     expect(document.getElementById(id)).toBeNull();
 
-    // Only the two empty liquid shapes are measured for the filtered layer; the panel's content is outside the stage.
+    // Only the two empty liquid shapes are filtered; the panel's content is outside the stage.
     const blobs = stage()!.querySelectorAll(".g-goo-blob");
     expect(blobs).toHaveLength(2);
     blobs.forEach((b) => expect(b.childElementCount + (b.textContent ?? "").length).toBe(0));
     expect(stage()!.contains(shadow.querySelector(".g-figure"))).toBe(false);
     expect(stage()!.contains(shadow.querySelector("button"))).toBe(false);
-
-    // Content waits for the liquid to take the panel's shape, then fades in.
-    expect(panel()!.classList.contains("g-panel-goo")).toBe(true);
     expect(panel()!.classList.contains("is-shown")).toBe(false);
-    advance(SHAPE);
-    expect(panel()!.classList.contains("is-shown")).toBe(true);
+  });
+
+  it("the open overshoots once, before any text shows, and nothing moves past the panel once it does", () => {
+    render(false);
+    render(true);
+    const frames = film(1_500);
+    const hidden = frames.filter((f) => !f.text);
+    const shown = frames.filter((f) => f.text);
+    expect(shown.length).toBeGreaterThan(0);
+
+    // A visible but small overshoot of the stretched height, while the text is hidden.
+    const peak = Math.max(...hidden.map((f) => f.h));
+    const travel = STRETCH_H - orb.floating;
+    expect(peak).toBeGreaterThan(STRETCH_H + 1);
+    expect(peak - STRETCH_H).toBeLessThan(travel * 0.08);
+
+    // One bounce at most: the height crosses its target at most twice (out past it, and back).
+    const growth = hidden.filter((f) => f.h > orb.floating + 1).map((f) => Math.sign(f.h - STRETCH_H));
+    const crossings = growth.slice(1).filter((sgn, i) => sgn !== 0 && growth[i] !== 0 && sgn !== growth[i]).length;
+    expect(crossings).toBeLessThanOrEqual(2);
+
+    // Once text is visible, the liquid never grows beyond the stretch or the panel's width: text sits on still liquid.
+    shown.forEach((f) => {
+      expect(f.w).toBeLessThanOrEqual(PANEL.width + 0.5);
+      expect(f.h).toBeLessThanOrEqual(STRETCH_H + 0.5);
+    });
 
     // At rest the liquid is gone: an ordinary card, no filter cost.
-    advance(FADE + SHAPE + 16);
     expect(stage()).toBeNull();
     expect(panel()!.dataset.phase).toBe("open");
   });
 
-  it("closes by fading the content first, then collapsing the liquid into the orb", () => {
+  it("closes without a bounce: text fades first, the liquid drains into the orb, then the orb is told to wobble", () => {
+    onAbsorbed.mockClear();
     render(true);
     render(false);
     advance(1);
     expect(panel()!.classList.contains("is-shown")).toBe(false);
-    expect(stage()).not.toBeNull();
-    const morph = () => stage()!.querySelector<HTMLElement>(".g-goo-morph")!;
-    expect(morph().style.borderRadius).toBe("var(--g-r-card)"); // still the panel's shape while the content fades
-    advance(FADE * 2);
-    expect(morph().style.width).toBe(`${orb.floating}px`); // then it reaches back and drains into the orb's disc
-    expect(morph().style.borderRadius).toBe("50%");
-    advance(SHAPE + SHAPE + 16);
+    const frames = film(1_500);
+    expect(frames.length).toBeGreaterThan(3);
+    frames.forEach((f) => {
+      expect(f.text).toBe(false);
+      expect(f.w).toBeGreaterThanOrEqual(orb.floating - 0.5); // never shrinks past the orb
+      expect(f.h).toBeLessThanOrEqual(STRETCH_H + 0.5); // never bulges past the stretch
+    });
     expect(panel()).toBeNull();
     expect(stage()).toBeNull();
+    expect(onAbsorbed).toHaveBeenCalledTimes(1);
   });
 
-  it("with reduced motion, scales and fades with no liquid at all", () => {
+  it("on a page that drops frames, the open loses its overshoot, not its shape", () => {
+    reportFrames(Array(20).fill(40));
+    reportFrames(Array(20).fill(40));
+    render(false);
+    render(true);
+    const frames = film(1_500);
+    expect(Math.max(...frames.map((f) => f.h))).toBeLessThanOrEqual(STRETCH_H + 0.5);
+    expect(stage()).toBeNull();
+    expect(panel()!.dataset.phase).toBe("open");
+  });
+
+  it("with reduced motion, fades with no liquid and no spring", () => {
     reduced = true;
     render(false);
     render(true);
@@ -142,7 +195,8 @@ describe("GooPanel", () => {
     expect(panel()!.classList.contains("g-panel-reduced")).toBe(true);
     expect(panel()!.classList.contains("is-shown")).toBe(true);
     render(false);
-    advance(FADE + 1);
+    advance(parseFloat(motion.quick) + 1);
     expect(panel()).toBeNull();
+    expect(onAbsorbed).not.toHaveBeenCalled();
   });
 });

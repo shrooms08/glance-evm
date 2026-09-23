@@ -15,6 +15,8 @@ import { GooPanel, orbDisc } from "../../components/GooPanel";
 import { Panel, type PageCompany } from "../../components/Panel";
 import { useAssistant } from "../../components/useAssistant";
 import { useHotkeys } from "../../components/useHotkeys";
+import { useOrbMotion } from "../../components/useOrbMotion";
+import { reportIdleFrames, sampleFrames } from "../../lib/motionBudget";
 import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
@@ -67,6 +69,11 @@ function Floating({ underliner }: { underliner: Underliner }) {
   const host = location.hostname.replace(/^www\./, "");
 
   useEffect(() => underliner.onChange(setMentions), [underliner]);
+  // One quiet-time frame sample: if this page can't hold frame rate on its own, skip the idle breathing pulse.
+  useEffect(() => {
+    const t = setTimeout(() => void sampleFrames().then(reportIdleFrames), 4_000);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => {
     if (!hover) cardPinned.current = false;
   }, [hover]);
@@ -201,7 +208,9 @@ function Floating({ underliner }: { underliner: Underliner }) {
   }, [underliner, hover]);
 
   // ---- orb drag and click ----------------------------------------------------------------------------------------
-  const drag = useRef<{ x: number; y: number; moved: boolean; start: OrbPosition } | null>(null);
+  const drag = useRef<{ x: number; y: number; moved: boolean; start: OrbPosition; at: OrbPosition; t: number; vx: number; vy: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const orbMotion = useOrbMotion(orbRef, g.orb.state, { still: g.still, dragging });
   /** pointerup fires before click: remember a finished drag so its click doesn't also start talking. */
   const justDragged = useRef(false);
   const clamp = (p: OrbPosition): OrbPosition => ({
@@ -211,7 +220,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
   const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { x: e.clientX, y: e.clientY, moved: false, start: pos };
+    drag.current = { x: e.clientX, y: e.clientY, moved: false, start: pos, at: pos, t: performance.now(), vx: 0, vy: 0 };
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const d = drag.current;
@@ -219,14 +228,32 @@ function Floating({ underliner }: { underliner: Underliner }) {
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
     if (!d.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    if (!d.moved) setDragging(true);
     d.moved = true;
-    setPos(clamp({ right: d.start.right - dx, bottom: d.start.bottom - dy }));
+    const next = clamp({ right: d.start.right - dx, bottom: d.start.bottom - dy });
+    // The anchor jumps to the cursor; the orb itself trails it on a spring, a little behind.
+    const sx = d.at.right - next.right;
+    const sy = d.at.bottom - next.bottom;
+    orbMotion.follow(sx, sy);
+    const now = performance.now();
+    const dt = Math.max(1, now - d.t) / 1000;
+    // Smoothed pointer velocity, for the release jiggle.
+    d.vx = d.vx * 0.6 + (sx / dt) * 0.4;
+    d.vy = d.vy * 0.6 + (sy / dt) * 0.4;
+    d.t = now;
+    d.at = next;
+    setPos(next);
   };
   const onPointerUp = () => {
     const d = drag.current;
     drag.current = null;
     justDragged.current = Boolean(d?.moved);
-    if (d?.moved) void safely(() => orbPosition.setValue(pos), Promise.resolve());
+    if (!d?.moved) return;
+    setDragging(false);
+    // A stale velocity (the pointer rested before letting go) shouldn't jiggle.
+    const fresh = performance.now() - d.t < 80;
+    orbMotion.release(fresh ? Math.hypot(d.vx, d.vy) : 0);
+    void safely(() => orbPosition.setValue(pos), Promise.resolve());
   };
   const switchToDocked = () => {
     void safely(() => defaultMode.setValue("docked"), Promise.resolve());
@@ -270,7 +297,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
             </div>
           )}
 
-          <GooPanel open={panelOpen} orb={orbDisc(pos, vw, vh)} placement={panelPlacement}>
+          <GooPanel open={panelOpen} orb={orbDisc(pos, vw, vh)} placement={panelPlacement} onAbsorbed={orbMotion.absorb}>
             <Panel
               layout="compact"
               assistant={assistant}
@@ -289,6 +316,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
           <button
             ref={orbRef}
             className="g-orb-button"
+            data-breathe={orbMotion.breathe || undefined}
             style={{ right: pos.right, bottom: pos.bottom }}
             aria-label={`Glance: ${companies.length} companies found on this page. Click to dock to the side panel. Tap Option ${g.glanceKey} to glance, hold Option ${g.voiceKey} to talk.`}
             aria-expanded={panelOpen}

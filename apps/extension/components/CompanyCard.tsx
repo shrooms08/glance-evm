@@ -59,6 +59,11 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decision?.n]);
 
+  // The confirm moment should feel still and certain: no idle motion anywhere while it is on screen.
+  const confirming = flow.step === "review" || flow.step === "trading";
+  const { holdStill } = g;
+  useEffect(() => (confirming ? holdStill() : undefined), [confirming, holdStill]);
+
   const weekendCap = g.vault?.limits.weekendCap ?? "25%";
 
   if (flow.step === "blocked") {

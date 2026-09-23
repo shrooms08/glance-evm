@@ -11,6 +11,7 @@ import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { marketClosed, useGlance } from "./context";
 import { Orb, ORB_LABELS } from "./Orb";
 import type { useAssistant } from "./useAssistant";
+import { useOrbMotion } from "./useOrbMotion";
 
 export interface PageCompany {
   symbol: string;
@@ -49,7 +50,7 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
   return (
     <div className="g-card" style={{ display: "flex", flexDirection: "column", height: layout === "tall" ? "100%" : undefined, maxHeight: "inherit", borderRadius: layout === "tall" ? 0 : undefined, border: layout === "tall" ? 0 : undefined }} role="dialog" aria-label="Glance assistant">
       <div className="g-head">
-        {layout === "tall" && <Orb state={g.orb.state} size={32} markUrl={g.markUrl} />}
+        {layout === "tall" && <PanelOrb />}
         <div className="g-head-title">
           <span className="g-ui">Glance</span>
           <span className="g-state" data-state={g.orb.state} aria-live="polite">
@@ -183,5 +184,17 @@ function MicIcon() {
       <rect x="9" y="3" width="6" height="12" rx="3" />
       <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
     </svg>
+  );
+}
+
+/** The docked panel's orb: it breathes when idle and shakes once when a trade is refused, like the floating one. */
+function PanelOrb() {
+  const g = useGlance();
+  const ref = useRef<HTMLSpanElement>(null);
+  const motion = useOrbMotion(ref, g.orb.state, { still: g.still });
+  return (
+    <span ref={ref} className="g-orb-motion" data-breathe={motion.breathe || undefined}>
+      <Orb state={g.orb.state} size={32} markUrl={g.markUrl} />
+    </span>
   );
 }

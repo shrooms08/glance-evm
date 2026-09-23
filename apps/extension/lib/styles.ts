@@ -53,7 +53,11 @@ const components = /* css */ `
 .g-orb-dots { display: block; pointer-events: none; }
 @keyframes g-pulse { 0% { transform: scale(1); opacity: .7 } 100% { transform: scale(1.7); opacity: 0 } }
 @keyframes g-spin { to { transform: rotate(360deg) } }
-@keyframes g-in { from { opacity: 0; transform: translateY(6px) scale(.98) } to { opacity: 1; transform: none } }
+/* Cards only fade in: text never slides or scales (hover cards sit over article text; the panel holds prices). */
+@keyframes g-in { from { opacity: 0 } to { opacity: 1 } }
+/* Idle breathing (lib/tokens.ts breathe): the disc only, never text, and the global reduced-motion rule turns it off. */
+@keyframes g-breathe { from { transform: scale(1) } to { transform: scale(var(--g-breathe-scale)) } }
+[data-breathe] > .g-orb { animation: g-breathe var(--g-breathe-period) ease-in-out infinite alternate; }
 
 /* ---------- Floating layer ---------- */
 .g-layer { position: fixed; inset: 0; pointer-events: none; z-index: var(--g-layer); }
@@ -62,6 +66,8 @@ const components = /* css */ `
   border: 0; background: transparent; border-radius: 50%; cursor: grab; pointer-events: auto; touch-action: none;
 }
 .g-orb-button:active { cursor: grabbing; }
+.g-orb-button, .g-orb-motion { will-change: transform; }
+.g-orb-motion { display: inline-flex; }
 .g-float-badge { position: fixed; pointer-events: auto; }
 
 /* ---------- Surfaces ---------- */
@@ -77,10 +83,6 @@ const components = /* css */ `
 /* Only .g-goo-blob shapes are filtered, and they are empty. The panel's content is never inside the filtered layer. */
 .g-goo-stage { position: fixed; pointer-events: none; }
 .g-goo-blob { position: absolute; }
-.g-goo-morph {
-  transition: left var(--g-panel) var(--g-ease), top var(--g-panel) var(--g-ease), width var(--g-panel) var(--g-ease),
-    height var(--g-panel) var(--g-ease), border-radius var(--g-panel) var(--g-ease);
-}
 .g-panel-goo { opacity: 0; transition: opacity var(--g-quick) var(--g-ease); }
 .g-panel-goo .g-card { animation: none; }
 .g-panel-goo.is-shown, .g-panel-reduced.is-shown { opacity: 1; transform: none; }
