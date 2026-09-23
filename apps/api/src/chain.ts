@@ -16,10 +16,14 @@ export function chainFor(deployment: Deployment, config: Config): Chain {
   });
 }
 
+/**
+ * Reads made in the same tick are sent as one JSON-RPC batch. A round trip to the public testnet RPC costs ~0.6s, and a
+ * batch of 30 calls costs about the same, so batching is what keeps a quote to a few round trips instead of dozens.
+ */
 export function createChainClient(chain: Chain, rpcUrl: string): PublicClient {
   return createPublicClient({
     chain,
-    transport: http(rpcUrl, { timeout: 20_000, retryCount: 2 }),
+    transport: http(rpcUrl, { timeout: 20_000, retryCount: 2, batch: { batchSize: 40, wait: 8 } }),
     batch: { multicall: false },
   });
 }

@@ -91,9 +91,20 @@ function classify(age: number, openMaxAge: number, closedMaxAge: number): Market
   return "STALE";
 }
 
+/** The chain's latest block number and time, read once and shared by every read in a request (cached 1.5s). */
+let chainNowCache: { at: number; value: Promise<{ number: bigint; timestamp: number }> } | null = null;
+function chainNow(ctx: AppContext): Promise<{ number: bigint; timestamp: number }> {
+  if (chainNowCache && Date.now() - chainNowCache.at < 1_500) return chainNowCache.value;
+  const value = ctx.client
+    .getBlock({ blockTag: "latest" })
+    .then((b) => ({ number: b.number, timestamp: Number(b.timestamp) }));
+  value.catch(() => (chainNowCache = null));
+  chainNowCache = { at: Date.now(), value };
+  return value;
+}
+
 async function latestTimestamp(ctx: AppContext): Promise<number> {
-  const block = await ctx.client.getBlock({ blockTag: "latest" });
-  return Number(block.timestamp);
+  return (await chainNow(ctx)).timestamp;
 }
 
 /** Oracle price for a stock, classified with the freshness thresholds `vault` holds for that token. */
@@ -154,7 +165,8 @@ async function getVaultLogs(ctx: AppContext, vault: Address, fromBlock: bigint, 
     const end = start + LOG_CHUNK_BLOCKS - 1n < toBlock ? start + LOG_CHUNK_BLOCKS - 1n : toBlock;
     logs.push(...(await ctx.client.getLogs({ address: vault, fromBlock: start, toBlock: end })));
   }
-  const timestamps = new Map<bigint, number>();
+  // Robinhood Chain's RPC sends a blockTimestamp field on logs, but as 0x0, so the times come from the blocks.
+  await blockTimes(ctx, logs.map((l) => l.blockNumber).filter((n): n is bigint => n !== null));
   const out: DecodedLog[] = [];
   for (const log of logs) {
     let decoded;
@@ -163,16 +175,24 @@ async function getVaultLogs(ctx: AppContext, vault: Address, fromBlock: bigint, 
     } catch {
       continue;
     }
-    // Robinhood Chain's RPC includes blockTimestamp on logs; fall back to a block read if it is missing.
-    let timestamp = Number((log as Log & { blockTimestamp?: bigint | Hex }).blockTimestamp ?? 0);
-    if (!timestamp && log.blockNumber !== null) {
-      const cached = timestamps.get(log.blockNumber);
-      timestamp = cached ?? Number((await ctx.client.getBlock({ blockNumber: log.blockNumber })).timestamp);
-      timestamps.set(log.blockNumber, timestamp);
-    }
+    const given = Number((log as Log & { blockTimestamp?: bigint | Hex }).blockTimestamp ?? 0);
+    const timestamp = given || (log.blockNumber !== null ? blockTimeCache.get(log.blockNumber) ?? 0 : 0);
     out.push({ eventName: decoded.eventName, args: (decoded.args ?? {}) as Record<string, unknown>, log, timestamp });
   }
   return out;
+}
+
+/** Block timestamps never change: cache them for the life of the process (bounded). */
+const blockTimeCache = new Map<bigint, number>();
+const BLOCK_TIME_CACHE_MAX = 20_000;
+
+/** Fills blockTimeCache for `blocks`, fetching every missing one concurrently so they share one RPC batch. */
+async function blockTimes(ctx: AppContext, blocks: bigint[]): Promise<void> {
+  const missing = [...new Set(blocks)].filter((b) => !blockTimeCache.has(b));
+  if (missing.length === 0) return;
+  const got = await Promise.all(missing.map((blockNumber) => ctx.client.getBlock({ blockNumber })));
+  if (blockTimeCache.size + got.length > BLOCK_TIME_CACHE_MAX) blockTimeCache.clear();
+  for (const b of got) blockTimeCache.set(b.number, Number(b.timestamp));
 }
 
 function startBlock(ctx: AppContext, latest: bigint, lookback: bigint): bigint {
@@ -188,7 +208,8 @@ export interface Windows {
 
 /** Rebuilds the vault's rolling 24h buy and sell windows from Bought and Sold events. */
 export async function readWindows(ctx: AppContext, vault: Address, now: number): Promise<Windows> {
-  const latest = await ctx.client.getBlockNumber({ cacheTime: 0 }); // never a cached height: a just-mined trade must be included
+  // chainNow is at most 1.5s old; a trade just mined by /trade is read from its own receipt, not from here.
+  const latest = (await chainNow(ctx)).number;
   const logs = await getVaultLogs(ctx, vault, startBlock(ctx, latest, WINDOW_LOOKBACK_BLOCKS), latest);
   const recent = logs.filter((l) => l.timestamp + WINDOW_SECONDS > now);
   return {
@@ -202,10 +223,11 @@ export async function readWindows(ctx: AppContext, vault: Address, now: number):
 // ---------------------------------------------------------------------------
 
 async function readVaultCore(ctx: AppContext, vault: Address) {
-  const code = await ctx.client.getCode({ address: vault });
-  if (!code || code === "0x") throw new ApiError(404, "NOT_A_VAULT", `There's no contract at ${vault}.`);
   const read = <F extends string>(functionName: F) =>
     ctx.client.readContract({ address: vault, abi: glanceVaultAbi, functionName: functionName as never });
+  // One batch: the code check and every field together.
+  const codePromise = ctx.client.getCode({ address: vault });
+  codePromise.catch(() => {});
   try {
     const [owner, agent, agentExpiry, paused, perBuyCap, dailyCap, dailySellCap, maxSlippageBps, weekendCapBps, usdg, usdgDecimals, spent, sold] =
       await Promise.all([
@@ -222,6 +244,9 @@ async function readVaultCore(ctx: AppContext, vault: Address) {
         read("usdgDecimals"),
         read("spentInWindow"),
         read("soldInWindow"),
+        codePromise.then((code) => {
+          if (!code || code === "0x") throw new ApiError(404, "NOT_A_VAULT", `There's no contract at ${vault}.`);
+        }),
       ]);
     return {
       owner: owner as Address,
@@ -470,8 +495,20 @@ async function prepare(ctx: AppContext, req: TradeRequest) {
   return { vault, stock, v, desk, amount };
 }
 
+/** Which desk serves which vault changes only when the owner reconfigures it; remember it for a minute. */
+const deskCache = new Map<string, { at: number; desk: Address }>();
+
 /** The desk in the deployment that quotes this vault's USDG and that the vault has approved. */
 async function deskFor(ctx: AppContext, vault: Address, usdg: Address): Promise<Address> {
+  const key = `${vault}:${usdg}`.toLowerCase();
+  const hit = deskCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.desk;
+  const desk = await findDesk(ctx, vault, usdg);
+  deskCache.set(key, { at: Date.now(), desk });
+  return desk;
+}
+
+async function findDesk(ctx: AppContext, vault: Address, usdg: Address): Promise<Address> {
   for (const desk of ctx.desks) {
     const [deskUsdg, approved] = await Promise.all([
       ctx.client.readContract({ address: desk, abi: stockDeskAbi, functionName: "usdg" }),
@@ -505,9 +542,33 @@ function explainContext(ctx: AppContext, p: Awaited<ReturnType<typeof prepare>>,
 }
 
 export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?: Address) {
+  // Round trip 1: vault state, price, the 24h windows and the chain clock, all independent, go out as one batch.
+  const vaultAddr = getAddress(req.vault);
+  const stockEarly = stockBySymbol(ctx, req.symbol);
+  const pricePromise = readPrice(ctx, stockEarly, vaultAddr);
+  const windowsPromise = chainNow(ctx).then((n) => readWindows(ctx, vaultAddr, n.timestamp));
+  pricePromise.catch(() => {});
+  windowsPromise.catch(() => {});
   const p = await prepare(ctx, req);
   const now = await latestTimestamp(ctx);
-  const [price, windows] = await Promise.all([readPrice(ctx, p.stock, p.vault), readWindows(ctx, p.vault, now)]);
+  // Everything that doesn't depend on another read goes out together, as one batch.
+  const deskQuote = ctx.client
+    .readContract({
+      address: p.desk,
+      abi: stockDeskAbi,
+      functionName: req.side === "buy" ? "quoteBuy" : "quoteSell",
+      args: [p.stock.token, p.amount],
+    })
+    .then(
+      (value) => ({ ok: true as const, value }),
+      (err: unknown) => ({ ok: false as const, err }),
+    );
+  // Round trip 2: the desk's quote and spread (the desk depends on the vault's USDG). Round trip 3 is the simulation.
+  const [price, windows, spreadRaw] = await Promise.all([
+    pricePromise,
+    windowsPromise,
+    ctx.client.readContract({ address: p.desk, abi: stockDeskAbi, functionName: "spreadBps" }),
+  ]);
   const exCtx = explainContext(ctx, p, req.side, price.state, windows, now);
   const d = p.v.usdgDecimals;
 
@@ -517,19 +578,10 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
       ? usdgToTokens(p.amount, d, price.price, price.decimals, p.stock.tokenDecimals)
       : tokenValueInUsdg(p.amount, p.stock.tokenDecimals, price.price, price.decimals, d);
 
-  let deskOut: bigint | null = null;
-  let deskError: GuardError | null = null;
-  try {
-    deskOut = await ctx.client.readContract({
-      address: p.desk,
-      abi: stockDeskAbi,
-      functionName: req.side === "buy" ? "quoteBuy" : "quoteSell",
-      args: [p.stock.token, p.amount],
-    });
-  } catch (err) {
-    deskError = explainRevert(decodeRevert(revertDataFromError(err)), exCtx);
-  }
-  const spreadBps = Number(await ctx.client.readContract({ address: p.desk, abi: stockDeskAbi, functionName: "spreadBps" }));
+  const dq = await deskQuote;
+  const deskOut: bigint | null = dq.ok ? dq.value : null;
+  const deskError: GuardError | null = dq.ok ? null : explainRevert(decodeRevert(revertDataFromError(dq.err)), exCtx);
+  const spreadBps = Number(spreadRaw);
 
   const extra = BigInt(req.slippageBps ?? 0);
   const minOut = deskOut === null ? 0n : (deskOut * (BPS - extra)) / BPS;

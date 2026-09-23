@@ -7,6 +7,7 @@
 import { createPublicClient, http } from "viem";
 import { describe, expect, it } from "vitest";
 
+import { glanceVaultAbi } from "../../src/abi.generated.js";
 import { createApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
@@ -83,7 +84,14 @@ describe.skipIf(!online)("live testnet", () => {
     expect(BigInt(body.price.raw)).toBeGreaterThan(0n);
     expect(body.price.decimals).toBe(8);
     expect(["OPEN", "CLOSED", "STALE"]).toContain(body.marketState);
-    expect(body.freshness).toMatchObject({ vault, openMaxAge: 3600, closedMaxAge: 288_000 });
+    // Whatever the vault's owner has set for TSLA on chain (defaults 1h/80h; the demo uses 20h/96h).
+    const [, , openMaxAge, closedMaxAge] = await ctx!.client.readContract({
+      address: vault!,
+      abi: glanceVaultAbi,
+      functionName: "tokenConfig",
+      args: [(ctx!.deployment.stocks.TSLA as any).token],
+    });
+    expect(body.freshness).toMatchObject({ vault, openMaxAge, closedMaxAge });
     expect(body.ageSeconds).toBeGreaterThanOrEqual(0);
     expect(body.priceSourceKind).toBe("mainnet-mirror");
     expect(body.mainnetFeed).toBe("0x4A1166a659A55625345e9515b32adECea5547C38");
