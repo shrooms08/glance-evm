@@ -5,7 +5,8 @@
  *   idle       white eye on black
  *   listening  solid lime disc, pulsing ring, and a dotted waveform (thinking-orbs "listening", dark ink)
  *   thinking   lime arc orbiting a dotted cloud (thinking-orbs "working", lime ink); the eye steps aside
- *   speaking   lime ring, level bars
+ *   speaking   lime ring and an undulating dotted sash (thinking-orbs "composing", lime ink). It is shown only while
+ *              a speechSynthesis utterance is actually playing (lib/voice speak(): onStart / onEnd).
  *   success    lime disc with a check (held for 2s by the caller)
  *   blocked    amber ring and a shield: the vault said no
  *
@@ -13,7 +14,7 @@
  * on a plain canvas, pauses when hidden, and shows a static frame under prefers-reduced-motion.
  */
 import type { CSSProperties } from "react";
-import { ThinkingOrb } from "thinking-orbs";
+import { ThinkingOrb, type OrbState as MotionState } from "thinking-orbs";
 
 import { color, orb as orbTokens } from "../lib/tokens";
 
@@ -26,6 +27,19 @@ export const ORB_LABELS: Record<OrbState, string> = {
   speaking: "Speaking",
   success: "Done",
   blocked: "Held back",
+};
+
+/**
+ * What moves inside the disc for each state. Speaking and thinking must never share a motion: the orb has to tell
+ * "I'm working it out" apart from "I'm talking to you".
+ */
+export const ORB_MOTION: Record<OrbState, MotionState | "eye" | "check" | "shield"> = {
+  idle: "eye",
+  listening: "listening",
+  thinking: "working",
+  speaking: "composing",
+  success: "check",
+  blocked: "shield",
 };
 
 interface Props {
@@ -41,19 +55,13 @@ export function Orb({ state, size = orbTokens.floating, markUrl }: Props) {
   let inner: JSX.Element;
   switch (state) {
     case "listening":
-      inner = <ThinkingOrb className="g-orb-dots" state="listening" size={dotsSize} theme="light" color={color.onLime} aria-hidden />;
+      inner = <ThinkingOrb className="g-orb-dots" state={ORB_MOTION.listening as MotionState} size={dotsSize} theme="light" color={color.onLime} aria-hidden />;
       break;
     case "thinking":
-      inner = <ThinkingOrb className="g-orb-dots" state="working" size={dotsSize} theme="dark" color={color.lime} aria-hidden />;
+      inner = <ThinkingOrb className="g-orb-dots" state={ORB_MOTION.thinking as MotionState} size={dotsSize} theme="dark" color={color.lime} aria-hidden />;
       break;
     case "speaking":
-      inner = (
-        <div className="g-orb-bars" aria-hidden>
-          {[0, 0.15, 0.3, 0.45].map((d) => (
-            <span key={d} style={{ animationDelay: `${d}s` }} />
-          ))}
-        </div>
-      );
+      inner = <ThinkingOrb className="g-orb-dots" state={ORB_MOTION.speaking as MotionState} size={dotsSize} theme="dark" color={color.lime} aria-hidden />;
       break;
     case "success":
       inner = (

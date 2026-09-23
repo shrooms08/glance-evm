@@ -8,8 +8,18 @@ import { api } from "../lib/api";
 import { parseCommand } from "../lib/commands";
 import { ageHours, priceUsd, until } from "../lib/format";
 import { isAddress } from "../lib/settings";
-import { listen, speak, stopSpeaking, voiceSupported, type Listener } from "../lib/voice";
+import { speak, stopSpeaking } from "../lib/voice";
+import { startVoice, type VoiceSession } from "../lib/voiceClient";
+import { detectBrowser, reasonFor, type VoiceCode } from "../lib/voiceReasons";
 import { useGlance } from "./context";
+
+const browserInfo = detectBrowser(navigator as unknown as Parameters<typeof detectBrowser>[0]);
+if (import.meta.env.DEV) console.info(`[glance] voice: running in ${browserInfo.name} ${browserInfo.version}`);
+
+/** The sentence for a voice failure, specific to this browser. Typing always still works. */
+export function voiceReason(code: VoiceCode): string {
+  return reasonFor(code, browserInfo);
+}
 
 export type AssistantCard =
   | { kind: "company"; symbol: string; autoAmount?: string; key: number }
@@ -23,14 +33,17 @@ export function useAssistant() {
   const [listening, setListening] = useState(false);
   /** Increments to tell the open company card to confirm (+1) or cancel (-1) its pending review. */
   const [decision, setDecision] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: true });
-  const listener = useRef<Listener | null>(null);
+  const listener = useRef<VoiceSession | null>(null);
   const seq = useRef(0);
 
   const say = useCallback(
     async (line: string, meta = "") => {
-      g.setOrb({ state: "speaking", line, meta });
-      await speak(line, g.voiceReplies);
+      // Show the line at once; the orb moves only while the voice is actually speaking.
       g.setOrb({ state: "idle", line, meta });
+      await speak(line, g.voiceReplies, {
+        onStart: () => g.setOrb({ state: "speaking", line, meta }),
+        onEnd: () => g.setOrb({ state: "idle", line, meta }),
+      });
     },
     [g],
   );
@@ -74,37 +87,44 @@ export function useAssistant() {
     [g, say],
   );
 
+  /** Voice failures never block typing: the reason shows in the orb line and the text box stays ready. */
+  const voiceFailed = useCallback(
+    (code: VoiceCode) => {
+      const line = voiceReason(code);
+      if (import.meta.env.DEV) console.info(`[glance] voice error "${code}" in ${browserInfo.name} ${browserInfo.version}`);
+      g.setOrb({ state: "idle", line, meta: "You can type instead" });
+    },
+    [g],
+  );
+
   const startListening = useCallback(() => {
     if (listener.current) return;
     stopSpeaking();
-    if (!voiceSupported()) {
-      void say("Voice isn't available in this browser. Type your request instead.");
-      return;
-    }
     setHeard("");
     setListening(true);
     g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
-    listener.current = listen({
+    let failed = false;
+    let finalText = "";
+    listener.current = startVoice({
       onInterim: (t) => setHeard(t),
       onFinal: (t) => {
-        listener.current = null;
-        setListening(false);
-        if (t) void run(t);
-        else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: "" });
+        finalText = t;
       },
-      onError: (message) => {
+      onError: (code) => {
+        failed = true;
+        voiceFailed(code);
+      },
+      onEnd: () => {
         listener.current = null;
         setListening(false);
-        void say(message);
+        if (failed) return;
+        if (finalText) void run(finalText);
+        else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: "Hold Option+" + g.hotkey.toUpperCase() + " while you speak" });
       },
     });
-    if (!listener.current) {
-      setListening(false);
-      void say("I couldn't start the microphone. Type your request instead.");
-    }
-  }, [g, run, say]);
+  }, [g, run, voiceFailed]);
 
   const stopListening = useCallback(() => listener.current?.stop(), []);
 
-  return { card, setCard, heard, listening, decision, run, startListening, stopListening };
+  return { card, setCard, heard, listening, decision, run, startListening, stopListening, voiceFailed };
 }

@@ -1,12 +1,13 @@
 /**
- * Settings: API base URL, vault address, hotkey, floating or docked default, console URL, voice replies, microphone
- * access for the side panel, and a connection test against GET /health.
+ * Settings: API base URL, vault address, hotkey, floating or docked default, console URL, voice replies, the
+ * "Enable voice" microphone grant with voice diagnostics, and a connection test against GET /health.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
 import { Orb } from "../../components/Orb";
+import { VoiceSection } from "./VoiceSection";
 import { api } from "../../lib/api";
 import type { Health } from "../../lib/api-types";
 import { mountPageStyles } from "../../lib/extensionPage";
@@ -38,13 +39,11 @@ function Settings() {
   const [saved, setSaved] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [test, setTest] = useState<Test>({ state: "idle" });
-  const [mic, setMic] = useState<"unknown" | "granted" | "denied">("unknown");
 
   useEffect(() => {
     void Promise.all([apiBaseUrl.getValue(), vaultAddress.getValue(), hotkeyLetter.getValue(), defaultMode.getValue(), consoleUrl.getValue(), voiceReplies.getValue()]).then(
       ([api, vault, hotkey, mode, console, voice]) => setForm({ api, vault, hotkey, mode, console, voice }),
     );
-    navigator.permissions?.query({ name: "microphone" as PermissionName }).then((p) => setMic(p.state === "granted" ? "granted" : p.state === "denied" ? "denied" : "unknown"), () => {});
   }, []);
 
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => {
@@ -95,16 +94,6 @@ function Settings() {
     setTest({ state: "running" });
     const res = await api.health();
     setTest(res.ok ? { state: "ok", health: res.data } : { state: "failed", message: res.message });
-  };
-
-  const enableMic = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
-      setMic("granted");
-    } catch {
-      setMic("denied");
-    }
   };
 
   return (
@@ -174,14 +163,10 @@ function Settings() {
           <label className="g-row g-ui" style={{ gap: 8 }}>
             <input type="checkbox" checked={form.voice} onChange={(e) => set("voice", e.target.checked)} /> Speak replies aloud
           </label>
-          <div className="g-row">
-            <button className="g-btn" onClick={() => void enableMic()} disabled={mic === "granted"}>
-              {mic === "granted" ? "Microphone allowed" : "Allow the microphone for the side panel"}
-            </button>
-            <span className="g-meta">{mic === "denied" ? "Blocked. Allow it in the browser's site settings for this extension." : "Pages ask separately the first time you talk on them."}</span>
-          </div>
         </div>
       </section>
+
+      <VoiceSection hotkey={form.hotkey} />
 
       <section className="g-card" aria-labelledby="console">
         <div className="g-section">

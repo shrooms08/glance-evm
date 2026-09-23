@@ -1,7 +1,8 @@
 /**
  * The in-page Glance UI: a draggable orb, its compact panel, the hover card on underlined company names, and the
  * weekend badge. When the user has docked Glance and the side panel is open, the orb hides entirely (it must never
- * cover the page's own controls) and speech captured here is handed to the side panel.
+ * cover the page's own controls) and speech started here is handed to the side panel. Speech itself never runs in the
+ * page: lib/voiceClient runs it in Glance's offscreen document.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { browser } from "wxt/browser";
@@ -16,7 +17,7 @@ import type { Message, PageMatchesReply } from "../../lib/messages";
 import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
-import { listen, voiceSupported, type Listener } from "../../lib/voice";
+import { startVoice, type VoiceSession } from "../../lib/voiceClient";
 
 const HOVER_DWELL_MS = 300;
 const HOVER_GRACE_MS = 250;
@@ -54,7 +55,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
   /** Once the reader clicks or types in the hover card it stays open (its content can resize under the pointer). */
   const cardPinned = useRef(false);
   const orbRef = useRef<HTMLButtonElement>(null);
-  const dockedListener = useRef<Listener | null>(null);
+  const dockedListener = useRef<VoiceSession | null>(null);
 
   const companies = useMemo(() => companiesFrom(mentions, g.catalog), [mentions, g.catalog]);
   const host = location.hostname.replace(/^www\./, "");
@@ -84,19 +85,24 @@ function Floating({ underliner }: { underliner: Underliner }) {
   // ---- talking -------------------------------------------------------------------------------------------------
   const startTalking = useCallback(() => {
     if (docked) {
-      // The side panel owns the conversation; capture here and hand the words over.
-      if (dockedListener.current || !voiceSupported()) return;
-      void browser.runtime.sendMessage({ kind: "assistant:listening", listening: true } satisfies AssistantMessage).catch(() => {});
-      dockedListener.current = listen({
-        onInterim: (text) => void browser.runtime.sendMessage({ kind: "assistant:heard", text } satisfies AssistantMessage).catch(() => {}),
+      // The side panel owns the conversation; listen (in the offscreen document) and hand the words over.
+      if (dockedListener.current) return;
+      const send = (m: AssistantMessage) => void browser.runtime.sendMessage(m).catch(() => {});
+      send({ kind: "assistant:listening", listening: true });
+      let failed = false;
+      let finalText = "";
+      dockedListener.current = startVoice({
+        onInterim: (text) => send({ kind: "assistant:heard", text }),
         onFinal: (text) => {
-          dockedListener.current = null;
-          void browser.runtime.sendMessage({ kind: "assistant:run", text } satisfies AssistantMessage).catch(() => {});
+          finalText = text;
         },
-        onError: (message) => {
+        onError: (code) => {
+          failed = true;
+          send({ kind: "assistant:error", code });
+        },
+        onEnd: () => {
           dockedListener.current = null;
-          void browser.runtime.sendMessage({ kind: "assistant:run", text: "" } satisfies AssistantMessage).catch(() => {});
-          g.setOrb({ state: "idle", line: message, meta: "" });
+          if (!failed) send({ kind: "assistant:run", text: finalText });
         },
       });
       return;
@@ -110,21 +116,23 @@ function Floating({ underliner }: { underliner: Underliner }) {
     else assistant.stopListening();
   }, [assistant]);
 
+  // Whether the talk key is down. A ref, not a local: starting to listen re-renders and re-subscribes the handlers
+  // below, and the key-up must still find the press it belongs to.
+  const held = useRef(false);
   // Press and hold Option+<letter> to talk. Capture phase, so it works even while focus is inside our shadow root.
   useEffect(() => {
     const code = `Key${g.hotkey.toUpperCase()}`;
-    let held = false;
     const down = (e: KeyboardEvent) => {
       if (e.code !== code || !e.altKey || e.ctrlKey || e.metaKey) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.repeat || held) return;
-      held = true;
+      if (e.repeat || held.current) return;
+      held.current = true;
       startTalking();
     };
     const up = (e: KeyboardEvent) => {
-      if (!held || (e.code !== code && e.key !== "Alt")) return;
-      held = false;
+      if (!held.current || (e.code !== code && e.key !== "Alt")) return;
+      held.current = false;
       stopTalking();
     };
     const esc = (e: KeyboardEvent) => {

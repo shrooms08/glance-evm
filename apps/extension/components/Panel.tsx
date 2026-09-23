@@ -6,7 +6,6 @@
 import { useEffect, useRef, useState } from "react";
 
 import { isAddress } from "../lib/settings";
-import { voiceSupported } from "../lib/voice";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { marketClosed, useGlance } from "./context";
 import { Orb, ORB_LABELS } from "./Orb";
@@ -153,17 +152,16 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         }}
       >
         <input ref={input} className="g-input g-grow" placeholder="Try “buy $10 of Tesla”" aria-label="Ask Glance" value={text} onChange={(e) => setText(e.target.value)} />
-        {voiceSupported() && (
-          <button
-            type="button"
-            className="g-btn g-icon-btn"
-            aria-label={assistant.listening ? "Stop listening" : "Talk"}
-            aria-pressed={assistant.listening}
-            onClick={() => (assistant.listening ? assistant.stopListening() : assistant.startListening())}
-          >
-            <MicIcon />
-          </button>
-        )}
+        {/* Always offered: if voice can't work here, pressing it says exactly why, and typing still works. */}
+        <button
+          type="button"
+          className="g-btn g-icon-btn"
+          aria-label={assistant.listening ? "Stop listening" : "Talk"}
+          aria-pressed={assistant.listening}
+          onClick={() => (assistant.listening ? assistant.stopListening() : assistant.startListening())}
+        >
+          <MicIcon />
+        </button>
       </form>
 
       <div className="g-between" style={{ padding: "0 var(--g-s7) var(--g-s5)" }}>

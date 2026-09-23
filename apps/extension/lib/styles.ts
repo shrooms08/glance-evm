@@ -50,12 +50,9 @@ const components = /* css */ `
 .g-orb[data-state="thinking"] .g-orb-mark { --mark-color: var(--g-dim-eye); }
 .g-orb-pulse { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--g-lime); animation: g-pulse var(--g-pulse) ease-out infinite; }
 .g-orb-arc { position: absolute; inset: -4px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--g-lime); border-right-color: var(--g-lime); animation: g-spin var(--g-spin) linear infinite; }
-.g-orb-bars { display: flex; align-items: center; height: calc(var(--size) * 0.42); gap: max(2px, calc(var(--size) * 0.06)); }
-.g-orb-bars span { width: max(2px, calc(var(--size) * 0.07)); height: 100%; border-radius: 99px; background: var(--g-lime); animation: g-bar var(--g-bar) ease-in-out infinite; }
 .g-orb-dots { display: block; pointer-events: none; }
 @keyframes g-pulse { 0% { transform: scale(1); opacity: .7 } 100% { transform: scale(1.7); opacity: 0 } }
 @keyframes g-spin { to { transform: rotate(360deg) } }
-@keyframes g-bar { 0%, 100% { transform: scaleY(.3) } 50% { transform: scaleY(1) } }
 @keyframes g-in { from { opacity: 0; transform: translateY(6px) scale(.98) } to { opacity: 1; transform: none } }
 
 /* ---------- Floating layer ---------- */

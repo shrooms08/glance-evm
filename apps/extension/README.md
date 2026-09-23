@@ -47,6 +47,9 @@ Close the banner.
    your permission once.
 4. **Vault address:** paste your vault, or click **Use the demo vault** after running the connection test.
 5. Click **Save**. The connection test then shows the chain, the agent's ETH balance, and how fresh each price is.
+6. **Voice (optional):** in the Voice section, click **Enable voice**. Chrome asks "Glance wants to use your
+   microphone"; click **Allow**. You only do this once, and it covers every website. The diagnostics below the button
+   show your browser and version, and whether each part of voice is available.
 
 ## Use it
 
@@ -75,9 +78,10 @@ Close the banner.
 
 ## Good to know
 
-- **Voice uses your browser's built-in speech recognition.** Chrome and Edge support it. Brave turns it off, so type
-  instead there. A page may ask for microphone permission the first time you talk on it. For the side panel, click
-  "Allow the microphone for the side panel" in settings once.
+- **Voice uses your browser's built-in speech recognition.** It works in Google Chrome. Brave turns it off, and
+  open-source Chromium builds usually lack Google's speech service; Glance says so plainly, and you can always type.
+  Websites never see your microphone: Glance listens in its own extension context, under the permission you gave it
+  once in settings, so a site that blocks microphones doesn't stop it.
 - **Keyboard:**
   - Tab to the orb and press Enter to open Glance. Escape closes it.
   - Every company found on the page is listed in the panel. Pick one to open its card, or to scroll to it on the page.
@@ -89,8 +93,9 @@ Close the banner.
 pnpm --filter extension dev         # opens a browser with Glance loaded and hot reload
 pnpm --filter extension build       # production build in .output/chrome-mv3
 pnpm --filter extension zip         # .output/glance-extension-<version>.zip, for sharing
-pnpm --filter extension test        # unit tests (commands, blocked card, page text, design tokens)
+pnpm --filter extension test        # unit tests (commands, blocked card, page text, design tokens, voice)
 node apps/extension/e2e/smoke.mjs   # loads the build on a real CNBC article (API must be running)
+node apps/extension/e2e/voice.mjs   # voice plumbing in Chromium, on a page that blocks the microphone
 ```
 
 How it's built:
@@ -103,3 +108,58 @@ How it's built:
 - **The orb:** it follows the foundations spec. Its dotted "listening" and "thinking" motion comes from the MIT-licensed
   [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) library.
 - **API access:** only the background service worker calls the API.
+- **Voice:** speech recognition never runs in the web page. From the floating orb, the background opens an offscreen
+  document (`entrypoints/offscreen`, reason `USER_MEDIA`) that listens, and relays each session's events (started,
+  interim text, final text, error, end) back to the tab. In the side panel, recognition runs in the panel itself.
+  Either way the microphone permission belongs to `chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj`. Every
+  failure maps to one sentence in `lib/voiceReasons.ts`. In development builds the console logs
+  `[glance] voice: running in <browser> <version>`.
+- **Orb states:** idle shows the eye; listening, thinking and speaking each have their own dotted motion
+  (`ORB_MOTION` in `components/Orb.tsx`). Speaking follows the speech itself: it starts on the utterance's `start`
+  event and stops on its `end`, not on a timer.
+
+## Voice: manual test checklist
+
+Voice can't be fully tested headlessly (no real microphone or Google speech service), so run this by hand in
+**Google Chrome** after any change to voice. Reload the extension in `chrome://extensions` first.
+
+**Settings**
+
+- [ ] Open Glance's settings. The Voice section's diagnostics show "Google Chrome" and a version, speech recognition
+      "available", speech output "available", a voice count above 0, a microphone "found", and permission "not asked
+      yet" (on a fresh install).
+- [ ] Click **Enable voice**. Chrome shows "Glance wants to use your microphone" (the prompt names the extension, not
+      a website). Click **Allow**. The button changes to "Voice enabled" and the permission reads "granted to Glance".
+- [ ] Click **Test listening**, say "what's Tesla at", click **Stop**. The small orb shows the listening motion, then
+      the line reads: Heard “what's Tesla at”. Voice works.
+- [ ] Click **Test speaking**. The orb's dots start moving (lime, a flowing band) the moment you hear the voice, and
+      stop exactly when it finishes.
+
+**Floating orb**
+
+- [ ] On a news article (for example a CNBC Tesla story), press and hold **Option + G**. The orb turns lime with a
+      dark rolling waveform and a pulse ring: listening. Your words appear in the panel as you speak.
+- [ ] Say "what's Tesla at" and release. The orb shows a lime arc orbiting lime dots (thinking) while the price loads,
+      then a flowing lime band (speaking) only while the answer is spoken aloud, then the eye (idle).
+- [ ] Click the mic button next to the text box, say "buy ten dollars of Tesla", click it again. The Tesla card opens
+      and quotes $10; the orb speaks the review line. Say or click "Confirm" only if you mean it (it trades on testnet).
+- [ ] Try a site that blocks the microphone (many news sites do). Voice still works.
+- [ ] Type "what's Tesla at" in the box and press Enter. It works exactly the same with voice disabled or broken.
+
+**Side panel**
+
+- [ ] Click the Glance toolbar icon to dock it. Hold **Option + G** with the panel focused, and use the mic button:
+      same states and results as the floating orb.
+- [ ] With the panel docked, click into the web page and hold **Option + G**. The panel's orb shows listening and
+      runs what you said.
+
+**Failure messages** (each should show one accurate sentence in the orb panel, and typing still works)
+
+- [ ] Block the microphone for Glance (click the extension's site settings, set Microphone to Block), then talk: "The
+      microphone is blocked for Glance…"
+- [ ] Reset the permission to "Ask", then talk from a page: "I need microphone access. Click “Enable voice” in
+      Glance's settings, then try again."
+- [ ] In Brave (optional): "Brave turns off speech recognition. Type instead, or use Google Chrome for voice."
+- [ ] Turn off Wi-Fi and talk in Chrome: "Chrome couldn't reach its speech service. Check your connection, or type
+      instead."
+- [ ] Hold the key and say nothing: "I didn't hear anything."

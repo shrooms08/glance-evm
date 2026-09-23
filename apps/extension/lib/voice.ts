@@ -1,8 +1,11 @@
 /**
- * Push-to-talk with the browser's own speech APIs: SpeechRecognition for input, speechSynthesis for replies.
- * No external voice service. Where recognition is unavailable (Brave disables it; some sites block the microphone),
- * callers fall back to the typed command box, and the error says why in plain words.
+ * The speech engine, using the browser's own APIs only: SpeechRecognition for input and speechSynthesis for replies.
+ *
+ * listen() must run in an extension page (the offscreen document or the side panel), never in a website: sites can
+ * block the microphone with Permissions-Policy, and the permission there would belong to the site, not to Glance.
+ * Use lib/voiceClient.ts from UI code; it picks the right place.
  */
+import type { VoiceCode } from "./voiceReasons";
 
 type Recognition = {
   lang: string;
@@ -12,7 +15,8 @@ type Recognition = {
   start(): void;
   stop(): void;
   abort(): void;
-  onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
+  onstart: (() => void) | null;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
   onend: (() => void) | null;
 };
@@ -22,86 +26,106 @@ function ctor(): (new () => Recognition) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-export function voiceSupported(): boolean {
-  return ctor() !== null;
-}
-
-export function voiceErrorMessage(error: string): string {
-  switch (error) {
-    case "not-allowed":
-    case "service-not-allowed":
-      return "I can't use the microphone here. This site or your browser blocked it. Type instead, or open the side panel.";
-    case "network":
-      return "Voice isn't available in this browser. Type your request instead.";
-    case "no-speech":
-      return "I didn't hear anything. Hold the key and speak, or type instead.";
-    case "audio-capture":
-      return "I can't find a microphone. Type your request instead.";
-    default:
-      return "Voice stopped unexpectedly. Type your request instead.";
-  }
-}
-
 export interface Listener {
   stop(): void;
   abort(): void;
 }
 
-/** Starts listening. onInterim fires as words arrive; onFinal once with the full text (possibly empty). */
-export function listen(handlers: {
-  onInterim: (text: string) => void;
-  onFinal: (text: string) => void;
-  onError: (message: string, code: string) => void;
-}): Listener | null {
+export interface ListenHandlers {
+  onStart?(): void;
+  onInterim(text: string): void;
+  onFinal(text: string): void;
+  onError(code: VoiceCode): void;
+  /** Always last, after onFinal or onError. */
+  onEnd?(): void;
+}
+
+/** Starts listening in this context. Returns null (after onError) if recognition is unavailable here. */
+export function listen(lang: string, h: ListenHandlers): Listener | null {
   const Ctor = ctor();
-  if (!Ctor) return null;
+  if (!Ctor) {
+    h.onError("no-recognition");
+    h.onEnd?.();
+    return null;
+  }
   const r = new Ctor();
-  r.lang = navigator.language || "en-US";
+  r.lang = lang;
   r.interimResults = true;
   r.continuous = true;
   r.maxAlternatives = 1;
   let text = "";
   let failed = false;
+  r.onstart = () => h.onStart?.();
   r.onresult = (e) => {
-    let finals = "";
-    let interim = "";
-    for (let i = 0; i < e.results.length; i++) {
-      const res = e.results[i]!;
-      if (res.isFinal) finals += res[0]!.transcript;
-      else interim += res[0]!.transcript;
-    }
-    text = `${finals}${interim}`.trim();
-    handlers.onInterim(text);
+    let out = "";
+    for (let i = 0; i < e.results.length; i++) out += e.results[i]![0]!.transcript;
+    text = out.trim();
+    h.onInterim(text);
   };
   r.onerror = (e) => {
     if (e.error === "aborted") return;
     failed = true;
-    handlers.onError(voiceErrorMessage(e.error), e.error);
+    h.onError(e.error);
   };
   r.onend = () => {
-    if (!failed) handlers.onFinal(text);
+    if (!failed) h.onFinal(text);
+    h.onEnd?.();
   };
   try {
     r.start();
   } catch {
+    h.onError("offscreen-failed");
+    h.onEnd?.();
     return null;
   }
   return { stop: () => r.stop(), abort: () => r.abort() };
 }
 
-/** Speaks a reply. Resolves when finished (or immediately if speech is unavailable or off). */
-export function speak(text: string, enabled: boolean): Promise<void> {
-  if (!enabled || typeof speechSynthesis === "undefined" || !text) return Promise.resolve();
+export interface SpeakHandlers {
+  /** The voice has actually started: show the speaking orb from here. */
+  onStart?(): void;
+  /** The voice has finished (or failed): stop the speaking orb here. */
+  onEnd?(): void;
+}
+
+/** Longest a reply may take before we stop waiting for Chrome's onend (it is occasionally never fired). */
+const MAX_UTTERANCE_MS = 30_000;
+/** If no voice has started by then, speech isn't going to happen (no voices, or synthesis blocked). */
+const START_TIMEOUT_MS = 2_500;
+
+/**
+ * Speaks a reply. The orb's speaking state follows the utterance's own start and end events, not a timer: onStart
+ * fires when the voice actually begins, onEnd when it stops. If speech is off or unavailable, neither fires and the
+ * promise resolves at once, so callers never show "speaking" when nothing is being said.
+ */
+export function speak(text: string, enabled: boolean, h: SpeakHandlers = {}): Promise<void> {
+  if (!enabled || !text || typeof speechSynthesis === "undefined") return Promise.resolve();
   return new Promise((resolve) => {
+    let started = false;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(startTimer);
+      clearTimeout(maxTimer);
+      if (started) h.onEnd?.();
+      resolve();
+    };
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = navigator.language || "en-US";
     u.rate = 1.05;
-    u.onend = () => resolve();
-    u.onerror = () => resolve();
+    u.onstart = () => {
+      if (finished) return;
+      started = true;
+      clearTimeout(startTimer);
+      h.onStart?.();
+    };
+    u.onend = finish;
+    u.onerror = finish;
+    const startTimer = setTimeout(() => !started && finish(), START_TIMEOUT_MS);
+    const maxTimer = setTimeout(finish, MAX_UTTERANCE_MS);
     speechSynthesis.speak(u);
-    // Some voices never fire onend; do not leave the orb speaking forever.
-    setTimeout(resolve, Math.min(15_000, 1_500 + text.length * 70));
   });
 }
 

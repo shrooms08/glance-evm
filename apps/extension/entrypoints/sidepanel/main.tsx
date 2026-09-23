@@ -1,9 +1,10 @@
 /**
  * Docked mode: Glance in Chrome's side panel, full height. Same content as the floating panel in a taller layout,
  * with the orb in the header (foundations section 04). Talks to the active tab's content script for the companies it
- * found, and runs speech the page hands over.
+ * found. Speech started in the panel runs right here (an extension page, under Glance's own microphone permission);
+ * speech started on the page runs in the offscreen document and its words are handed over.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
@@ -56,6 +57,7 @@ function SidePanel() {
     const onMessage = (msg: AssistantMessage) => {
       if (msg.kind === "assistant:listening") g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
       if (msg.kind === "assistant:heard") g.setOrb({ state: "listening", line: `“${msg.text}”`, meta: "Release to send" });
+      if (msg.kind === "assistant:error") assistant.voiceFailed(msg.code);
       if (msg.kind === "assistant:run") {
         if (msg.text) void assistant.run(msg.text);
         else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: "" });
@@ -65,19 +67,21 @@ function SidePanel() {
     return () => browser.runtime.onMessage.removeListener(onMessage);
   }, [assistant, g]);
 
+  // Whether the talk key is down. A ref, not a local: starting to listen re-renders and re-subscribes the handlers
+  // below, and the key-up must still find the press it belongs to.
+  const held = useRef(false);
   // Hold Option+<letter> while the side panel has focus.
   useEffect(() => {
     const code = `Key${g.hotkey.toUpperCase()}`;
-    let held = false;
     const down = (e: KeyboardEvent) => {
-      if (e.code !== code || !e.altKey || e.repeat || held) return;
+      if (e.code !== code || !e.altKey || e.repeat || held.current) return;
       e.preventDefault();
-      held = true;
+      held.current = true;
       assistant.startListening();
     };
     const up = (e: KeyboardEvent) => {
-      if (held && (e.code === code || e.key === "Alt")) {
-        held = false;
+      if (held.current && (e.code === code || e.key === "Alt")) {
+        held.current = false;
         assistant.stopListening();
       }
     };

@@ -47,18 +47,20 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean } = {}) {
       if (!quote.preflight.ok) {
         setFlow({ step: "blocked", amount, guard: quote.preflight.guard, quote });
         g.setOrb({ state: "blocked", line: quote.preflight.guard.message, meta: `Guard · ${quote.preflight.guard.code}` });
-        if (opts.voice) void speak(quote.preflight.guard.message, g.voiceReplies);
+        if (opts.voice) void speak(quote.preflight.guard.message, g.voiceReplies); // the blocked orb stays: the card explains
         return;
       }
       setFlow({ step: "review", amount, quote });
       const line = `$${amount} of ${symbol} at $${Number(quote.price.value).toFixed(2)}. Confirm?`;
       const meta = `Price ${(quote.priceAgeSeconds / 3600).toFixed(1)}h old · market ${quote.marketState === "OPEN" ? "open" : "closed"}`;
-      if (opts.voice) {
-        g.setOrb({ state: "speaking", line, meta });
-        await speak(line, g.voiceReplies);
-        if (id !== run.current) return;
-      }
       g.setOrb({ state: "idle", line, meta });
+      if (opts.voice) {
+        // The orb moves exactly while the voice speaks, from the utterance's own start and end events.
+        await speak(line, g.voiceReplies, {
+          onStart: () => id === run.current && g.setOrb({ state: "speaking", line, meta }),
+          onEnd: () => id === run.current && g.setOrb({ state: "idle", line, meta }),
+        });
+      }
     },
     [g, symbol, opts.voice],
   );
