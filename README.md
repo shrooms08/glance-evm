@@ -27,3 +27,15 @@ make deploy-robinhood        # deploy + verify on Blockscout; writes deployments
 make seed                    # fund the demo vault
 make weekend                 # back-date the stand-in feeds to demo the closed-market caps
 ```
+
+## Backend API
+
+`apps/api` is the API the extension and the console use. It resolves companies in page text, reads prices and vault
+state, quotes trades with an on-chain preflight, and places agent trades. Every contract error comes back as a sentence
+the assistant can say. See [apps/api/README.md](apps/api/README.md).
+
+```sh
+pnpm install
+pnpm --filter api dev       # http://localhost:8790
+pnpm --filter api test
+```

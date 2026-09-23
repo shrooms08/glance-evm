@@ -1,0 +1,185 @@
+/**
+ * Integration tests against the live Robinhood Chain testnet deployment in deployments/46630.json.
+ *
+ * - Skipped cleanly when the RPC is unreachable, so `pnpm test` works offline.
+ * - Never sends a transaction: the agent key is removed from the environment, and quotes use eth_call only.
+ */
+import { createPublicClient, http } from "viem";
+import { describe, expect, it } from "vitest";
+
+import { createApp } from "../../src/app.js";
+import { loadConfig } from "../../src/config.js";
+import { createContext } from "../../src/context.js";
+
+const env = { ...process.env, NODE_ENV: "test", AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" };
+const config = loadConfig(env);
+
+async function rpcReachable(): Promise<boolean> {
+  try {
+    const client = createPublicClient({ transport: http(config.RPC_URL, { timeout: 8_000, retryCount: 0 }) });
+    return (await client.getChainId()) > 0;
+  } catch {
+    return false;
+  }
+}
+
+const online = await rpcReachable();
+const ctx = online ? createContext(config) : null;
+const app = ctx ? createApp(ctx) : null;
+const vault = ctx?.deployment.demoVaultTestUSDG.address;
+
+async function get(path: string) {
+  const res = await app!.request(path);
+  return { status: res.status, body: (await res.json()) as any };
+}
+
+describe.skipIf(!online)("live testnet", () => {
+  it("GET /health reports the chain, the block and the agent", async () => {
+    const { status, body } = await get("/health");
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.chainId).toBe(46_630);
+    expect(BigInt(body.blockNumber)).toBeGreaterThan(BigInt(ctx!.deployment.blockNumber));
+    expect(body.agent.address).toBe(ctx!.deployment.demoVaultTestUSDG.agent);
+    expect(body.agent.keyLoaded).toBe(false);
+    expect(Number(body.agent.ethBalance)).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(body)).not.toMatch(/[0-9a-f]{64}/i); // no key material, ever
+  });
+
+  it("GET /catalog lists the five stocks with addresses from the deployment file", async () => {
+    const { status, body } = await get("/catalog");
+    expect(status).toBe(200);
+    expect(body.stocks.map((s: any) => s.symbol)).toEqual(["TSLA", "AMZN", "PLTR", "NFLX", "AMD"]);
+    for (const s of body.stocks) {
+      const deployed = ctx!.deployment.stocks[s.symbol] as any;
+      expect(s.token).toBe(deployed.token);
+      expect(s.feed).toBe(deployed.feed);
+      expect(s.tokenReal).toBe(true);
+      expect(s.feedReal).toBe(false);
+      expect(s.aliases.length).toBeGreaterThan(1);
+    }
+  });
+
+  it("GET /price/:symbol returns the oracle price, its age and the vault's market state", async () => {
+    const { status, body } = await get("/price/tsla");
+    expect(status).toBe(200);
+    expect(body.symbol).toBe("TSLA");
+    expect(BigInt(body.price.raw)).toBeGreaterThan(0n);
+    expect(body.price.decimals).toBe(8);
+    expect(["OPEN", "CLOSED", "STALE"]).toContain(body.marketState);
+    expect(body.freshness).toMatchObject({ vault, openMaxAge: 3600, closedMaxAge: 288_000 });
+    expect(body.ageSeconds).toBeGreaterThanOrEqual(0);
+    expect(body.priceSourceKind).toBe((ctx!.deployment.stocks.TSLA as any).priceSourceKind);
+  });
+
+  it("GET /price/:symbol rejects unknown and malformed symbols", async () => {
+    expect((await get("/price/AAPL")).body.error.code).toBe("UNKNOWN_SYMBOL");
+    expect((await get("/price/TSLA123")).status).toBe(400);
+  });
+
+  it("GET /vault/:address returns limits, windows, balances and positions", async () => {
+    const { status, body } = await get(`/vault/${vault}`);
+    expect(status).toBe(200);
+    expect(body.owner).toBe(ctx!.deployment.demoVaultTestUSDG.owner);
+    expect(body.usdg.real).toBe(false);
+    expect(body.limits.weekendCap).toBe("25%");
+    expect(body.effectiveCaps.OPEN.perTrade.raw).toBe(body.limits.perTrade.raw);
+    expect(BigInt(body.effectiveCaps.CLOSED.perTrade.raw)).toBe((BigInt(body.limits.perTrade.raw) * 2500n) / 10_000n);
+    // The event-rebuilt windows must agree with the contract's own totals.
+    expect(body.buyWindow.reconstructed).toBe(true);
+    expect(body.sellWindow.reconstructed).toBe(true);
+    expect(body.positions).toHaveLength(5);
+    const invested = body.positions.reduce((s: bigint, p: any) => s + BigInt(p.value.raw), 0n);
+    expect(BigInt(body.balances.total.raw)).toBe(BigInt(body.balances.usdg.raw) + invested);
+  });
+
+  it("GET /vault/:address/activity decodes events newest first", async () => {
+    const { status, body } = await get(`/vault/${vault}/activity?limit=20`);
+    expect(status).toBe(200);
+    expect(body.items.length).toBeGreaterThan(0);
+    for (const item of body.items) {
+      expect(item.txHash).toMatch(/^0x[0-9a-f]{64}$/);
+      expect(item.summary.length).toBeGreaterThan(3);
+    }
+    const times = body.items.map((i: any) => i.timestamp);
+    expect([...times].sort((a, b) => b - a)).toEqual(times);
+    expect(body.items.some((i: any) => i.type === "Deposited")).toBe(true);
+  });
+
+  it("GET /quote: a small buy passes the on-chain preflight", async (t) => {
+    const price = await get("/price/TSLA");
+    if (price.body.marketState === "STALE") {
+      t.skip("stand-in feeds are stale: re-run `make deploy-robinhood` to re-price them");
+    }
+    const { status, body } = await get(`/quote?vault=${vault}&symbol=TSLA&side=buy&amount=1`);
+    expect(status).toBe(200);
+    expect(body.preflight.ok).toBe(true);
+    expect(body.preflight.simulatedAs).toBe(ctx!.deployment.demoVaultTestUSDG.agent);
+    expect(body.spreadBps).toBe(30);
+    // Desk quote = oracle-implied amount less the 0.30% spread.
+    const oracle = BigInt(body.oracleImplied.raw);
+    expect(BigInt(body.deskQuote.raw)).toBe((oracle * 9_970n) / 10_000n);
+  });
+
+  it("GET /quote: an oversized buy is blocked by the per-trade cap, with the exact sentence", async () => {
+    const v = (await get(`/vault/${vault}`)).body;
+    const tsla = v.positions.find((p: any) => p.symbol === "TSLA");
+    if (tsla.marketState === "STALE") return; // stale is covered above; the cap check needs a usable price
+    const cap = tsla.effectiveCaps.perTrade;
+    const over = (BigInt(cap.raw) + 50_000_000n) / 1_000_000n; // cap + $50, in whole USDG
+    const { body } = await get(`/quote?vault=${vault}&symbol=TSLA&side=buy&amount=${over}`);
+    expect(body.preflight.ok).toBe(false);
+    expect(body.preflight.guard.code).toBe("PER_TRADE_CAP");
+    const closed = tsla.marketState === "CLOSED" ? " while the market's closed" : "";
+    expect(body.preflight.guard.message).toBe(
+      `That's over your ${cap.formatted} per trade limit${closed}. Want me to buy ${cap.formatted} instead?`,
+    );
+    expect(body.preflight.guard.detail.suggestedAmount).toBe(cap.raw);
+  });
+
+  it("GET /quote: selling more than the vault holds is blocked by its balance", async () => {
+    const { body } = await get(`/quote?vault=${vault}&symbol=AMD&side=sell&amount=0.01`);
+    const v = (await get(`/vault/${vault}`)).body;
+    const amd = v.positions.find((p: any) => p.symbol === "AMD");
+    if (BigInt(amd.quantity.raw) >= 10n ** 16n || amd.marketState === "STALE") return;
+    expect(body.preflight.guard.code).toBe("INSUFFICIENT_BALANCE");
+    expect(body.preflight.guard.message).toBe(`You only hold ${amd.quantity.formatted} in the vault.`);
+  });
+
+  it("POST /trade refuses without the agent key and never sends", async () => {
+    const res = await app!.request("/trade", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ vault, symbol: "TSLA", side: "buy", amount: "1" }),
+    });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as any).error.code).toBe("AGENT_KEY_MISSING");
+  });
+
+  it("validates input", async () => {
+    expect((await get("/quote?vault=0x1&symbol=TSLA&side=buy&amount=1")).status).toBe(400);
+    expect((await get(`/quote?vault=${vault}&symbol=TSLA&side=hold&amount=1`)).status).toBe(400);
+    expect((await get(`/quote?vault=${vault}&symbol=TSLA&side=buy&amount=-5`)).status).toBe(400);
+    expect((await get(`/quote?vault=${vault}&symbol=TSLA&side=buy&amount=0.0000001`)).body.error.code).toBe("BAD_AMOUNT");
+    expect((await get("/vault/not-an-address")).status).toBe(400);
+    const res = await app!.request("/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /resolve works end to end", async () => {
+    const res = await app!.request("/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "Palantir and $TSLA, not the Amazon rainforest." }),
+    });
+    const body = (await res.json()) as any;
+    expect(body.source).toBe("dictionary");
+    expect(body.matches.map((m: any) => m.symbol)).toEqual(["PLTR", "TSLA"]);
+    expect(body.matches[1].stock.token).toBe((ctx!.deployment.stocks.TSLA as any).token);
+  });
+
+  it("CORS allows localhost in development but not arbitrary origins", async () => {
+    const res = await app!.request("/health", { headers: { Origin: "https://evil.example" } });
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});

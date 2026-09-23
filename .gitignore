@@ -14,3 +14,9 @@ broadcast/
 # Local and dry-run deployment records (real testnet records in deployments/ are committed)
 deployments/31337.json
 deployments/*.dry-run.json
+
+# Node workspace
+node_modules/
+apps/*/dist/
+*.tsbuildinfo
+coverage/

@@ -1,0 +1,50 @@
+{
+  "$comment": "Company names and aliases for the resolver. Addresses are NOT here: they come from deployments/<chainId>.json. names: matched case-insensitively on word boundaries. tickers: matched only when written in capitals (TSLA) or as a cashtag ($TSLA or $tsla). excludePhrases: a match inside one of these phrases is dropped. excludeNear: a match with one of these words within 80 characters is dropped.",
+  "stocks": [
+    {
+      "symbol": "TSLA",
+      "name": "Tesla",
+      "legalName": "Tesla, Inc.",
+      "names": ["Tesla", "Tesla Inc", "Tesla, Inc.", "Tesla Motors"],
+      "tickers": ["TSLA"],
+      "excludePhrases": ["Nikola Tesla", "tesla coil", "tesla coils", "tesla unit", "tesla units"],
+      "excludeNear": ["magnetic field", "MRI", "flux density", "gauss"]
+    },
+    {
+      "symbol": "AMZN",
+      "name": "Amazon",
+      "legalName": "Amazon.com, Inc.",
+      "names": ["Amazon", "Amazon.com", "Amazon Web Services"],
+      "tickers": ["AMZN", "AWS"],
+      "excludePhrases": ["Amazon rainforest", "Amazon River", "Amazon basin", "Amazon jungle", "Amazon region", "Amazon warrior", "Amazon warriors", "Amazon parrot", "Amazon parrots"],
+      "excludeNear": ["rainforest", "deforestation", "jungle", "indigenous", "tributary"]
+    },
+    {
+      "symbol": "PLTR",
+      "name": "Palantir",
+      "legalName": "Palantir Technologies Inc.",
+      "names": ["Palantir", "Palantir Technologies"],
+      "tickers": ["PLTR"],
+      "excludePhrases": [],
+      "excludeNear": ["Tolkien", "Saruman", "Sauron", "Middle-earth", "Gandalf"]
+    },
+    {
+      "symbol": "NFLX",
+      "name": "Netflix",
+      "legalName": "Netflix, Inc.",
+      "names": ["Netflix"],
+      "tickers": ["NFLX"],
+      "excludePhrases": [],
+      "excludeNear": []
+    },
+    {
+      "symbol": "AMD",
+      "name": "AMD",
+      "legalName": "Advanced Micro Devices, Inc.",
+      "names": ["Advanced Micro Devices"],
+      "tickers": ["AMD"],
+      "excludePhrases": [],
+      "excludeNear": ["macular", "retina", "retinal", "ophthalmolog", "eyesight"]
+    }
+  ]
+}

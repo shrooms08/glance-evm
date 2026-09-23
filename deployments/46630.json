@@ -1,0 +1,119 @@
+{
+  "blockNumber": 123169755,
+  "chainId": 46630,
+  "demoVaultPaxosUSDG": {
+    "address": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113",
+    "agent": "0xa7078432F7Aa4db99F88cB181049872d1ea697a9",
+    "agentExpiry": 1792668663,
+    "fundableFromFaucet": false,
+    "note": "Fully configured on the real Paxos USDG but unfunded: no testnet faucet exists for it. Proven in test/fork.",
+    "owner": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
+    "stockDesk": "0xBe32F06E626e8cEE97cC5368Fb5e76FAaC1289c0",
+    "usdg": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
+    "usdgBalance": 0
+  },
+  "demoVaultTestUSDG": {
+    "address": "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D",
+    "agent": "0xa7078432F7Aa4db99F88cB181049872d1ea697a9",
+    "agentExpiry": 1792668663,
+    "fundableFromFaucet": true,
+    "note": "",
+    "owner": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
+    "stockDesk": "0x78090980265fc28D92A3a2f7bBA7a956b1257619",
+    "usdg": "0x231504A1abC63BefC7FFa9930EB085b448b3375E",
+    "usdgBalance": 0
+  },
+  "deployer": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
+  "factory": {
+    "address": "0x2dE74C4643FF724c54150f1F24f4d8B73F432999",
+    "kind": "glance"
+  },
+  "pricesFetchedAt": "2026-09-23T11:30Z",
+  "sequencerUptimeFeed": "0x0000000000000000000000000000000000000000",
+  "stockDesk": {
+    "address": "0x78090980265fc28D92A3a2f7bBA7a956b1257619",
+    "kind": "testnet stand-in (oracle-priced desk, not an AMM)"
+  },
+  "stockDeskPaxosUSDG": {
+    "address": "0xBe32F06E626e8cEE97cC5368Fb5e76FAaC1289c0",
+    "kind": "testnet stand-in quoting the real Paxos USDG"
+  },
+  "stocks": {
+    "AMD": {
+      "feed": "0xCA26F4a31e308081c4293F6bBA833c7c8DE1E476",
+      "feedReal": false,
+      "feedSource": "TestPriceFeed",
+      "price": 61796945000,
+      "priceDecimals": 8,
+      "priceSource": "chainlink-live: Robinhood mainnet feed 0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72, updated 2026-09-23T11:26Z",
+      "priceSourceKind": "chainlink-live",
+      "skipped": false,
+      "token": "0x71178BAc73cBeb415514eB542a8995b82669778d",
+      "tokenDecimals": 18,
+      "tokenReal": true,
+      "tokenSource": "Robinhood testnet faucet token"
+    },
+    "AMZN": {
+      "feed": "0x8268743C4392Fbc3F9ac06844f8E69431671015F",
+      "feedReal": false,
+      "feedSource": "TestPriceFeed",
+      "price": 25557760000,
+      "priceDecimals": 8,
+      "priceSource": "chainlink-live: Robinhood mainnet feed 0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C, updated 2026-09-23T11:28Z",
+      "priceSourceKind": "chainlink-live",
+      "skipped": false,
+      "token": "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02",
+      "tokenDecimals": 18,
+      "tokenReal": true,
+      "tokenSource": "Robinhood testnet faucet token"
+    },
+    "NFLX": {
+      "feed": "0x8B02279a7844698bD20119DF60A2a55981eAc8a5",
+      "feedReal": false,
+      "feedSource": "TestPriceFeed",
+      "price": 7216000000,
+      "priceDecimals": 8,
+      "priceSource": "public-quote: Yahoo Finance NFLX regularMarketPrice USD 72.16 at 2026-09-22T20:00Z",
+      "priceSourceKind": "public-quote",
+      "skipped": false,
+      "token": "0x3b8262A63d25f0477c4DDE23F83cfe22Cb768C93",
+      "tokenDecimals": 18,
+      "tokenReal": true,
+      "tokenSource": "Robinhood testnet faucet token"
+    },
+    "PLTR": {
+      "feed": "0xAada5690e1E185731feA3646A723C91497dd9B90",
+      "feedReal": false,
+      "feedSource": "TestPriceFeed",
+      "price": 18561165000,
+      "priceDecimals": 8,
+      "priceSource": "chainlink-live: Robinhood mainnet feed 0x820ABedFF239034956B7A9d2F0a331f9F075eB4c, updated 2026-09-23T11:08Z",
+      "priceSourceKind": "chainlink-live",
+      "skipped": false,
+      "token": "0x1FBE1a0e43594b3455993B5dE5Fd0A7A266298d0",
+      "tokenDecimals": 18,
+      "tokenReal": true,
+      "tokenSource": "Robinhood testnet faucet token"
+    },
+    "TSLA": {
+      "feed": "0xb856AB851b58B3d0436d62b465A9e92c481E9e9f",
+      "feedReal": false,
+      "feedSource": "TestPriceFeed",
+      "price": 38025740000,
+      "priceDecimals": 8,
+      "priceSource": "chainlink-live: Robinhood mainnet feed 0x4A1166a659A55625345e9515b32adECea5547C38, updated 2026-09-23T08:13Z",
+      "priceSourceKind": "chainlink-live",
+      "skipped": false,
+      "token": "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E",
+      "tokenDecimals": 18,
+      "tokenReal": true,
+      "tokenSource": "Robinhood testnet faucet token"
+    }
+  },
+  "timestamp": 1790163063,
+  "usdg": {
+    "address": "0x231504A1abC63BefC7FFa9930EB085b448b3375E",
+    "real": false,
+    "source": "TestUSDG (public faucet)"
+  }
+}

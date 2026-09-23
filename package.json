@@ -1,0 +1,17 @@
+{
+  "name": "glance-evm",
+  "private": true,
+  "description": "Glance: buy tokenized stocks from any page through an agent the vault keeps on a leash.",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter api dev",
+    "test": "pnpm run test:contracts && pnpm -r test",
+    "test:contracts": "forge test --no-match-path 'test/fork/*'",
+    "test:fork": "forge test --match-path 'test/fork/*'",
+    "typecheck": "pnpm -r typecheck",
+    "build": "forge build && pnpm -r build"
+  }
+}
