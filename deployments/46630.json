@@ -10,9 +10,10 @@
     "owner": "0xca6A40275A2A6171a7338FCa56Cf4d714C97aDFF",
     "stockDesk": "0xBe32F06E626e8cEE97cC5368Fb5e76FAaC1289c0",
     "usdg": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
-    "usdgBalance": 0,
+    "usdgBalance": 60000000,
     "primary": true,
-    "faucetUrl": "https://faucet.paxos.com/"
+    "faucetUrl": "https://faucet.paxos.com/",
+    "fundedAt": "2026-09-23T16:40Z"
   },
   "demoVaultTestUSDG": {
     "address": "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D",
