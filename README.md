@@ -39,7 +39,9 @@ You need a browser wallet (for example MetaMask) on Robinhood Chain testnet, and
    Stock Tokens; you won't need them.
 3. **Claim USDG** at https://faucet.paxos.com/ for Robinhood Chain testnet, to your wallet address.
    (No Paxos USDG? Use the TestUSDG fallback in step 4; it takes test USDG from its own faucet for you.)
-4. **Create and fund your vault.** You need [Foundry](https://getfoundry.sh) and this repository:
+4. **Create and fund your vault.** The console's **Get started** page does this from your wallet, one confirmation at a
+   time (see [apps/console/README.md](apps/console/README.md)). Or from the command line, with
+   [Foundry](https://getfoundry.sh) and this repository:
    ```sh
    git clone <this repository> && cd glance-evm && forge install
    cp .env.example .env            # put your testnet wallet's private key in PRIVATE_KEY
@@ -107,6 +109,19 @@ the tap, and every vault guard applies. Keys live only in `apps/api/.env`. See [
 the price **and** each feed's own timestamp, so the testnet market opens and closes when the real one does. It runs
 every 5 minutes on GitHub Actions, or locally with `make keeper` / `make keeper-watch`. See
 [apps/keeper/README.md](apps/keeper/README.md).
+
+## Console
+
+`apps/console` is where a vault owner sees and controls their vault, and where anyone can check the guards are real:
+balances and positions, every cap with used against remaining (market open and closed), the agent and its expiry,
+limits, pause and revoke through the owner's own wallet, every trade next to every refusal, the prices and where
+they come from, and a Get started page that creates a vault the way `make create-vault` does. It never touches the
+agent key. See [apps/console/README.md](apps/console/README.md).
+
+```sh
+pnpm --filter api dev       # http://localhost:8790
+pnpm --filter console dev   # http://localhost:3000
+```
 
 ## Browser extension
 

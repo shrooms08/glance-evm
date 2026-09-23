@@ -1,0 +1,16 @@
+{
+  "name": "@glance/design",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Glance design tokens: the only place a color is written, shared by the extension and the console.",
+  "exports": {
+    ".": "./src/tokens.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

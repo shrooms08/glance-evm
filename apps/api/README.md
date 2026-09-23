@@ -43,7 +43,7 @@ like this:
 ```
 
 - **`code` is stable.** The extension and console branch on it.
-- **`message` is a sentence the assistant can say.** Each one is pinned by `test/unit/errors.test.ts`.
+- **`message` is a sentence the assistant can say.** Each one is pinned by `test/unit/errors.test.ts`, and the console shows the same sentences.
 - **`detail` carries the numbers:** how far over, how much is left, `retryAfterSeconds`, and a suggested amount
   that would pass.
 - **Money uses the token's real decimals.** "It frees up in 3 hours" is computed from the vault's own 24-hour window,
@@ -192,15 +192,31 @@ Each window also has `reconstructed: true` when the history rebuilt from events 
 
 ### `GET /vault/:address/activity[?limit=50]`
 
-This returns trades and owner actions decoded from the vault's events, newest first. Each item has its transaction
-hash and an explorer link.
+This returns trades and owner actions decoded from the vault's events, and the trades the guards refused, newest
+first. Event items have their transaction hash and an explorer link. The console's activity page reads this.
+
+A vault emits no event for a trade it refuses, so refusals (`"kind": "refusal"`) come from two places, and each one
+says which in `refusal.source`:
+
+- **`preflight`**: every `/quote` and `/trade` simulates the exact call as the agent against the live vault. When a
+  guard would stop it, nothing is sent, and the refusal is recorded with the guard's sentence. It's stored in
+  `REFUSAL_LOG_FILE` (default `data/refusals.jsonl`, gitignored), and the same attempt refused for the same reason
+  within 10 minutes counts once. There's no transaction, so `txHash` is null.
+- **`onchain`**: transactions that reached the vault and reverted, whoever sent them. They're read from the explorer
+  (Blockscout) and decoded with the vault's errors, and they have a transaction link.
+
+`sources` says whether each part is complete: `onChainRefusals` is `"unavailable"` when the explorer can't be read.
 
 ```json
 { "items": [
   { "type": "Bought", "kind": "trade", "summary": "Bought 0.0655 TSLA for $25", "symbol": "TSLA",
     "txHash": "0x90ce4b85a6…", "timestamp": 1790164046, "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0x90ce…",
     "data": { "usdgIn": "25000000", "tokensOut": "65542…", "marketState": "OPEN", "…": "…" } },
-  { "type": "Deposited", "kind": "owner", "summary": "Deposited $1,000", "…": "…" } ] }
+  { "type": "Deposited", "kind": "owner", "summary": "Deposited $1,000", "…": "…" },
+  { "type": "Refused", "kind": "refusal", "summary": "Buy $150 of TSLA", "txHash": null, "timestamp": 1790201991,
+    "refusal": { "code": "PER_TRADE_CAP", "error": "ExceedsPerTradeCap", "source": "preflight", "via": "quote", "sent": false,
+                 "message": "That's over your $100 per trade limit. Want me to buy $100 instead?" } } ],
+  "sources": { "events": "ok", "preflightRefusals": { "persisted": true }, "onChainRefusals": "ok" } }
 ```
 
 ### `GET /quote?vault=&symbol=&side=buy|sell&amount=[&slippageBps=]`
@@ -309,7 +325,9 @@ The integration tests remove `AGENT_PRIVATE_KEY` and use `eth_call` only, so the
 
 ## Regenerating ABIs
 
-`src/abi.generated.ts` is generated from Foundry's build output. After changing a contract:
+The ABIs, the guard sentences (`explainRevert`), money formatting, the window maths and the RPC classifier live in
+`packages/core` (`@glance/core`), shared with the console; `src/errors.ts` and its neighbours re-export them.
+`packages/core/src/abi.generated.ts` is generated from Foundry's build output. After changing a contract:
 
 ```sh
 forge build && pnpm --filter api abi

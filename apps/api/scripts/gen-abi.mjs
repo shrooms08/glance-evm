@@ -1,4 +1,4 @@
-// Regenerates src/abi.generated.ts from Foundry's build output, so the API decodes calls, events and custom errors
+// Regenerates packages/core/src/abi.generated.ts from Foundry's build output, so the API decodes calls, events and custom errors
 // against exactly what was compiled and deployed. Run `forge build` at the repo root first, then `pnpm --filter api abi`.
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -20,5 +20,5 @@ for (const [name, path] of Object.entries(artifacts)) {
   const { abi } = JSON.parse(readFileSync(resolve(root, "out", path), "utf8"));
   out += `export const ${name} = ${JSON.stringify(abi, null, 2)} as const;\n\n`;
 }
-writeFileSync(resolve(root, "apps/api/src/abi.generated.ts"), out);
-console.log(`wrote apps/api/src/abi.generated.ts (${Object.keys(artifacts).length} ABIs)`);
+writeFileSync(resolve(root, "packages/core/src/abi.generated.ts"), out);
+console.log(`wrote packages/core/src/abi.generated.ts (${Object.keys(artifacts).length} ABIs)`);

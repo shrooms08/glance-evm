@@ -6,12 +6,15 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { isAddress } from "viem";
+
+import type { GuardError } from "./errors.js";
 import { z } from "zod";
 
 import type { AppContext } from "./context.js";
 import { rateLimit } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
-import { ApiError, activityView, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
+import { attemptLabel } from "./refusals.js";
+import { ApiError, activityView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
@@ -123,12 +126,18 @@ export function createServerApp(ctx: AppContext) {
   app.get("/quote", async (c) => {
     const q = parse(quoteQuery, c.req.query());
     const { _call, ...quote } = await quoteView(ctx, q);
+    if (!quote.preflight.ok) recordRefusal(ctx, "quote", quote, quote.preflight.guard);
     return send(c, quote);
   });
 
   app.post("/trade", async (c) => {
     const body = parse(tradeBody, await jsonBody(c));
-    return send(c, await tradeView(ctx, body));
+    try {
+      return send(c, await tradeView(ctx, body));
+    } catch (err) {
+      if (err instanceof ApiError && err.guard && err.refused) recordRefusal(ctx, "trade", err.refused, err.guard);
+      throw err;
+    }
   });
 
   registerVoice(app, ctx, send, parse, jsonBody, nodeWs.upgradeWebSocket);
@@ -147,4 +156,25 @@ export function createServerApp(ctx: AppContext) {
   });
 
   return { app, injectWebSocket: nodeWs.injectWebSocket };
+}
+
+/** A guard stopped a trade before anything was sent: remember it for the console's activity page. */
+function recordRefusal(
+  ctx: AppContext,
+  via: "quote" | "trade",
+  q: RefusedAttempt,
+  guard: GuardError,
+) {
+  ctx.refusals.record({
+    vault: q.vault,
+    attempt: attemptLabel(q.side, q.symbol, q.amountIn.formatted),
+    symbol: q.symbol,
+    side: q.side,
+    amount: q.amountIn.formatted,
+    code: guard.code,
+    error: guard.error,
+    message: guard.message,
+    at: q.preflight?.simulatedAt ?? Math.floor(Date.now() / 1000),
+    via,
+  });
 }

@@ -18,6 +18,7 @@ import { erc20Abi, glanceVaultAbi, stockDeskAbi, testPriceFeedAbi } from "./abi.
 import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
 import { primaryVault } from "./deployment.js";
+import { onChainRefusals } from "./refusals.js";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "./rpc.js";
 import {
   decodeRevert,
@@ -51,9 +52,19 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly guard?: GuardError,
+    /** For a trade a guard refused before sending: what was attempted (the refusal log records it). */
+    readonly refused?: RefusedAttempt,
   ) {
     super(message);
   }
+}
+
+export interface RefusedAttempt {
+  vault: Address;
+  symbol: string;
+  side: Side;
+  amountIn: { formatted: string };
+  preflight?: { simulatedAt?: number };
 }
 
 const marketStates: MarketState[] = ["OPEN", "CLOSED", "STALE"];
@@ -392,7 +403,7 @@ export async function activityView(ctx: AppContext, vaultParam: string, limit: n
     return formatQuantity(raw as bigint, s?.tokenDecimals ?? 18, s?.symbol ?? "tokens");
   };
 
-  const items = logs.map(({ eventName, args, log, timestamp }) => {
+  const items: ActivityItem[] = logs.map(({ eventName, args, log, timestamp }) => {
     let kind: "trade" | "owner";
     let summary: string;
     switch (eventName) {
@@ -470,8 +481,84 @@ export async function activityView(ctx: AppContext, vaultParam: string, limit: n
     };
   });
 
-  items.sort((a, b) => b.timestamp - a.timestamp || Number(b.blockNumber) - Number(a.blockNumber) || (b.logIndex ?? 0) - (a.logIndex ?? 0));
-  return { vault, count: Math.min(limit, items.length), items: items.slice(0, limit) };
+  // Refusals, next to the trades that went through: what the guards stopped before sending, and what the chain reverted.
+  const refusalItems: ActivityItem[] = ctx.refusals.forVault(vault).map((r) => ({
+    type: "Refused",
+    kind: "refusal",
+    summary: r.attempt,
+    symbol: r.symbol,
+    txHash: null,
+    blockNumber: r.blockNumber,
+    logIndex: null,
+    timestamp: r.at,
+    explorerUrl: null,
+    data: { side: r.side, amount: r.amount },
+    refusal: { code: r.code, error: r.error, message: r.message, source: "preflight", via: r.via, sent: false },
+  }));
+  let onChain: "ok" | "unavailable" = "ok";
+  try {
+    const tokens = Object.fromEntries(ctx.catalog.entries.map((e) => [e.token.toLowerCase(), { symbol: e.symbol, decimals: e.tokenDecimals }]));
+    const reverted = await onChainRefusals(ctx.config.EXPLORER_URL, vault, { usdgDecimals: d, now: Math.floor(Date.now() / 1000), tokens, usdgAddress: v.usdg });
+    for (const r of reverted) {
+      const stock = r.params.token ? stockOf(r.params.token) : undefined;
+      const byAgent = !isAddressEqual(v.agent, zeroAddress) && isAddressEqual(r.from, v.agent);
+      let attempt = `Called ${r.method}`;
+      if (r.method === "buy" && r.params.usdgIn) attempt = `Buy ${formatUsd(BigInt(r.params.usdgIn), d)} of ${stock?.symbol ?? "a token"}`;
+      if (r.method === "sell" && r.params.tokensIn) attempt = `Sell ${qty(r.params.token, BigInt(r.params.tokensIn))}`;
+      refusalItems.push({
+        type: "Reverted",
+        kind: "refusal",
+        summary: attempt,
+        symbol: stock?.symbol,
+        txHash: r.txHash,
+        blockNumber: r.blockNumber,
+        logIndex: null,
+        timestamp: r.timestamp,
+        explorerUrl: `${ctx.config.EXPLORER_URL}/tx/${r.txHash}`,
+        data: { method: r.method, ...r.params },
+        refusal: { code: r.guard.code, error: r.guard.error, message: r.guard.message, source: "onchain", sent: true, from: r.from, byAgent },
+      });
+    }
+  } catch {
+    onChain = "unavailable";
+  }
+
+  const all: ActivityItem[] = [...items, ...refusalItems];
+  all.sort((a, b) => b.timestamp - a.timestamp || Number(b.blockNumber ?? 0) - Number(a.blockNumber ?? 0) || (b.logIndex ?? 0) - (a.logIndex ?? 0));
+  return {
+    vault,
+    count: Math.min(limit, all.length),
+    items: all.slice(0, limit),
+    sources: {
+      events: "ok" as const,
+      preflightRefusals: { persisted: ctx.refusals.persisted },
+      onChainRefusals: onChain,
+    },
+  };
+}
+
+export interface ActivityItem {
+  type: string;
+  kind: "trade" | "owner" | "refusal";
+  summary: string;
+  symbol?: string;
+  txHash: Hex | null;
+  blockNumber?: string;
+  logIndex: number | null;
+  timestamp: number;
+  explorerUrl: string | null;
+  data: Record<string, unknown>;
+  refusal?: {
+    code: string;
+    error: string;
+    message: string;
+    /** preflight: simulated as the agent and never sent. onchain: sent, and the vault reverted it. */
+    source: "preflight" | "onchain";
+    via?: "quote" | "trade";
+    sent: boolean;
+    from?: Address;
+    byAgent?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +744,7 @@ export async function tradeView(ctx: AppContext, req: TradeRequest) {
   return signer.exclusive(async () => {
     const quote = await quoteView(ctx, req, signer.account.address);
     if (!quote.preflight.ok) {
-      throw new ApiError(422, quote.preflight.guard.code, quote.preflight.guard.message, quote.preflight.guard);
+      throw new ApiError(422, quote.preflight.guard.code, quote.preflight.guard.message, quote.preflight.guard, quote);
     }
     const { args, exCtx } = quote._call;
     const { request } = await ctx.client.simulateContract({
@@ -676,8 +763,9 @@ export async function tradeView(ctx: AppContext, req: TradeRequest) {
       if (isRpcTrouble(err)) {
         throw rpcUnavailable("The Robinhood Chain testnet stopped responding while sending, so I can't tell whether the trade went through. Check your activity before trying again.");
       }
+      // The send's own simulation refused it: nothing reached the chain.
       const guard = explainRevert(decodeRevert(revertDataFromError(err)), exCtx);
-      throw new ApiError(422, guard.code, guard.message, guard);
+      throw new ApiError(422, guard.code, guard.message, guard, quote);
     }
     let receipt: Awaited<ReturnType<typeof ctx.client.waitForTransactionReceipt>>;
     try {

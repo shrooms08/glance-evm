@@ -1,11 +1,11 @@
 /**
  * viem public client for the chain named in the deployment file.
  */
-import { createPublicClient, defineChain, fallback, http, type Chain, type PublicClient, type Transport } from "viem";
+import { createPublicClient, defineChain, type Chain, type PublicClient } from "viem";
 
 import type { Config } from "./config.js";
 import type { Deployment } from "./deployment.js";
-import { rpcUrls } from "./rpc.js";
+import { chainTransport, rpcUrls } from "./rpc.js";
 
 export function chainFor(deployment: Deployment, config: Config): Chain {
   return defineChain({
@@ -25,13 +25,4 @@ export function createChainClient(chain: Chain, urls: string[]): PublicClient {
   return createPublicClient({ chain, transport: chainTransport(urls, { batch: true }), batch: { multicall: false } });
 }
 
-/**
- * Every endpoint in order: when one fails or times out, the same request goes to the next. Each endpoint gets a
- * shorter timeout than before (8s) and one retry, so a dead primary costs seconds, not the old 60.
- */
-export function chainTransport(urls: string[], opts: { batch?: boolean; timeout?: number } = {}): Transport {
-  const transports = urls.map((u) =>
-    http(u, { timeout: opts.timeout ?? 8_000, retryCount: 1, retryDelay: 250, ...(opts.batch ? { batch: { batchSize: 40, wait: 8 } } : {}) }),
-  );
-  return transports.length === 1 ? transports[0]! : fallback(transports, { retryCount: 1, retryDelay: 400 });
-}
+export { chainTransport };

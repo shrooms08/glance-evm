@@ -73,6 +73,12 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   /** How far back /activity scans when a vault's creation block is unknown. ~0.17s blocks: 2M is about 4 days. */
   ACTIVITY_LOOKBACK_BLOCKS: z.coerce.bigint().default(2_000_000n),
+  /**
+   * Where refused trades are recorded (JSON lines), so the console can show them next to the trades that went through.
+   * A vault emits nothing for a trade it refuses, so this is the only record of preflight refusals. Empty keeps them
+   * in memory only. Relative to the API's working directory.
+   */
+  REFUSAL_LOG_FILE: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema> & { corsOrigins: string[] };

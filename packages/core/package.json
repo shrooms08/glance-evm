@@ -1,0 +1,24 @@
+{
+  "name": "@glance/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "What the API and the console must agree on: the contract ABIs, the guard sentences, money formatting and the rolling-window maths.",
+  "exports": {
+    "./abi": "./src/abi.generated.ts",
+    "./errors": "./src/errors.ts",
+    "./format": "./src/format.ts",
+    "./rpc": "./src/rpc.ts",
+    "./window": "./src/window.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "viem": "^2.56.8"
+  },
+  "peerDependencies": {
+    "viem": "^2.56.8"
+  }
+}

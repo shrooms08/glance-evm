@@ -8,6 +8,7 @@ import { chainFor, createChainClient } from "./chain.js";
 import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
+import { RefusalLog } from "./refusals.js";
 import { Resolver } from "./resolver.js";
 import { rpcUrls } from "./rpc.js";
 import { loadAgentSigner, type AgentSigner } from "./signer.js";
@@ -30,6 +31,8 @@ export interface AppContext {
   voice: VoiceProviders;
   /** Claude for voice intents, when ANTHROPIC_API_KEY is set; the validated rules parser otherwise. */
   intentModel: IntentModel | null;
+  /** Trades the guards refused before anything was sent (see src/refusals.ts). */
+  refusals: RefusalLog;
 }
 
 export function createContext(config: Config): AppContext {
@@ -49,6 +52,14 @@ export function createContext(config: Config): AppContext {
     desks: desksOf(deployment),
     defaultVault: config.DEFAULT_VAULT ? getAddress(config.DEFAULT_VAULT) : primaryVault(deployment).address,
     voice: selectVoiceProviders(config),
+    refusals: new RefusalLog(refusalLogFile(config)),
     intentModel: looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? null : createClaudeIntent(config.ANTHROPIC_API_KEY, config.INTENT_MODEL, catalog.entries),
   };
+}
+
+/** data/refusals.jsonl by default; memory only in tests (unless set) or when set to "". */
+function refusalLogFile(config: Config): string | null {
+  const set = config.REFUSAL_LOG_FILE;
+  if (set !== undefined) return set.trim() || null;
+  return config.NODE_ENV === "test" ? null : "data/refusals.jsonl";
 }

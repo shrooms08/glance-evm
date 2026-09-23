@@ -25,3 +25,13 @@ coverage/
 apps/extension/.output/
 apps/extension/.wxt/
 apps/extension/e2e/out/
+
+# Refused trades the API recorded (REFUSAL_LOG_FILE)
+apps/api/data/
+
+# Console build output
+apps/console/.next/
+apps/console/.vercel/
+# Agent notes that `next dev` writes and re-creates on every run
+apps/console/AGENTS.md
+apps/console/CLAUDE.md
