@@ -11,6 +11,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(8790),
   RPC_URL: z.url().default("https://rpc.testnet.chain.robinhood.com"),
   DEPLOYMENT_FILE: z.string().default(resolve(import.meta.dirname, "../../../deployments/46630.json")),
+  /** Where each stand-in feed gets its price (shared with apps/keeper). */
+  PRICE_SOURCES_FILE: z.string().default(resolve(import.meta.dirname, "../../../config/price-sources.json")),
+  /** The keeper's pause switch file, reported by /health. */
+  KEEPER_PAUSE_FILE: z.string().default(resolve(import.meta.dirname, "../../../keeper.paused")),
   EXPLORER_URL: z.url().default("https://explorer.testnet.chain.robinhood.com"),
   AGENT_PRIVATE_KEY: z
     .string()

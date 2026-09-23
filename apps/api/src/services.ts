@@ -2,6 +2,8 @@
  * Chain reads and writes behind the HTTP routes: prices, vault state, activity, quotes with an on-chain preflight, and
  * agent trades. Every amount stays a bigint in its token's decimals until it is formatted for display.
  */
+import { existsSync } from "node:fs";
+
 import {
   decodeEventLog,
   getAddress,
@@ -134,8 +136,9 @@ export async function priceView(ctx: AppContext, symbol: string, vaultParam?: st
     freshness: { vault, openMaxAge: p.openMaxAge, closedMaxAge: p.closedMaxAge },
     feed: stock.feed,
     feedReal: stock.feedReal,
-    priceSource: stock.priceSource,
     priceSourceKind: stock.priceSourceKind,
+    priceSource: stock.priceSource,
+    mainnetFeed: stock.mainnetFeed,
   };
 }
 
@@ -668,8 +671,62 @@ export async function tradeView(ctx: AppContext, req: TradeRequest) {
 // Health
 // ---------------------------------------------------------------------------
 
+/** Blocks scanned for the keeper's last write to each feed. ~0.17s blocks: 1.2M is about 57 hours. */
+const FEED_WRITE_LOOKBACK_BLOCKS = 1_200_000n;
+
+/**
+ * Freshness of every stand-in feed: price, age, the market state the demo vault would apply, where the price comes
+ * from, and when it was last written on chain (the keeper, or the deploy script), read from PriceSet events.
+ */
+async function feedStatus(ctx: AppContext, latest: bigint, now: number) {
+  const vault = ctx.deployment.demoVaultTestUSDG.address;
+  const fromBlock = startBlock(ctx, latest, FEED_WRITE_LOOKBACK_BLOCKS);
+  return Promise.all(
+    ctx.catalog.entries.map(async (stock) => {
+      const [price, logs] = await Promise.all([
+        readPrice(ctx, stock, vault),
+        ctx.client.getLogs({
+          address: stock.feed,
+          event: testPriceFeedAbi.find((i) => i.type === "event" && i.name === "PriceSet") as Extract<
+            (typeof testPriceFeedAbi)[number],
+            { type: "event"; name: "PriceSet" }
+          >,
+          fromBlock,
+          toBlock: latest,
+        }),
+      ]);
+      const last = logs.at(-1) as (Log & { blockTimestamp?: bigint | Hex }) | undefined;
+      // Decoded logs may drop the RPC's blockTimestamp field; read the block when it is missing.
+      let lastWriteAt = last?.blockTimestamp ? Number(last.blockTimestamp) : null;
+      if (last && lastWriteAt === null && last.blockNumber !== null) {
+        lastWriteAt = Number((await ctx.client.getBlock({ blockNumber: last.blockNumber })).timestamp);
+      }
+      return {
+        symbol: stock.symbol,
+        price: { raw: price.price.toString(), decimals: price.decimals, value: toDecimalString(price.price, price.decimals) },
+        updatedAt: price.updatedAt,
+        ageSeconds: price.ageSeconds,
+        age: formatDuration(price.ageSeconds),
+        marketState: price.state,
+        source: stock.priceSourceKind,
+        sourceDetail: stock.priceSource,
+        mainnetFeed: stock.mainnetFeed,
+        lastWrite: last
+          ? {
+              at: lastWriteAt,
+              agoSeconds: lastWriteAt === null ? null : Math.max(0, now - lastWriteAt),
+              txHash: last.transactionHash,
+            }
+          : null,
+      };
+    }),
+  );
+}
+
 export async function healthView(ctx: AppContext) {
   const [chainId, blockNumber] = await Promise.all([ctx.client.getChainId(), ctx.client.getBlockNumber({ cacheTime: 0 })]);
+  const feeds = await feedStatus(ctx, blockNumber, await latestTimestamp(ctx));
+  const lastKeeperWrite = feeds.reduce<number | null>((max, f) => (f.lastWrite?.at && (max === null || f.lastWrite.at > max) ? f.lastWrite.at : max), null);
   const agent = ctx.signer?.account.address ?? ctx.deployment.demoVaultTestUSDG.agent;
   const balance = await ctx.client.getBalance({ address: agent });
   return {
@@ -685,6 +742,12 @@ export async function healthView(ctx: AppContext) {
       ethBalanceWei: balance.toString(),
     },
     llmFallback: ctx.llm !== null,
+    keeper: {
+      // The local pause file. The scheduled GitHub Actions keeper is paused by committing this file.
+      pausedLocally: existsSync(ctx.config.KEEPER_PAUSE_FILE),
+      lastWriteAt: lastKeeperWrite,
+    },
+    feeds,
     demoVaults: {
       testUSDG: ctx.deployment.demoVaultTestUSDG.address,
       paxosUSDG: ctx.deployment.demoVaultPaxosUSDG?.address ?? null,

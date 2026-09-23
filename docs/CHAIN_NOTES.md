@@ -19,10 +19,11 @@ back as listed.
 - **The interactive demo uses a stand-in USDG** (`TestUSDG`, `demoVaultTestUSDG`). Nothing hands out Paxos USDG on
   testnet (the organizers confirmed there is no faucet), so the Paxos vault is configured but unfunded, and a judge
   could not fund it. That is the only reason for the stand-in.
-- **Prices come from Chainlink mainnet, through a stand-in feed.** Chainlink has no feeds on Robinhood testnet, so each
-  stock gets a `TestPriceFeed` seeded at deploy time from the live Chainlink feed on Robinhood mainnet. NFLX has no
-  Chainlink feed, so it uses a public quote. `deployments/46630.json` records each price's `priceSource` and
-  `priceSourceKind` (`chainlink-live`, `public-quote`, `env` or `snapshot`).
+- **Prices mirror Chainlink mainnet, including the time.** Chainlink has no feeds on Robinhood testnet, so each stock
+  has a `TestPriceFeed` stand-in. A keeper (`apps/keeper`) copies the live Chainlink feed on Robinhood mainnet onto it
+  every few minutes: **both the price and that feed's own `updatedAt`, never "now"**. See
+  [The mainnet mirror](#the-mainnet-mirror-how-the-stand-in-feeds-stay-honest) below. NFLX has no Chainlink feed, so
+  it mirrors a public quote and that quote's own market timestamp instead.
 - **The trading venue is a stand-in** (`StockDesk`) because no DEX pool holds these tokens on testnet.
 
 ## Summary
@@ -158,6 +159,63 @@ neither has liquidity for these tokens on testnet, so Glance ships `StockDesk`, 
   PUSH0, TSTORE/TLOAD and MCOPY successfully, while `INVALID` is rejected, so the `cancun` target is fine.
 - Gas: base fee 0.01 gwei at the time of research.
 
+## The mainnet mirror: how the stand-in feeds stay honest
+
+Our `TestPriceFeed`s are stand-ins for Chainlink feeds that exist only on Robinhood Chain mainnet. A stand-in could
+simply stamp the current time on each price, but that would lie. The vault reads a feed's age to tell whether the
+market is open, so a 3am Sunday price stamped "now" would look like live trading and unlock full-size trades.
+
+So the keeper copies **both the price and the real feed's own `updatedAt`**. Our testnet feeds then age exactly like the
+real ones:
+
+- they are fresh while the real market trades;
+- they freeze when it closes;
+- the vault's weekend guard switches on by itself from real data, with no simulation.
+
+The rule lives in one pure function, `apps/keeper/src/mirror.ts`, with a unit test that fails if the keeper ever writes
+the testnet clock instead of the source's timestamp.
+
+| Symbol | Source | Mirrored from |
+| --- | --- | --- |
+| TSLA, AMZN, PLTR, AMD | `mainnet-mirror` | the Chainlink proxies in the Chainlink table above, recorded in `config/price-sources.json` |
+| NFLX | `public-quote` | Yahoo Finance `regularMarketPrice`, with its `regularMarketTime` as `updatedAt` (no Chainlink NFLX feed exists) |
+
+How it runs:
+
+- **Once, locally or from cron:** `make keeper`.
+- **Continuously while recording:** `make keeper-watch`, every 120 seconds.
+- **Scheduled:** `.github/workflows/keeper.yml` runs it every 5 minutes on GitHub Actions.
+- **Only writes what changed.** An unchanged feed is skipped, and each run logs every decision.
+- **Writes nothing while paused.** It is paused while `keeper.paused` exists at the repo root (`make keeper-pause`), or
+  while `KEEPER_PAUSED=1` is set. Commit the file to pause the scheduled run too. That is what `make weekend` needs: a
+  feed frozen on purpose must not be restored by the next pass. `make weekday` resumes the keeper and restores the
+  real data.
+- **Visible from the API.** `GET /health` shows each feed's price, age, market state, source, and last on-chain write.
+
+### What the real feeds' update pattern means for the vault
+
+We sampled the last 60 rounds of each mainnet feed on 2026-09-23. The feeds update in bursts, often every few minutes,
+with quiet stretches between them:
+
+| Feed | Longest weekday gap seen | Weekend gap seen |
+| --- | --- | --- |
+| TSLA | 12.7 hours | 52.2 hours (Fri 19:48 to Mon 00:00 UTC) |
+| PLTR | 17.8 hours | 52.0 hours (Fri 19:58 to Mon 00:00 UTC) |
+| AMZN | 17.6 hours | 55.7 hours (Fri 16:19 to Mon 00:00 UTC) |
+| AMD | 9.8 hours | not in the sample |
+
+The vault's default freshness thresholds (OPEN up to 1 hour, CLOSED up to 80 hours) suit a feed that updates at least
+hourly. With honest timestamps, the real feeds regularly go longer than an hour without an update on ordinary weekdays,
+so under the defaults the vault often reads CLOSED on weekdays too. That fails safe (caps drop to 25%), but it does
+not track market hours.
+
+`make set-freshness OPEN_MAX_AGE=… CLOSED_MAX_AGE=…` sets per-token thresholds on the demo vaults. For these feeds,
+**OPEN up to 20 hours** (above the longest weekday gap seen) and **CLOSED up to 96 hours** (above the longest weekend
+gap, plus a long-weekend margin) read weekdays as OPEN and weekends as CLOSED.
+
+The unavoidable trade-off: age alone cannot tell "closed" from "quiet", so after the last Friday update the vault reads
+OPEN for up to the OPEN threshold before the weekend guard engages.
+
 ## Arbitrum Sepolia (chain id 421614)
 
 RPC `https://sepolia-rollup.arbitrum.io/rpc`, explorer `https://arbitrum-sepolia.blockscout.com` (used for
@@ -178,7 +236,8 @@ https://arbitrum-sepolia.blockscout.com (`/api/v2/search?q=USDG`).
 
 ## Findings to review before mainnet
 
-1. **Oracle freshness vs heartbeat (fixed).** The vault used to treat any feed older than 1 hour as CLOSED. The
+1. **Oracle freshness vs heartbeat (fixed in the contract; tune per feed).** See the measured update gaps in
+   [The mainnet mirror](#the-mainnet-mirror-how-the-stand-in-feeds-stay-honest). The vault used to treat any feed older than 1 hour as CLOSED. The
    Robinhood mainnet equity feeds have a 24 hour heartbeat, so healthy feeds are often hours old: on 2026-09-23 at
    11:06 UTC, TSLA was 2.9 hours old and PLTR 17.8 hours old. The thresholds are now per token (`openMaxAge`,
    `closedMaxAge`, set with `setTokenFreshness`). The defaults stay at 1h / 80h, which suits the testnet stand-in

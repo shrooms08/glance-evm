@@ -5,7 +5,12 @@ export
 NETWORK ?= robinhood
 
 .PHONY: help build test test-fork fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
-	verify-commands weekend weekday
+	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume feeds set-freshness
+
+TESTNET_RPC_URL ?= https://rpc.testnet.chain.robinhood.com
+MAINNET_RPC_URL ?= https://rpc.mainnet.chain.robinhood.com
+# The keeper signs with KEEPER_PRIVATE_KEY, falling back to the deployer's PRIVATE_KEY (the feeds' owner).
+KEEPER_ENV = KEEPER_PRIVATE_KEY="$${KEEPER_PRIVATE_KEY:-$$PRIVATE_KEY}" TESTNET_RPC_URL="$(TESTNET_RPC_URL)" MAINNET_RPC_URL="$(MAINNET_RPC_URL)"
 
 help:
 	@echo "make test                  forge fmt check + all offline tests"
@@ -16,7 +21,13 @@ help:
 	@echo "make deploy-arbsepolia     deploy + verify on Arbitrum Sepolia (421614)"
 	@echo "make seed                  fund the demo vault [NETWORK=robinhood|arbsepolia DEMO_RECIPIENT=0x...]"
 	@echo "make verify-commands       print manual verification commands [NETWORK=...]"
-	@echo "make weekend / weekday     back-date / refresh the stand-in feeds for the weekend demo [NETWORK=... SYMBOL=TSLA]"
+	@echo "make keeper                mirror the mainnet Chainlink feeds (price AND updatedAt) onto the testnet feeds, once"
+	@echo "make keeper-watch          the same, every 120s, until Ctrl-C (use while recording)"
+	@echo "make keeper-pause / resume stop / restart the keeper (creates / removes keeper.paused)"
+	@echo "make feeds                 every feed's price, age, market state and source, from the API's /health"
+	@echo "make weekend               back-date the feeds 30h to demo the closed-market caps (run make keeper-pause first)"
+	@echo "make weekday               resume the keeper and restore the real mainnet prices and timestamps"
+	@echo "make set-freshness         set per-token freshness on the demo vaults [OPEN_MAX_AGE=s CLOSED_MAX_AGE=s]"
 
 build:
 	forge build
@@ -61,5 +72,25 @@ verify-commands:
 weekend:
 	@script/set-market.sh $(NETWORK) weekend $(or $(SYMBOL),all)
 
-weekday:
-	@script/set-market.sh $(NETWORK) weekday $(or $(SYMBOL),all)
+# Restores the real data rather than stamping "now": if the real market is closed, the feeds stay closed.
+weekday: keeper-resume keeper
+
+keeper:
+	@$(KEEPER_ENV) pnpm --silent --filter keeper once
+
+keeper-watch:
+	@$(KEEPER_ENV) pnpm --silent --filter keeper watch
+
+keeper-pause:
+	@touch keeper.paused
+	@echo "Keeper paused locally (keeper.paused created). To pause the scheduled GitHub Actions keeper as well, commit and push keeper.paused."
+
+keeper-resume:
+	@rm -f keeper.paused
+	@echo "Keeper resumed locally (keeper.paused removed). If you committed keeper.paused, delete it in git and push to resume GitHub Actions."
+
+feeds:
+	@curl -s $(or $(API_URL),http://localhost:8790)/health | jq -r '.feeds[] | "\(.symbol)\t$$\(.price.value)\t\(.marketState)\tage \(.age)\t\(.source)\tlast write \(if .lastWrite then "\(.lastWrite.agoSeconds)s ago" else "none" end)"' | column -t -s $$'\t'
+
+set-freshness:
+	@script/set-freshness.sh $(NETWORK) $(or $(OPEN_MAX_AGE),$(error set OPEN_MAX_AGE)) $(or $(CLOSED_MAX_AGE),$(error set CLOSED_MAX_AGE))

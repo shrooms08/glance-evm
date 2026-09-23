@@ -9,6 +9,28 @@ import type { Address } from "viem";
 
 import type { Deployment } from "./deployment.js";
 
+const address = z
+  .string()
+  .refine((v) => /^0x[0-9a-fA-F]{40}$/.test(v), "not an address")
+  .transform((v) => v as Address);
+
+const priceSourcesSchema = z.object({
+  sources: z.record(
+    z.string(),
+    z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("mainnet-mirror"), feed: address, description: z.string() }),
+      z.object({ kind: z.literal("public-quote"), provider: z.string(), description: z.string() }),
+    ]),
+  ),
+});
+
+export type PriceSourceConfig = z.infer<typeof priceSourcesSchema>["sources"][string];
+
+/** config/price-sources.json: where the keeper gets each stand-in feed's price. */
+export function loadPriceSources(path: string): Record<string, PriceSourceConfig> {
+  return priceSourcesSchema.parse(JSON.parse(readFileSync(path, "utf8"))).sources;
+}
+
 const catalogFileSchema = z.object({
   stocks: z.array(
     z.object({
@@ -37,8 +59,13 @@ export interface CatalogEntry {
   feed: Address;
   feedReal: boolean;
   feedSource: string;
+  /** How the stand-in feed is kept current: mirrored from the Chainlink mainnet feed, or a public quote (NFLX). */
+  priceSourceKind: "mainnet-mirror" | "public-quote" | "unknown";
   priceSource: string;
-  priceSourceKind: string;
+  /** The Chainlink feed on Robinhood Chain mainnet this stand-in mirrors, when it is a mirror. */
+  mainnetFeed: Address | null;
+  /** Where the price came from when the feed was first seeded by the deploy script. */
+  seededAtDeploy: string;
 }
 
 export interface Catalog {
@@ -52,7 +79,11 @@ export function loadCatalogText(path = resolve(import.meta.dirname, "../data/cat
   return catalogFileSchema.parse(JSON.parse(readFileSync(path, "utf8"))).stocks;
 }
 
-export function buildCatalog(deployment: Deployment, text: CatalogText[] = loadCatalogText()): Catalog {
+export function buildCatalog(
+  deployment: Deployment,
+  text: CatalogText[] = loadCatalogText(),
+  sources: Record<string, PriceSourceConfig> = {},
+): Catalog {
   const entries: CatalogEntry[] = [];
   for (const t of text) {
     const s = deployment.stocks[t.symbol];
@@ -69,8 +100,10 @@ export function buildCatalog(deployment: Deployment, text: CatalogText[] = loadC
       feed: s.feed,
       feedReal: s.feedReal,
       feedSource: s.feedSource,
-      priceSource: s.priceSource,
-      priceSourceKind: s.priceSourceKind,
+      priceSourceKind: sources[t.symbol]?.kind ?? "unknown",
+      priceSource: sources[t.symbol]?.description ?? s.priceSource,
+      mainnetFeed: sources[t.symbol]?.kind === "mainnet-mirror" ? (sources[t.symbol] as { feed: Address }).feed : null,
+      seededAtDeploy: s.priceSource,
     });
   }
   return {

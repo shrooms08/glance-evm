@@ -1,0 +1,14 @@
+{
+  "$comment": "Where each testnet stand-in feed gets its price. mainnet-mirror: copied, price AND updatedAt, from the live Chainlink feed on Robinhood Chain mainnet (4663). public-quote: no Chainlink feed exists for this stock, so a free public quote is used, with the quote's own market timestamp. Addresses verified in docs/CHAIN_NOTES.md. Read by apps/keeper, apps/api and script/fetch-prices.sh.",
+  "mainnet": {
+    "chainId": 4663,
+    "name": "Robinhood Chain mainnet"
+  },
+  "sources": {
+    "TSLA": { "kind": "mainnet-mirror", "feed": "0x4A1166a659A55625345e9515b32adECea5547C38", "description": "RHTSLA / USD" },
+    "AMZN": { "kind": "mainnet-mirror", "feed": "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C", "description": "Robinhood AMZN / USD" },
+    "PLTR": { "kind": "mainnet-mirror", "feed": "0x820ABedFF239034956B7A9d2F0a331f9F075eB4c", "description": "Robinhood PLTR / USD" },
+    "AMD": { "kind": "mainnet-mirror", "feed": "0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72", "description": "RHAMD / USD" },
+    "NFLX": { "kind": "public-quote", "provider": "yahoo-finance", "description": "Yahoo Finance NFLX regularMarketPrice (no Chainlink NFLX feed exists on Robinhood Chain)" }
+  }
+}

@@ -43,7 +43,23 @@ describe.skipIf(!online)("live testnet", () => {
     expect(body.agent.address).toBe(ctx!.deployment.demoVaultTestUSDG.agent);
     expect(body.agent.keyLoaded).toBe(false);
     expect(Number(body.agent.ethBalance)).toBeGreaterThanOrEqual(0);
-    expect(JSON.stringify(body)).not.toMatch(/[0-9a-f]{64}/i); // no key material, ever
+    // No key material, ever: no key-like field names, and no 32-byte hex value outside a transaction hash.
+    const text = JSON.stringify(body);
+    expect(text).not.toMatch(/private|secret|mnemonic/i);
+    expect(text.replace(/"txHash":"0x[0-9a-f]{64}"/g, "")).not.toMatch(/[0-9a-f]{64}/i);
+  });
+
+  it("GET /health reports every feed's freshness and source", async () => {
+    const { body } = await get("/health");
+    expect(body.feeds.map((f: any) => f.symbol)).toEqual(["TSLA", "AMZN", "PLTR", "NFLX", "AMD"]);
+    for (const f of body.feeds) {
+      expect(["OPEN", "CLOSED", "STALE"]).toContain(f.marketState);
+      expect(f.ageSeconds).toBeGreaterThanOrEqual(0);
+      expect(f.source).toBe(f.symbol === "NFLX" ? "public-quote" : "mainnet-mirror");
+      expect(f.lastWrite?.txHash).toMatch(/^0x[0-9a-f]{64}$/); // at least the deploy script's write
+      expect(f.lastWrite?.at).toBeGreaterThan(0);
+    }
+    expect(typeof body.keeper.pausedLocally).toBe("boolean");
   });
 
   it("GET /catalog lists the five stocks with addresses from the deployment file", async () => {
@@ -69,7 +85,8 @@ describe.skipIf(!online)("live testnet", () => {
     expect(["OPEN", "CLOSED", "STALE"]).toContain(body.marketState);
     expect(body.freshness).toMatchObject({ vault, openMaxAge: 3600, closedMaxAge: 288_000 });
     expect(body.ageSeconds).toBeGreaterThanOrEqual(0);
-    expect(body.priceSourceKind).toBe((ctx!.deployment.stocks.TSLA as any).priceSourceKind);
+    expect(body.priceSourceKind).toBe("mainnet-mirror");
+    expect(body.mainnetFeed).toBe("0x4A1166a659A55625345e9515b32adECea5547C38");
   });
 
   it("GET /price/:symbol rejects unknown and malformed symbols", async () => {

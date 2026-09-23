@@ -10,12 +10,10 @@ set -uo pipefail
 
 RPC="${RH_MAINNET_RPC:-https://rpc.mainnet.chain.robinhood.com}"
 UA="Mozilla/5.0 (glance-evm deploy script)"
-FEEDS=(
-  "TSLA:0x4A1166a659A55625345e9515b32adECea5547C38"
-  "AMZN:0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C"
-  "PLTR:0x820ABedFF239034956B7A9d2F0a331f9F075eB4c"
-  "AMD:0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72"
-)
+# Mainnet feed addresses live in one place: config/price-sources.json (shared with apps/keeper and apps/api).
+SOURCES="$(dirname "$0")/../config/price-sources.json"
+# Entries look like SYMBOL:0xaddress (no spaces), so plain word splitting works, even on macOS's bash 3.2.
+FEEDS=($(jq -r '.sources | to_entries[] | select(.value.kind == "mainnet-mirror") | "\(.key):\(.value.feed)"' "$SOURCES"))
 
 # Decimal dollar string -> 8-decimal integer, or empty if not a positive number.
 to_8dp() { awk -v p="$1" 'BEGIN { if (p ~ /^[0-9]+(\.[0-9]+)?$/ && p + 0 > 0) printf "%.0f", p * 1e8 }'; }

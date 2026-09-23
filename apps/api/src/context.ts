@@ -3,7 +3,7 @@
  */
 import type { Address, Chain, PublicClient } from "viem";
 
-import { buildCatalog, loadCatalogText, type Catalog } from "./catalog.js";
+import { buildCatalog, loadCatalogText, loadPriceSources, type Catalog } from "./catalog.js";
 import { chainFor, createChainClient } from "./chain.js";
 import type { Config } from "./config.js";
 import { desksOf, loadDeployment, type Deployment } from "./deployment.js";
@@ -26,7 +26,7 @@ export interface AppContext {
 export function createContext(config: Config): AppContext {
   const deployment = loadDeployment(config.DEPLOYMENT_FILE);
   const catalogText = loadCatalogText();
-  const catalog = buildCatalog(deployment, catalogText);
+  const catalog = buildCatalog(deployment, catalogText, loadPriceSources(config.PRICE_SOURCES_FILE));
   const chain = chainFor(deployment, config);
   return {
     config,

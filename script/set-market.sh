@@ -8,6 +8,13 @@ MODE="${2:?weekend or weekday}"; SYMBOL="${3:-all}"
 F="deployments/$CHAIN_ID.json"
 [[ -f "$F" ]] || { echo "No $F yet: deploy first"; exit 1; }
 [[ -n "${PRIVATE_KEY:-}" ]] || { echo "PRIVATE_KEY is not set"; exit 1; }
+if [[ "$MODE" == weekend ]]; then
+  echo "Reminder: pause the feed keeper first (make keeper-pause), or its next pass will restore the real mainnet"
+  echo "timestamps and undo this. To pause the scheduled GitHub Actions keeper too, commit and push keeper.paused."
+  if [[ ! -f keeper.paused && "${KEEPER_PAUSED:-}" != 1 ]]; then
+    echo "WARNING: keeper.paused does not exist, so the keeper is NOT paused."
+  fi
+fi
 now=$(cast block latest --field timestamp --rpc-url "$RPC")
 case "$MODE" in weekend) ts=$((now - 30 * 3600));; weekday) ts=$now;; *) echo "mode must be weekend or weekday"; exit 1;; esac
 symbols=$([[ "$SYMBOL" == all ]] && jq -r '.stocks | to_entries[] | select(.value.skipped != true) | .key' "$F" || echo "$SYMBOL")

@@ -86,8 +86,17 @@ curl localhost:8790/health
   "agent": { "address": "0xa7078432F7Aa4db99F88cB181049872d1ea697a9", "keyLoaded": false, "matchesDemoVault": true,
              "ethBalance": "0.00199743196", "ethBalanceWei": "1997431960000000" },
   "llmFallback": false,
+  "keeper": { "pausedLocally": false, "lastWriteAt": 1790167636 },
+  "feeds": [ { "symbol": "TSLA", "price": { "value": "378.2226" }, "updatedAt": 1790163296, "age": "1 hour",
+               "marketState": "CLOSED", "source": "mainnet-mirror", "mainnetFeed": "0x4A11…7C38",
+               "lastWrite": { "at": 1790167636, "agoSeconds": 12, "txHash": "0x9045…" } },
+             { "symbol": "NFLX", "source": "public-quote", "sourceDetail": "Yahoo Finance NFLX regularMarketPrice (…)", "…": "…" } ],
   "demoVaults": { "testUSDG": "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D", "paxosUSDG": "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113" } }
 ```
+
+`feeds` gives each stand-in feed's price, age, and the market state the demo vault would apply to it. `source` is
+`mainnet-mirror` (kept current by the keeper) or `public-quote` (NFLX). `lastWrite` is the most recent on-chain
+`PriceSet`, whether written by the keeper or the deploy script.
 
 ### `GET /catalog`
 
@@ -100,7 +109,8 @@ the feed are real or stand-ins.
                 "aliases": ["Tesla", "Tesla Inc", "Tesla, Inc.", "Tesla Motors", "$TSLA", "TSLA"],
                 "token": "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E", "tokenDecimals": 18, "tokenReal": true,
                 "feed": "0xb856AB851b58B3d0436d62b465A9e92c481E9e9f", "feedReal": false,
-                "priceSourceKind": "chainlink-live", "priceSource": "chainlink-live: Robinhood mainnet feed 0x4A11…, updated 2026-09-23T08:13Z" } ] }
+                "priceSourceKind": "mainnet-mirror", "priceSource": "RHTSLA / USD", "mainnetFeed": "0x4A1166a659A55625345e9515b32adECea5547C38",
+                "seededAtDeploy": "chainlink-live: Robinhood mainnet feed 0x4A11…, updated 2026-09-23T08:13Z" } ] }
 ```
 
 ### `POST /resolve`

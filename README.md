@@ -39,3 +39,10 @@ pnpm install
 pnpm --filter api dev       # http://localhost:8790
 pnpm --filter api test
 ```
+
+## Feed keeper
+
+`apps/keeper` mirrors the live Chainlink feeds on Robinhood Chain mainnet onto our testnet stand-in feeds. It copies
+the price **and** each feed's own timestamp, so the testnet market opens and closes when the real one does. It runs
+every 5 minutes on GitHub Actions, or locally with `make keeper` / `make keeper-watch`. See
+[apps/keeper/README.md](apps/keeper/README.md).

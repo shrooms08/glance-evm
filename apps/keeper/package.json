@@ -1,0 +1,28 @@
+{
+  "name": "keeper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mirrors live Robinhood Chain mainnet Chainlink feeds (price AND updatedAt) onto Glance's testnet stand-in feeds.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "once": "tsx --env-file-if-exists=.env src/index.ts --once",
+    "watch": "tsx --env-file-if-exists=.env src/index.ts --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration"
+  },
+  "dependencies": {
+    "viem": "^2.56.8",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}
