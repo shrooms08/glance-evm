@@ -6,8 +6,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { browser } from "wxt/browser";
 
 import { api } from "../lib/api";
+import { safely, send } from "../lib/lifecycle";
 import type { CatalogStock, Health, Vault } from "../lib/api-types";
-import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, vaultAddress, voiceReplies, type Mode } from "../lib/settings";
+import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, vaultAddress, voiceKeyLetter, voiceReplies, type Mode } from "../lib/settings";
 import { motion } from "../lib/tokens";
 import type { OrbState } from "./Orb";
 
@@ -21,7 +22,10 @@ export interface Glance {
   apiUrl: string;
   vaultAddress: string;
   consoleUrl: string;
-  hotkey: string;
+  /** Option+<glanceKey>, tapped: scan the page and show what was found. */
+  glanceKey: string;
+  /** Option+<voiceKey>, held: talk. */
+  voiceKey: string;
   mode: Mode;
   voiceReplies: boolean;
   catalog: CatalogStock[];
@@ -51,12 +55,13 @@ function useSetting<T>(item: { getValue(): Promise<T>; watch(cb: (v: T) => void)
   const [value, setValue] = useState<T>(fallback);
   useEffect(() => {
     let live = true;
-    void item.getValue().then((v) => live && setValue(v));
-    const unwatch = item.watch((v) => setValue(v));
+    void safely(() => item.getValue(), Promise.resolve(fallback)).then((v) => live && setValue(v));
+    const unwatch = safely(() => item.watch((v) => setValue(v)), () => {});
     return () => {
       live = false;
-      unwatch();
+      safely(unwatch, undefined);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item]);
   return value;
 }
@@ -67,7 +72,8 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const apiUrl = useSetting(apiBaseUrl, "");
   const vaultAddr = useSetting(vaultAddress, "");
   const consoleLink = useSetting(consoleUrl, "");
-  const hotkey = useSetting(hotkeyLetter, "G");
+  const glanceKey = useSetting(hotkeyLetter, "G");
+  const voiceKey = useSetting(voiceKeyLetter, "V");
   const mode = useSetting<Mode>(defaultMode, "floating");
   const voice = useSetting(voiceReplies, true);
 
@@ -137,7 +143,8 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       apiUrl,
       vaultAddress: vaultAddr,
       consoleUrl: consoleLink,
-      hotkey,
+      glanceKey,
+      voiceKey,
       mode,
       voiceReplies: voice,
       catalog,
@@ -146,14 +153,14 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       offline,
       offlineMessage,
       usdgDecimals: 6,
-      markUrl: browser.runtime.getURL("/glance-mark.png"),
+      markUrl: safely(() => browser.runtime.getURL("/glance-mark.png"), ""),
       orb,
       setOrb,
       refreshVault,
-      openSettings: () => void browser.runtime.sendMessage({ kind: "open:settings" }).catch(() => {}),
+      openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
       openConsole: () => window.open(consoleLink, "_blank", "noopener"),
     }),
-    [apiUrl, vaultAddr, consoleLink, hotkey, mode, voice, catalog, health, vault, offline, offlineMessage, orb, setOrb, refreshVault],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, catalog, health, vault, offline, offlineMessage, orb, setOrb, refreshVault],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

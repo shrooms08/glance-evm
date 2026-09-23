@@ -1,6 +1,7 @@
 /**
- * The in-page Glance UI: a draggable orb, its compact panel, the hover card on underlined company names, and the
- * weekend badge. When the user has docked Glance and the side panel is open, the orb hides entirely (it must never
+ * The in-page Glance UI: a draggable orb, its compact panel (which melts out of the orb, components/GooPanel.tsx), the
+ * hover card on underlined company names, and the weekend badge. Option+G (tap) glances at the page; Option+V (hold)
+ * talks; clicking the orb docks Glance to the side panel. When the user has docked Glance and the side panel is open, the orb hides entirely (it must never
  * cover the page's own controls) and speech started here is handed to the side panel. Speech itself never runs in the
  * page: lib/voiceClient runs it in Glance's offscreen document.
  */
@@ -10,13 +11,18 @@ import { browser } from "wxt/browser";
 import { CompanyCard, WeekendBadge } from "../../components/CompanyCard";
 import { GlanceProvider, marketClosed, useGlance } from "../../components/context";
 import { Orb } from "../../components/Orb";
+import { GooPanel, orbDisc } from "../../components/GooPanel";
 import { Panel, type PageCompany } from "../../components/Panel";
 import { useAssistant } from "../../components/useAssistant";
+import { useHotkeys } from "../../components/useHotkeys";
+import { glanceLine, keyLabel } from "../../lib/hotkeys";
+import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { Message, PageMatchesReply } from "../../lib/messages";
 import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
+import { rememberOrbAnchor } from "../../lib/updatedNotice";
 import { startVoice, type VoiceSession } from "../../lib/voiceClient";
 
 const HOVER_DWELL_MS = 300;
@@ -65,93 +71,87 @@ function Floating({ underliner }: { underliner: Underliner }) {
     if (!hover) cardPinned.current = false;
   }, [hover]);
   useEffect(() => {
-    void orbPosition.getValue().then(setPos);
-    return orbPosition.watch(setPos);
+    void safely(() => orbPosition.getValue(), Promise.resolve(pos)).then(setPos);
+    const unwatch = safely(() => orbPosition.watch(setPos), () => {});
+    return () => safely(unwatch, undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The refresh notice appears where the orb was, if Glance is reloaded under this page.
+  useEffect(() => rememberOrbAnchor(pos), [pos]);
 
   // Docked state: ask once, then follow the background's broadcasts. Answer the side panel's questions.
   useEffect(() => {
-    void browser.runtime.sendMessage({ kind: "panel:isOpen" }).then((open) => setDocked(Boolean(open))).catch(() => {});
+    void send({ kind: "panel:isOpen" }).then((open) => setDocked(Boolean(open))).catch(() => {});
     const onMessage = (msg: Message): Promise<PageMatchesReply> | undefined => {
       if (msg.kind === "panel:changed") setDocked(msg.open);
       if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
+      if (msg.kind === "page:scan") return underliner.scan().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
       return undefined;
     };
-    browser.runtime.onMessage.addListener(onMessage);
-    return () => browser.runtime.onMessage.removeListener(onMessage);
+    safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
+    return () => safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
   }, [host, underliner, g.catalog]);
 
-  // ---- talking -------------------------------------------------------------------------------------------------
+  // ---- glance (Option+G, tap) --------------------------------------------------------------------------------
+  const glance = useCallback(async () => {
+    await underliner.scan();
+    const found = companiesFrom(underliner.current(), g.catalog);
+    if (docked) {
+      void send({ kind: "assistant:glance", reply: { host, companies: found } } satisfies AssistantMessage).catch(() => {});
+      return;
+    }
+    setPanelOpen(true);
+    g.setOrb({ state: "idle", line: glanceLine(host, found), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
+  }, [underliner, g, docked, host]);
+
+  // ---- voice (Option+V, hold) --------------------------------------------------------------------------------
   const startTalking = useCallback(() => {
     if (docked) {
       // The side panel owns the conversation; listen (in the offscreen document) and hand the words over.
       if (dockedListener.current) return;
-      const send = (m: AssistantMessage) => void browser.runtime.sendMessage(m).catch(() => {});
-      send({ kind: "assistant:listening", listening: true });
+      const relay = (m: AssistantMessage) => void send(m).catch(() => {});
+      relay({ kind: "assistant:listening", listening: true });
       let failed = false;
       let finalText = "";
       dockedListener.current = startVoice({
-        onInterim: (text) => send({ kind: "assistant:heard", text }),
+        onInterim: (text) => relay({ kind: "assistant:heard", text }),
         onFinal: (text) => {
           finalText = text;
         },
         onError: (code) => {
           failed = true;
-          send({ kind: "assistant:error", code });
+          relay({ kind: "assistant:error", code });
         },
         onEnd: () => {
           dockedListener.current = null;
-          if (!failed) send({ kind: "assistant:run", text: finalText });
+          if (!failed) relay({ kind: "assistant:run", text: finalText });
         },
       });
       return;
     }
     setPanelOpen(true);
     assistant.startListening();
-  }, [docked, assistant, g]);
+  }, [docked, assistant]);
 
   const stopTalking = useCallback(() => {
     if (dockedListener.current) dockedListener.current.stop();
     else assistant.stopListening();
   }, [assistant]);
 
-  // Whether the talk key is down. A ref, not a local: starting to listen re-renders and re-subscribes the handlers
-  // below, and the key-up must still find the press it belongs to.
-  const held = useRef(false);
-  // Press and hold Option+<letter> to talk. Capture phase, so it works even while focus is inside our shadow root.
-  useEffect(() => {
-    const code = `Key${g.hotkey.toUpperCase()}`;
-    const down = (e: KeyboardEvent) => {
-      if (e.code !== code || !e.altKey || e.ctrlKey || e.metaKey) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.repeat || held.current) return;
-      held.current = true;
-      startTalking();
-    };
-    const up = (e: KeyboardEvent) => {
-      if (!held.current || (e.code !== code && e.key !== "Alt")) return;
-      held.current = false;
-      stopTalking();
-    };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setHover(null);
-      if (panelOpen) {
-        setPanelOpen(false);
-        orbRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", down, true);
-    window.addEventListener("keyup", up, true);
-    window.addEventListener("keydown", esc);
-    return () => {
-      window.removeEventListener("keydown", down, true);
-      window.removeEventListener("keyup", up, true);
-      window.removeEventListener("keydown", esc);
-    };
-  }, [g.hotkey, startTalking, stopTalking, panelOpen]);
+  const closePanel = useCallback(() => {
+    setHover(null);
+    if (!panelOpen) return;
+    setPanelOpen(false);
+    orbRef.current?.focus();
+  }, [panelOpen]);
+
+  // Capture phase, so the keys work even while focus is inside our shadow root, and the page never sees them.
+  useHotkeys(
+    { glance: g.glanceKey, voice: g.voiceKey },
+    { onGlance: () => void glance(), onVoiceStart: startTalking, onVoiceEnd: stopTalking, onEscape: closePanel },
+    { capture: true },
+  );
 
   // A voice buy or price question opens the panel to show its card.
   useEffect(() => {
@@ -226,40 +226,30 @@ function Floating({ underliner }: { underliner: Underliner }) {
     const d = drag.current;
     drag.current = null;
     justDragged.current = Boolean(d?.moved);
-    if (d?.moved) void orbPosition.setValue(pos);
+    if (d?.moved) void safely(() => orbPosition.setValue(pos), Promise.resolve());
   };
+  const switchToDocked = () => {
+    void safely(() => defaultMode.setValue("docked"), Promise.resolve());
+    setPanelOpen(false);
+    // Must stay inside the click's user gesture: the background opens the side panel synchronously.
+    void send({ kind: "panel:open" }).catch(() => {});
+  };
+  /** Clicking the orb docks Glance to the side panel. */
   const onOrbClick = () => {
     if (justDragged.current) {
       justDragged.current = false;
       return;
     }
-    if (g.mode === "docked") {
-      void browser.runtime.sendMessage({ kind: "panel:open" });
-      return;
-    }
-    if (assistant.listening) {
-      assistant.stopListening();
-      return;
-    }
-    if (panelOpen && g.orb.state === "idle") {
-      setPanelOpen(false);
-      return;
-    }
-    setOpenedByKeyboard(false);
-    startTalking();
+    if (assistant.listening) assistant.stopListening();
+    switchToDocked();
   };
+  /** Keyboard users: Enter or Space glances (opens the panel with what was found); the panel has the dock button. */
   const onOrbKey = (e: React.KeyboardEvent) => {
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     setOpenedByKeyboard(true);
-    if (g.mode === "docked") void browser.runtime.sendMessage({ kind: "panel:open" });
-    else setPanelOpen((o) => !o);
-  };
-
-  const switchToDocked = () => {
-    void defaultMode.setValue("docked");
-    setPanelOpen(false);
-    void browser.runtime.sendMessage({ kind: "panel:open" });
+    if (panelOpen) closePanel();
+    else void glance();
   };
 
   const { closed, freshestAgeSeconds } = marketClosed(g.health);
@@ -280,29 +270,27 @@ function Floating({ underliner }: { underliner: Underliner }) {
             </div>
           )}
 
-          {panelOpen && (
-            <div className="g-panel" style={panelPlacement}>
-              <Panel
-                layout="compact"
-                assistant={assistant}
-                host={host}
-                companies={companies}
-                onRevealCompany={(s) => underliner.reveal(s)}
-                onSwitchMode={switchToDocked}
-                onClose={() => {
-                  setPanelOpen(false);
-                  assistant.setCard(null);
-                }}
-                autoFocusInput={openedByKeyboard}
-              />
-            </div>
-          )}
+          <GooPanel open={panelOpen} orb={orbDisc(pos, vw, vh)} placement={panelPlacement}>
+            <Panel
+              layout="compact"
+              assistant={assistant}
+              host={host}
+              companies={companies}
+              onRevealCompany={(s) => underliner.reveal(s)}
+              onSwitchMode={switchToDocked}
+              onClose={() => {
+                setPanelOpen(false);
+                assistant.setCard(null);
+              }}
+              autoFocusInput={openedByKeyboard}
+            />
+          </GooPanel>
 
           <button
             ref={orbRef}
             className="g-orb-button"
             style={{ right: pos.right, bottom: pos.bottom }}
-            aria-label={`Glance. Press to talk, or hold Option ${g.hotkey}. ${companies.length} companies found on this page.`}
+            aria-label={`Glance: ${companies.length} companies found on this page. Click to dock to the side panel. Tap Option ${g.glanceKey} to glance, hold Option ${g.voiceKey} to talk.`}
             aria-expanded={panelOpen}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}

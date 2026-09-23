@@ -62,7 +62,12 @@ Close the banner.
 - **When the vault says no**, you get an amber card that explains why and offers the right next step. Examples: "Buy
   $100 instead" when you are over your per-trade limit, when your daily limit frees up, or why Glance won't trade on a
   stale price. Nothing moves when that happens.
-- **Talk.** Click the orb, or press and hold **Option + G** (Alt + G on Windows), and say one of these:
+- **Two keys, two verbs** (Alt instead of Option on Windows; both can be changed in settings):
+  - **Option + G, tap: glance.** Glance scans the page, opens its panel and says what it found, for example "Reading
+    cnbc.com, 1 name found, Tesla 16×". It never listens.
+  - **Option + V, hold: talk.** Glance listens while you hold the keys, thinks when you let go, and speaks the reply.
+    Option + V types a symbol in some Mac apps; if it clashes with one you use, pick another letter in settings.
+- **Talk.** Hold **Option + V** (or use the mic button in the panel) and say one of these:
   - "buy ten dollars of Tesla"
   - "buy $25 of TSLA"
   - "what's Tesla at"
@@ -73,19 +78,25 @@ Close the banner.
 - **Market closed.** When the stock market is shut, an amber badge shows how old the prices are, and that your limits
   are cut to 25%.
 - **Floating or docked.** The orb floats on every page and can be dragged anywhere; it remembers where you put it.
-  Choose "Dock to the side panel" to move Glance into the browser's side panel instead. While docked, the orb
-  disappears from pages so it never covers a site's own buttons.
+  Its panel melts out of the orb when it opens and flows back into it when it closes. **Click the orb** to dock Glance
+  in the browser's side panel instead (or choose "Dock to the side panel" in the panel). While docked, the orb
+  disappears from pages so it never covers a site's own buttons, and both keys still work.
 
 ## Good to know
 
-- **Voice uses your browser's built-in speech recognition.** It works in Google Chrome. Brave turns it off, and
-  open-source Chromium builds usually lack Google's speech service; Glance says so plainly, and you can always type.
+- **Voice needs Google Chrome.** Glance uses the browser's built-in speech recognition, which sends audio to Google's
+  speech service. Only Google Chrome ships with it. Arc, Brave, open-source Chromium and other non-Google Chromium
+  builds don't, so voice can't work there; Glance says so plainly, and you can always type.
   Websites never see your microphone: Glance listens in its own extension context, under the permission you gave it
   once in settings, so a site that blocks microphones doesn't stop it.
+- **After you reload or update Glance** (for example from `chrome://extensions`), refresh the tabs that were already
+  open. Chrome disconnects extensions from open pages when they reload; Glance notices, steps aside quietly, and shows
+  "Glance was updated. Refresh this page to use it." with a Refresh button where the orb was.
 - **Keyboard:**
-  - Tab to the orb and press Enter to open Glance. Escape closes it.
+  - Tab to the orb and press Enter to glance (open the panel). Escape closes it.
   - Every company found on the page is listed in the panel. Pick one to open its card, or to scroll to it on the page.
-- **Reduced motion:** if your system asks for reduced motion, the orb and cards stop animating.
+- **Reduced motion:** if your system asks for reduced motion, the orb and cards stop animating, and the panel opens
+  with a short fade instead of the liquid melt.
 
 ## For developers
 
@@ -93,9 +104,10 @@ Close the banner.
 pnpm --filter extension dev         # opens a browser with Glance loaded and hot reload
 pnpm --filter extension build       # production build in .output/chrome-mv3
 pnpm --filter extension zip         # .output/glance-extension-<version>.zip, for sharing
-pnpm --filter extension test        # unit tests (commands, blocked card, page text, design tokens, voice)
+pnpm --filter extension test        # unit tests (commands, blocked card, page text, tokens, voice, hotkeys, goo, reloads)
 node apps/extension/e2e/smoke.mjs   # loads the build on a real CNBC article (API must be running)
 node apps/extension/e2e/voice.mjs   # voice plumbing in Chromium, on a page that blocks the microphone
+node apps/extension/e2e/interaction.mjs  # hotkeys, the gooey panel, orb-click docking, and an extension reload, on CNBC
 ```
 
 How it's built:
@@ -114,6 +126,16 @@ How it's built:
   Either way the microphone permission belongs to `chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj`. Every
   failure maps to one sentence in `lib/voiceReasons.ts`. In development builds the console logs
   `[glance] voice: running in <browser> <version>`.
+- **Gooey open and close:** `components/GooPanel.tsx`, built on [liquid-gooey](https://libraries.dev/gooey) (MIT).
+  Only two empty shapes (a disc under the orb and a box that grows to the panel's footprint) are filtered; the panel's
+  text, prices and buttons sit on top, unfiltered, and fade in once the liquid has its shape. The SVG filter renders
+  inside our shadow root, and the liquid layer is removed as soon as the motion ends. Timings are the design tokens
+  `motion.panel` (180ms) and `motion.quick` (120ms). If a page drops frames on two opens in a row, Glance lowers the
+  filter quality (smaller blur, no shadow) rather than the animation.
+- **Surviving reloads:** `lib/lifecycle.ts` and `lib/pageLifecycle.ts`. Every extension call from the page goes through
+  `send()` or `safely()`; a port to the background and a `runtime.id` check notice a reload within moments. The page
+  UI then shuts down once (UI removed, listeners gone, underlines cleared) and shows the refresh notice. The expected
+  "Extension context invalidated" error is never logged.
 - **Orb states:** idle shows the eye; listening, thinking and speaking each have their own dotted motion
   (`ORB_MOTION` in `components/Orb.tsx`). Speaking follows the speech itself: it starts on the utterance's `start`
   event and stops on its `end`, not on a timer.
@@ -137,7 +159,9 @@ Voice can't be fully tested headlessly (no real microphone or Google speech serv
 
 **Floating orb**
 
-- [ ] On a news article (for example a CNBC Tesla story), press and hold **Option + G**. The orb turns lime with a
+- [ ] On a news article (for example a CNBC Tesla story), tap **Option + G**. The panel melts out of the orb and says
+      "Reading cnbc.com, 1 name found, Tesla 16×" (or similar). The orb never goes lime: tapping G never listens.
+- [ ] Press and hold **Option + V**. The orb turns lime with a
       dark rolling waveform and a pulse ring: listening. Your words appear in the panel as you speak.
 - [ ] Say "what's Tesla at" and release. The orb shows a lime arc orbiting lime dots (thinking) while the price loads,
       then a flowing lime band (speaking) only while the answer is spoken aloud, then the eye (idle).
@@ -148,9 +172,9 @@ Voice can't be fully tested headlessly (no real microphone or Google speech serv
 
 **Side panel**
 
-- [ ] Click the Glance toolbar icon to dock it. Hold **Option + G** with the panel focused, and use the mic button:
+- [ ] Click the orb (or the Glance toolbar icon) to dock it. Hold **Option + V** with the panel focused, and use the mic button:
       same states and results as the floating orb.
-- [ ] With the panel docked, click into the web page and hold **Option + G**. The panel's orb shows listening and
+- [ ] With the panel docked, click into the web page and hold **Option + V**. The panel's orb shows listening and
       runs what you said.
 
 **Failure messages** (each should show one accurate sentence in the orb panel, and typing still works)

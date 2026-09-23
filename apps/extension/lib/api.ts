@@ -1,19 +1,18 @@
 /**
  * Typed API client for every extension surface. Calls go through the background service worker.
  */
-import { browser } from "wxt/browser";
-
 import type { Catalog, Health, Price, Quote, Resolve, Side, Trade, Vault } from "./api-types";
+import { send } from "./lifecycle";
 import type { ApiRequest, ApiResponse } from "./messages";
 
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<ApiResponse<T>> {
   const request: ApiRequest = { kind: "api", method, path, body };
   try {
-    const reply = (await browser.runtime.sendMessage(request)) as ApiResponse<T> | undefined;
+    // send() never settles once Glance has been reloaded under this page: the page UI shuts down instead.
+    const reply = await send<ApiResponse<T> | undefined>(request);
     return reply ?? { ok: false, status: 0, offline: true, code: "NO_BACKGROUND", message: "Glance's background worker didn't answer." };
   } catch {
-    // The extension was reloaded or updated under an open page: its old content script is orphaned.
-    return { ok: false, status: 0, offline: true, code: "EXTENSION_RELOADED", message: "Glance was updated. Reload this page to reconnect." };
+    return { ok: false, status: 0, offline: true, code: "NO_BACKGROUND", message: "Glance's background worker didn't answer." };
   }
 }
 

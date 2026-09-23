@@ -72,6 +72,22 @@ const components = /* css */ `
 }
 .g-pop { position: fixed; pointer-events: auto; width: 332px; max-width: calc(100vw - 24px); }
 .g-panel { position: fixed; pointer-events: auto; width: 360px; max-width: calc(100vw - 24px); max-height: min(560px, calc(100vh - 120px)); display: flex; flex-direction: column; }
+
+/* ---------- Gooey open and close (components/GooPanel.tsx) ---------- */
+/* Only .g-goo-blob shapes are filtered, and they are empty. The panel's content is never inside the filtered layer. */
+.g-goo-stage { position: fixed; pointer-events: none; }
+.g-goo-blob { position: absolute; }
+.g-goo-morph {
+  transition: left var(--g-panel) var(--g-ease), top var(--g-panel) var(--g-ease), width var(--g-panel) var(--g-ease),
+    height var(--g-panel) var(--g-ease), border-radius var(--g-panel) var(--g-ease);
+}
+.g-panel-goo { opacity: 0; transition: opacity var(--g-quick) var(--g-ease); }
+.g-panel-goo .g-card { animation: none; }
+.g-panel-goo.is-shown, .g-panel-reduced.is-shown { opacity: 1; transform: none; }
+.g-panel-goo:not(.is-shown), .g-panel-reduced:not(.is-shown) { pointer-events: none; }
+/* Reduced motion: no liquid, a short scale-and-fade toward the orb instead. */
+.g-panel-reduced { opacity: 0; transform: scale(.96); transition: opacity var(--g-quick) linear, transform var(--g-quick) linear !important; }
+.g-panel-reduced .g-card { animation: none; }
 .g-section { padding: var(--g-s7); display: flex; flex-direction: column; gap: var(--g-s5); }
 .g-section + .g-section { border-top: 1px solid var(--g-line); }
 .g-row { display: flex; flex-direction: row; align-items: center; gap: var(--g-s5); }
@@ -159,7 +175,7 @@ const components = /* css */ `
 .g-name:hover, .g-name:focus-visible { background: var(--g-raised); }
 
 @media (prefers-reduced-motion: reduce) {
-  .g-root *, .g-root *::before, .g-root *::after { animation: none !important; transition: none !important; }
+  .g-root *:not(.g-panel-reduced), .g-root *::before, .g-root *::after { animation: none !important; transition: none !important; }
   .g-orb-pulse { opacity: .5; transform: scale(1.25); }
 }
 `;

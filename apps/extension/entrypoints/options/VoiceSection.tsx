@@ -12,7 +12,7 @@ import { startVoice, type VoiceSession } from "../../lib/voiceClient";
 import { diagnose, requestMic, type VoiceDiagnostics } from "../../lib/voiceDiagnostics";
 import { reasonFor, type VoiceCode } from "../../lib/voiceReasons";
 
-export function VoiceSection({ hotkey }: { hotkey: string }) {
+export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
   const [asking, setAsking] = useState(false);
   const [orb, setOrb] = useState<OrbState>("idle");
@@ -85,7 +85,7 @@ export function VoiceSection({ hotkey }: { hotkey: string }) {
         : diag.micDevice === false
           ? reason("no-mic")
           : granted
-            ? `Voice is on. Hold ⌥ ${hotkey || "G"} or click the orb's mic to talk.`
+            ? `Voice is on. Hold ⌥ ${voiceKey || "V"}, or use the mic button in Glance's panel, to talk.`
             : "Click “Enable voice” once. Your browser will ask to let Glance use your microphone.";
 
   return (

@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
+import { keyLabel } from "../lib/hotkeys";
 import { isAddress } from "../lib/settings";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { marketClosed, useGlance } from "./context";
@@ -34,13 +35,14 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const { closed, freshestAgeSeconds } = marketClosed(g.health);
-  const hotkeyLabel = `⌥ ${g.hotkey}`;
+  const glanceLabel = keyLabel(g.glanceKey);
+  const voiceLabel = keyLabel(g.voiceKey);
 
   useEffect(() => {
     if (autoFocusInput) input.current?.focus();
   }, [autoFocusInput]);
 
-  const idleLine = `Hold ${hotkeyLabel} or press the orb to talk`;
+  const idleLine = `Hold ${voiceLabel} to talk, or type below`;
   const line = g.orb.state === "idle" && !g.orb.line ? idleLine : g.orb.line || idleLine;
   const meta = g.orb.meta || (host ? `Reading ${host} · ${companies.length} ${companies.length === 1 ? "name" : "names"} found` : "");
 
@@ -54,9 +56,8 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
             {ORB_LABELS[g.orb.state]}
           </span>
         </div>
-        <span className="g-kbd" title="Hold to talk">
-          {hotkeyLabel}
-        </span>
+        <span className="g-kbd" title={`Tap ${glanceLabel} to glance at the page`}>{glanceLabel}</span>
+        <span className="g-kbd" title={`Hold ${voiceLabel} to talk`}>{voiceLabel}</span>
         {onClose && (
           <button className="g-btn g-btn-ghost g-icon-btn" aria-label="Close Glance" onClick={onClose}>
             ×

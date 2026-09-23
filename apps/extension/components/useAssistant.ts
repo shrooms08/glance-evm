@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 import { parseCommand } from "../lib/commands";
 import { ageHours, priceUsd, until } from "../lib/format";
 import { isAddress } from "../lib/settings";
+import { keyLabel } from "../lib/hotkeys";
 import { speak, stopSpeaking } from "../lib/voice";
 import { startVoice, type VoiceSession } from "../lib/voiceClient";
 import { detectBrowser, reasonFor, type VoiceCode } from "../lib/voiceReasons";
@@ -119,7 +120,7 @@ export function useAssistant() {
         setListening(false);
         if (failed) return;
         if (finalText) void run(finalText);
-        else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: "Hold Option+" + g.hotkey.toUpperCase() + " while you speak" });
+        else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: `Hold ${keyLabel(g.voiceKey)} while you speak` });
       },
     });
   }, [g, run, voiceFailed]);

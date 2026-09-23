@@ -32,10 +32,10 @@ let { ctx, page, id } = await launch(false);
 
 async function holdToTalk(ms) {
   await page.keyboard.down("Alt");
-  await page.keyboard.down("KeyG");
+  await page.keyboard.down("KeyV");
   await page.waitForTimeout(ms);
   const during = await page.locator("glance-orb .g-orb").first().getAttribute("data-state");
-  await page.keyboard.up("KeyG");
+  await page.keyboard.up("KeyV");
   await page.keyboard.up("Alt");
   return during;
 }

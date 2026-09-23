@@ -15,6 +15,8 @@ export type PanelMessage =
 
 export type PageMessage =
   | { kind: "page:matches" }
+  /** Option+G from the side panel: rescan the page now, then reply with what was found. */
+  | { kind: "page:scan" }
   | { kind: "page:reveal"; symbol: string };
 
 export interface PageMatchesReply {

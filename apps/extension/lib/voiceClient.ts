@@ -7,6 +7,7 @@
  */
 import { browser } from "wxt/browser";
 
+import { safely, send as sendSafe } from "./lifecycle";
 import { listen } from "./voice";
 import { voiceBlocker } from "./voiceDiagnostics";
 import type { VoiceEvent, VoiceRequest } from "./voiceMessages";
@@ -90,14 +91,14 @@ function startRemote(h: VoiceHandlers): VoiceSession {
   const finish = () => {
     if (ended) return;
     ended = true;
-    browser.runtime.onMessage.removeListener(onMessage);
+    safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
     h.onEnd?.();
   };
 
   // Subscribe before starting, so no event can arrive unheard.
-  browser.runtime.onMessage.addListener(onMessage);
+  safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
   const request: VoiceRequest = { kind: "voice:start", session, lang: navigator.language || "en-US" };
-  browser.runtime.sendMessage(request).then(
+  sendSafe(request).then(
     (ok: unknown) => {
       if (ok === false) {
         h.onError("offscreen-failed");
@@ -110,7 +111,7 @@ function startRemote(h: VoiceHandlers): VoiceSession {
     },
   );
 
-  const send = (kind: "voice:stop" | "voice:abort") => void browser.runtime.sendMessage({ kind, session } satisfies VoiceRequest).catch(() => {});
+  const send = (kind: "voice:stop" | "voice:abort") => void sendSafe({ kind, session } satisfies VoiceRequest).catch(() => {});
   return {
     stop: () => {
       send("voice:stop");

@@ -1,5 +1,5 @@
 /**
- * Settings: API base URL, vault address, hotkey, floating or docked default, console URL, voice replies, the
+ * Settings: API base URL, vault address, the glance and voice keys, floating or docked default, console URL, voice replies, the
  * "Enable voice" microphone grant with voice diagnostics, and a connection test against GET /health.
  */
 import { useEffect, useState, type ReactNode } from "react";
@@ -12,6 +12,7 @@ import { api } from "../../lib/api";
 import type { Health } from "../../lib/api-types";
 import { mountPageStyles } from "../../lib/extensionPage";
 import { ageHours } from "../../lib/format";
+import { hotkeyError } from "../../lib/hotkeys";
 import {
   apiBaseUrl,
   consoleUrl,
@@ -20,6 +21,7 @@ import {
   hotkeyLetter,
   isAddress,
   vaultAddress,
+  voiceKeyLetter,
   voiceReplies,
   type Mode,
 } from "../../lib/settings";
@@ -35,14 +37,14 @@ function isLocal(url: string) {
 }
 
 function Settings() {
-  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: "", hotkey: "G", mode: "floating" as Mode, console: "", voice: true });
+  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: "", hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true });
   const [saved, setSaved] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [test, setTest] = useState<Test>({ state: "idle" });
 
   useEffect(() => {
-    void Promise.all([apiBaseUrl.getValue(), vaultAddress.getValue(), hotkeyLetter.getValue(), defaultMode.getValue(), consoleUrl.getValue(), voiceReplies.getValue()]).then(
-      ([api, vault, hotkey, mode, console, voice]) => setForm({ api, vault, hotkey, mode, console, voice }),
+    void Promise.all([apiBaseUrl.getValue(), vaultAddress.getValue(), hotkeyLetter.getValue(), voiceKeyLetter.getValue(), defaultMode.getValue(), consoleUrl.getValue(), voiceReplies.getValue()]).then(
+      ([api, vault, hotkey, voiceKey, mode, console, voice]) => setForm({ api, vault, hotkey, voiceKey, mode, console, voice }),
     );
   }, []);
 
@@ -60,7 +62,9 @@ function Settings() {
       e.api = "That isn't a URL.";
     }
     if (form.vault && !isAddress(form.vault)) e.vault = "A vault address is 0x followed by 40 hex characters.";
-    if (!/^[A-Z]$/.test(form.hotkey)) e.hotkey = "Pick a single letter.";
+    const keyErrors = hotkeyError(form.hotkey, form.voiceKey);
+    if (keyErrors.glance) e.hotkey = keyErrors.glance;
+    if (keyErrors.voice) e.voiceKey = keyErrors.voice;
     try {
       new URL(form.console);
     } catch {
@@ -82,6 +86,7 @@ function Settings() {
       apiBaseUrl.setValue(form.api.replace(/\/+$/, "")),
       vaultAddress.setValue(form.vault.trim()),
       hotkeyLetter.setValue(form.hotkey),
+      voiceKeyLetter.setValue(form.voiceKey),
       defaultMode.setValue(form.mode),
       consoleUrl.setValue(form.console.replace(/\/+$/, "")),
       voiceReplies.setValue(form.voice),
@@ -145,10 +150,16 @@ function Settings() {
           <h2 id="talk" className="g-ui">
             Talking to Glance
           </h2>
-          <Field label="Hold-to-talk key" hint="Held together with Option (Alt on Windows)." error={errors.hotkey}>
+          <Field label="Glance key (tap)" hint="Tap with Option (Alt on Windows): scan the page and show the companies found. It never listens." error={errors.hotkey}>
             <div className="g-row">
               <span className="g-kbd">⌥ +</span>
-              <input className="g-input g-mono" style={{ width: 64 }} maxLength={1} value={form.hotkey} onChange={(e) => set("hotkey", e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))} />
+              <input className="g-input g-mono" style={{ width: 64 }} maxLength={1} aria-label="Glance key letter" value={form.hotkey} onChange={(e) => set("hotkey", e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))} />
+            </div>
+          </Field>
+          <Field label="Voice key (hold)" hint="Hold with Option (Alt on Windows) to talk, release to send. Option+V is taken in some Mac apps; pick another letter if it clashes." error={errors.voiceKey}>
+            <div className="g-row">
+              <span className="g-kbd">⌥ +</span>
+              <input className="g-input g-mono" style={{ width: 64 }} maxLength={1} aria-label="Voice key letter" value={form.voiceKey} onChange={(e) => set("voiceKey", e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))} />
             </div>
           </Field>
           <Field label="Where Glance lives" hint="Floating orb on every page, or docked in Chrome's side panel.">
@@ -166,7 +177,7 @@ function Settings() {
         </div>
       </section>
 
-      <VoiceSection hotkey={form.hotkey} />
+      <VoiceSection voiceKey={form.voiceKey} />
 
       <section className="g-card" aria-labelledby="console">
         <div className="g-section">

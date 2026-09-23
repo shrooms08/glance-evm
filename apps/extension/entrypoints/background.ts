@@ -130,6 +130,8 @@ export default defineBackground(() => {
   });
 
   browser.runtime.onConnect.addListener((port) => {
+    // Content scripts hold a "glance:content" port only to notice promptly when this extension is reloaded; its
+    // disconnect is their signal. Nothing to do here.
     const match = /^sidepanel:(\d+)$/.exec(port.name);
     if (!match) return;
     const windowId = Number(match[1]);

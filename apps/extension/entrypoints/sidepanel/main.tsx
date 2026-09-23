@@ -4,13 +4,15 @@
  * found. Speech started in the panel runs right here (an extension page, under Glance's own microphone permission);
  * speech started on the page runs in the offscreen document and its words are handed over.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
 import { GlanceProvider, useGlance } from "../../components/context";
 import { Panel, type PageCompany } from "../../components/Panel";
 import { useAssistant } from "../../components/useAssistant";
+import { useHotkeys } from "../../components/useHotkeys";
+import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { mountPageStyles } from "../../lib/extensionPage";
 import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { PageMatchesReply } from "../../lib/messages";
@@ -58,6 +60,10 @@ function SidePanel() {
       if (msg.kind === "assistant:listening") g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
       if (msg.kind === "assistant:heard") g.setOrb({ state: "listening", line: `“${msg.text}”`, meta: "Release to send" });
       if (msg.kind === "assistant:error") assistant.voiceFailed(msg.code);
+      if (msg.kind === "assistant:glance") {
+        setPage(msg.reply);
+        g.setOrb({ state: "idle", line: glanceLine(msg.reply.host, msg.reply.companies), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
+      }
       if (msg.kind === "assistant:run") {
         if (msg.text) void assistant.run(msg.text);
         else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: "" });
@@ -67,31 +73,22 @@ function SidePanel() {
     return () => browser.runtime.onMessage.removeListener(onMessage);
   }, [assistant, g]);
 
-  // Whether the talk key is down. A ref, not a local: starting to listen re-renders and re-subscribes the handlers
-  // below, and the key-up must still find the press it belongs to.
-  const held = useRef(false);
-  // Hold Option+<letter> while the side panel has focus.
-  useEffect(() => {
-    const code = `Key${g.hotkey.toUpperCase()}`;
-    const down = (e: KeyboardEvent) => {
-      if (e.code !== code || !e.altKey || e.repeat || held.current) return;
-      e.preventDefault();
-      held.current = true;
-      assistant.startListening();
-    };
-    const up = (e: KeyboardEvent) => {
-      if (held.current && (e.code === code || e.key === "Alt")) {
-        held.current = false;
-        assistant.stopListening();
+  // Option+G in the panel: rescan the active tab and say what was found. Option+V: hold to talk, right here.
+  const glance = useCallback(async () => {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    let reply: PageMatchesReply = { host: "", companies: [] };
+    if (tab?.id !== undefined) {
+      try {
+        reply = ((await browser.tabs.sendMessage(tab.id, { kind: "page:scan" })) as PageMatchesReply | undefined) ?? reply;
+      } catch {
+        // browser pages and the Web Store have no content script
       }
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-    };
-  }, [g.hotkey, assistant]);
+    }
+    setPage(reply);
+    g.setOrb({ state: "idle", line: glanceLine(reply.host, reply.companies), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
+  }, [g]);
+
+  useHotkeys({ glance: g.glanceKey, voice: g.voiceKey }, { onGlance: () => void glance(), onVoiceStart: assistant.startListening, onVoiceEnd: assistant.stopListening });
 
   const reveal = async (symbol: string) => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
