@@ -1,6 +1,7 @@
 /**
  * HTTP routes. Every input is validated with zod; every error leaves as { error: { code, message, guard? } }.
  */
+import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -10,6 +11,7 @@ import { z } from "zod";
 import type { AppContext } from "./context.js";
 import { rateLimit } from "./rateLimit.js";
 import { ApiError, activityView, healthView, priceView, quoteView, tradeView, vaultView } from "./services.js";
+import { registerVoice } from "./voice/routes.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
 
@@ -50,8 +52,14 @@ async function jsonBody(c: Context): Promise<unknown> {
 }
 
 export function createApp(ctx: AppContext) {
+  return createServerApp(ctx).app;
+}
+
+/** The app plus the WebSocket hook the Node server needs for /voice/stream. */
+export function createServerApp(ctx: AppContext) {
   const app = new Hono();
   const { config } = ctx;
+  const nodeWs = createNodeWebSocket({ app });
 
   if (config.NODE_ENV !== "test") app.use(logger()); // method, path, status and time only: no bodies, no keys
 
@@ -66,6 +74,7 @@ export function createApp(ctx: AppContext) {
       },
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type"],
+      exposeHeaders: ["x-voice-cache", "x-voice-ms"],
       maxAge: 600,
     }),
   );
@@ -121,6 +130,8 @@ export function createApp(ctx: AppContext) {
     return send(c, await tradeView(ctx, body));
   });
 
+  registerVoice(app, ctx, send, parse, jsonBody, nodeWs.upgradeWebSocket);
+
   app.notFound((c) => send(c, { error: { code: "NOT_FOUND", message: "No such endpoint." } }, 404));
 
   app.onError((err, c) => {
@@ -132,5 +143,5 @@ export function createApp(ctx: AppContext) {
     return send(c, { error: { code: "INTERNAL", message: "Something went wrong reading the chain. Try again." } }, 502);
   });
 
-  return app;
+  return { app, injectWebSocket: nodeWs.injectWebSocket };
 }

@@ -1,19 +1,27 @@
 /**
  * The assistant: turns speech or typed text into a command and acts on it. Shared by the floating orb and the
- * docked side panel. It never trades on a guess: a buy always goes through the preflight and an explicit confirm.
+ * docked side panel. It never trades on a guess: a buy always goes through the preflight and an explicit confirm tap.
+ *
+ * Voice (Option+V): the offscreen document records and streams the audio to the Glance API, which transcribes it
+ * (Deepgram), works out what was meant (Claude, validated against our catalog and against what was actually said),
+ * and speaks a reply (Fish Audio). The orb shows listening while the key is held, thinking from the release, and
+ * speaking exactly while the reply's audio plays. A spoken command lands on the same cards as a typed one; a spoken
+ * "yes" never confirms a trade (the confirm is a tap). If the API can't be reached, the browser's own speech
+ * recognition is tried instead, and the panel says so.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { parseCommand } from "../lib/commands";
 import { ageHours, priceUsd, until } from "../lib/format";
 import { isAddress } from "../lib/settings";
 import { keyLabel } from "../lib/hotkeys";
-import { speak, stopSpeaking } from "../lib/voice";
-import { startVoice, type VoiceSession } from "../lib/voiceClient";
+import { hush, speak, startVoice, type VoiceSession } from "../lib/voiceClient";
+import type { FallbackReason, VoiceCommandContext, VoiceIntent, VoiceTiming } from "../lib/voiceMessages";
 import { detectBrowser, failureKind, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
+import { useGlance } from "./context";
 
-/** The short label under the reason, so the five kinds of failure are told apart at a glance. */
+/** The short label under the reason, so the kinds of failure are told apart at a glance. */
 const KIND_META: Record<VoiceFailureKind, string> = {
   "no-service": "No speech service · you can type instead",
   "mic-denied": "Microphone not allowed · you can type instead",
@@ -22,13 +30,21 @@ const KIND_META: Record<VoiceFailureKind, string> = {
   aborted: "Listening was interrupted",
   other: "Voice stopped · you can type instead",
 };
-import { useGlance } from "./context";
+
+/** Past this, the panel says it's still working rather than appearing frozen. */
+export const SLOW_VOICE_MS = 3_000;
+
+const FALLBACK_NOTE: Record<FallbackReason, string> = {
+  "api-unreachable": "The Glance voice server isn't reachable, so I'm using this browser's speech recognition.",
+  "no-provider": "The Glance API has no transcription service set up, so I'm using this browser's speech recognition.",
+};
 
 const browserInfo = detectBrowser(navigator as unknown as Parameters<typeof detectBrowser>[0]);
 if (import.meta.env.DEV) console.info(`[glance] voice: running in ${browserInfo.name} ${browserInfo.version}`);
 
 /** The sentence for a voice failure, specific to this browser. Typing always still works. */
 export function voiceReason(code: VoiceCode): string {
+  if (code === "transcription-failed") return "The voice server couldn't transcribe that. Try again, or type instead.";
   return reasonFor(code, browserInfo);
 }
 
@@ -37,15 +53,26 @@ export type AssistantCard =
   | { kind: "spent" }
   | null;
 
-export function useAssistant() {
+export function useAssistant(opts: { context?: () => VoiceCommandContext } = {}) {
   const g = useGlance();
   const [card, setCard] = useState<AssistantCard>(null);
   const [heard, setHeard] = useState("");
   const [listening, setListening] = useState(false);
-  /** Increments to tell the open company card to confirm (+1) or cancel (-1) its pending review. */
+  const [timing, setTiming] = useState<VoiceTiming | null>(null);
+  /** Increments to tell the open company card to confirm (+1) or cancel (-1) its pending review (typed only). */
   const [decision, setDecision] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: true });
   const listener = useRef<VoiceSession | null>(null);
   const seq = useRef(0);
+  const contextRef = useRef(opts.context);
+  contextRef.current = opts.context;
+
+  // What the API may use to understand "why?": the last refusal and the last thing said.
+  const lastGuard = useRef<{ code: string; message: string } | null>(null);
+  const lastReply = useRef<string | null>(null);
+  useEffect(() => {
+    if (g.orb.state === "blocked" && g.orb.line) lastGuard.current = { code: g.orb.meta.replace(/^Guard · /, ""), message: g.orb.line };
+    if (g.orb.line) lastReply.current = g.orb.line;
+  }, [g.orb]);
 
   const say = useCallback(
     async (line: string, meta = "") => {
@@ -59,8 +86,9 @@ export function useAssistant() {
     [g],
   );
 
+  /** Typed commands (and the browser-fallback transcript), parsed here. */
   const run = useCallback(
-    async (text: string) => {
+    async (text: string, source: "typed" | "voice" = "typed") => {
       const cmd = parseCommand(text, g.catalog.map((s) => ({ symbol: s.symbol, aliases: s.aliases })));
       setHeard(text);
       switch (cmd.kind) {
@@ -86,10 +114,10 @@ export function useAssistant() {
           return say(`You've spent ${w.used.formatted} of your ${w.limit.formatted} in the last 24 hours. ${w.remaining.formatted} left.${frees}`, "Rolling 24h window");
         }
         case "confirm":
-          setDecision((d) => ({ n: d.n + 1, confirm: true }));
-          return;
         case "cancel":
-          setDecision((d) => ({ n: d.n + 1, confirm: false }));
+          // Only a tap (or a typed "yes") confirms: a misheard word must never move money.
+          if (source === "voice") return say("Tap Confirm on the card to buy, or Cancel.");
+          setDecision((d) => ({ n: d.n + 1, confirm: cmd.kind === "confirm" }));
           return;
         default:
           return say("I didn't catch that. Try “buy ten dollars of Tesla” or “what's Tesla at”.", cmd.heard ? `Heard “${cmd.heard}”` : "");
@@ -98,10 +126,33 @@ export function useAssistant() {
     [g, say],
   );
 
+  /** What the API understood: open the same cards as the typed path. The reply is already being spoken. */
+  const applyIntent = useCallback(
+    (it: VoiceIntent, said: string) => {
+      const meta = `Heard “${said}”`;
+      switch (it.intent) {
+        case "buy":
+          // The same confirm card as typing: preflight, review, and nothing moves without the tap.
+          setCard({ kind: "company", symbol: it.symbol!, autoAmount: it.amount ?? undefined, key: ++seq.current });
+          break;
+        case "price":
+          setCard({ kind: "company", symbol: it.symbol!, key: ++seq.current });
+          break;
+        case "spend-so-far":
+          if (isAddress(g.vaultAddress)) setCard({ kind: "spent" });
+          break;
+      }
+      // The reply is about to play: stay on thinking (no flicker to idle) until the audio actually starts. With spoken
+      // replies off, there is nothing to wait for.
+      g.setOrb({ state: g.voiceReplies ? "thinking" : "idle", line: it.reply, meta });
+    },
+    [g],
+  );
+
   /** Voice failures never block typing: the reason shows in the orb line and the text box stays ready. */
   const voiceFailed = useCallback(
-    (code: VoiceCode) => {
-      const line = voiceReason(code);
+    (code: VoiceCode, note = "") => {
+      const line = `${note ? `${note} ` : ""}${voiceReason(code)}`;
       if (import.meta.env.DEV) console.info(`[glance] voice error "${code}" (${failureKind(code)}) in ${browserInfo.name} ${browserInfo.version}`);
       g.setOrb({ state: "idle", line, meta: KIND_META[failureKind(code)] });
     },
@@ -110,32 +161,71 @@ export function useAssistant() {
 
   const startListening = useCallback(() => {
     if (listener.current) return;
-    stopSpeaking();
+    hush();
     setHeard("");
     setListening(true);
     g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
     let failed = false;
     let finalText = "";
-    listener.current = startVoice({
-      onInterim: (t) => setHeard(t),
-      onFinal: (t) => {
-        finalText = t;
+    let fallback = "";
+    let intentSeen = false;
+    let slow: ReturnType<typeof setTimeout> | undefined;
+    const context: VoiceCommandContext = {
+      ...contextRef.current?.(),
+      lastGuard: lastGuard.current,
+      lastReply: lastReply.current,
+      openCard: card?.kind === "company" ? card.symbol : null,
+    };
+    listener.current = startVoice(
+      {
+        onFallback: (reason) => {
+          fallback = FALLBACK_NOTE[reason];
+          g.setOrb({ state: "listening", line: "Listening…", meta: fallback });
+        },
+        onReleased: () => {
+          setListening(false);
+          g.setOrb({ state: "thinking", line: "Thinking…", meta: fallback || "" });
+          // Never look frozen: past 3s, say so.
+          slow = setTimeout(() => {
+            if (!intentSeen) g.setOrb({ state: "thinking", line: "Still working on it. The voice service is slower than usual.", meta: fallback || "" });
+          }, SLOW_VOICE_MS);
+        },
+        onInterim: (t) => setHeard(t),
+        onFinal: (t) => {
+          finalText = t;
+          setHeard(t);
+        },
+        onIntent: (it) => {
+          intentSeen = true;
+          clearTimeout(slow);
+          applyIntent(it, finalText);
+        },
+        onReplyStart: () => g.setOrb({ state: "speaking" }),
+        onReplyEnd: () => g.setOrb({ state: "idle" }),
+        onTiming: (t) => {
+          setTiming(t);
+          if (import.meta.env.DEV) console.info(`[glance] voice latency from release: transcript ${t.transcript}ms, intent ${t.intent ?? "-"}ms, speaking ${t.speaking ?? "-"}ms (${t.via})`);
+        },
+        onError: (code) => {
+          failed = true;
+          clearTimeout(slow);
+          voiceFailed(code, fallback);
+        },
+        onEnd: () => {
+          clearTimeout(slow);
+          listener.current = null;
+          setListening(false);
+          if (failed || intentSeen) return;
+          // No intent: the browser fallback (or the API couldn't answer). Parse it here, like typed text.
+          if (finalText) void run(finalText, "voice");
+          else g.setOrb({ state: "idle", line: `I didn't hear anything. Hold ${keyLabel(g.voiceKey)} while you speak, then let go.`, meta: KIND_META["no-speech"] });
+        },
       },
-      onError: (code) => {
-        failed = true;
-        voiceFailed(code);
-      },
-      onEnd: () => {
-        listener.current = null;
-        setListening(false);
-        if (failed) return;
-        if (finalText) void run(finalText);
-        else g.setOrb({ state: "idle", line: `I didn't hear anything. Hold ${keyLabel(g.voiceKey)} while you speak, then let go.`, meta: KIND_META["no-speech"] });
-      },
-    });
-  }, [g, run, voiceFailed]);
+      { context, vault: isAddress(g.vaultAddress) ? g.vaultAddress : undefined },
+    );
+  }, [g, run, voiceFailed, applyIntent, card]);
 
   const stopListening = useCallback(() => listener.current?.stop(), []);
 
-  return { card, setCard, heard, listening, decision, run, startListening, stopListening, voiceFailed };
+  return { card, setCard, heard, listening, decision, run, startListening, stopListening, voiceFailed, timing };
 }

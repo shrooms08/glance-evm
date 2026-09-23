@@ -10,6 +10,8 @@ import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deploy
 import { createLlmResolver, type LlmResolver } from "./llm.js";
 import { Resolver } from "./resolver.js";
 import { loadAgentSigner, type AgentSigner } from "./signer.js";
+import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
+import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
 export interface AppContext {
   config: Config;
@@ -23,6 +25,10 @@ export interface AppContext {
   desks: Address[];
   /** The vault used when a request names none: DEFAULT_VAULT, else the deployment's primary vault. */
   defaultVault: Address;
+  /** Deepgram and Fish Audio, when configured (the extension falls back to the browser's speech APIs otherwise). */
+  voice: VoiceProviders;
+  /** Claude for voice intents, when ANTHROPIC_API_KEY is set; the validated rules parser otherwise. */
+  intentModel: IntentModel | null;
 }
 
 export function createContext(config: Config): AppContext {
@@ -41,5 +47,7 @@ export function createContext(config: Config): AppContext {
     llm: createLlmResolver(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, catalog.text),
     desks: desksOf(deployment),
     defaultVault: config.DEFAULT_VAULT ? getAddress(config.DEFAULT_VAULT) : primaryVault(deployment).address,
+    voice: selectVoiceProviders(config),
+    intentModel: looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? null : createClaudeIntent(config.ANTHROPIC_API_KEY, config.INTENT_MODEL, catalog.entries),
   };
 }

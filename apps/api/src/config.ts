@@ -29,6 +29,23 @@ const envSchema = z.object({
     .or(z.literal("").transform(() => undefined)),
   ANTHROPIC_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
   ANTHROPIC_MODEL: z.string().default("claude-opus-5"),
+  /** Voice (see src/voice). Keys stay on the server; placeholder values count as unset. */
+  DEEPGRAM_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Deepgram model: nova-3 is its current general model and supports keyterm prompting. */
+  DEEPGRAM_MODEL: z.string().default("nova-3"),
+  FISH_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Fish Audio model header (the API's default is s2.1-pro). */
+  FISH_MODEL: z.string().default("s2.1-pro"),
+  /** Fish Audio voice (reference_id). Default: "Calm Narrator", a calm, clear male voice from Fish's public library. */
+  FISH_VOICE_ID: z.string().default("790560d72d4d455ba0464995cd534f27"),
+  /** Fish Audio latency mode: low | normal | balanced. */
+  FISH_LATENCY: z.enum(["low", "normal", "balanced"]).default("balanced"),
+  /** Claude model for voice intents: a fast one, since this is on the path from key release to the reply. */
+  INTENT_MODEL: z.string().default("claude-haiku-4-5"),
+  /** "fake": simulated transcription and speech, for testing the voice path without keys (refused in production). */
+  VOICE_PROVIDERS: z.enum(["auto", "fake"]).default("auto"),
+  VOICE_FAKE_TRANSCRIPT: z.string().optional(),
+  VOICE_FAKE_DELAY_MS: z.coerce.number().int().min(0).max(10_000).optional(),
   /** Comma separated. Chrome extension origins look like chrome-extension://<id>. */
   CORS_ORIGINS: z.string().default(""),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),

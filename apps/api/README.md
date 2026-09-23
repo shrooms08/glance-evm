@@ -230,6 +230,38 @@ curl -X POST localhost:8790/trade -H 'content-type: application/json' \
   "balancesAfter": { "usdg": { "formatted": "$955" }, "TSLA": { "formatted": "0.1179 TSLA" } } }
 ```
 
+## Voice
+
+Push-to-talk is transcribed, understood and answered here, so it works in any Chromium browser, including Brave and
+Arc, which have no browser speech recognition. The extension records in its own offscreen document (never in a web
+page) and never holds a key.
+
+| Endpoint | In | Out | Provider |
+| --- | --- | --- | --- |
+| `WS /voice/stream[?vault=0x…]` | audio chunks while Option+V is held; `{"type":"stop"}` on release | `{"type":"transcript","text","confidence","ms"}` | Deepgram live, `nova-3`, keyterms = our companies and tickers |
+| `POST /voice/transcribe` | a whole recording (fallback when the stream can't open) | `{ text, confidence, provider, ms }` | Deepgram pre-recorded |
+| `POST /voice/command` | `{ transcript, context?, vault? }` | `{ intent, symbol, amount, reply, source, note?, ms }` | Claude (`INTENT_MODEL`), else the rules parser; always validated |
+| `POST /voice/speak` / `GET /voice/speak?text=` | text | `audio/mpeg` (the GET streams, so playback starts early) | Fish Audio, voice `FISH_VOICE_ID` |
+| `GET /voice/status` | | which providers are active (never keys) | |
+
+- **Intents:** `buy`, `sell`, `price`, `spend-so-far`, `explain`, `unknown`. The symbol must be in our catalog and the
+  amount must be one the user actually said, whoever produced it; a negation ("don't buy"), an advice question ("should
+  I buy?"), a past event ("Tesla bought Twitter"), a hypothetical or anything for later never becomes a buy or sell.
+  Ambiguous amounts ("twelve fifty") are not guessed: the card asks. See `src/voice/intent.ts`.
+- **Never trades:** a `buy` only tells the extension which card to open. The trade still needs the on-chain preflight,
+  the confirm tap, and every vault guard, exactly as when typed. There is no voice path to `POST /trade`.
+- **Replies state facts from the chain,** composed by our code (prices and spending are prefetched while the key is
+  held, and may be up to 15s old in speech; quotes and trades always read fresh). Claude's sentence is used only for
+  `explain` and `unknown`, from the context it was given.
+- **Speech cache:** identical short phrases (up to 64, 200 characters each) are served from memory.
+- **Fallback:** with no provider configured (or the API unreachable), the extension uses the browser's own speech APIs
+  and says so in the panel. The startup log shows which provider is active; placeholder keys are reported and ignored.
+
+```sh
+pnpm --filter api test:integration     # real Deepgram and Fish calls with latency, skipped without real keys
+VOICE_PROVIDERS=fake PORT=8797 pnpm --filter api dev   # simulated providers, to test the extension's voice path
+```
+
 ## Safety
 
 - **Validation:** every input is checked with zod; addresses, tickers and decimal strings are strict. `/resolve`

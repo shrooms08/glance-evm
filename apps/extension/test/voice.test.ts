@@ -164,15 +164,16 @@ describe("startVoice from a web page (offscreen relay)", () => {
     await vi.waitFor(() => expect(got).toEqual(["offscreen-failed", "end"]));
   });
 
-  it("never leaves the orb listening if the speech service doesn't answer a stop", async () => {
+  it("never leaves the orb waiting if the voice server doesn't answer a release", async () => {
     vi.useFakeTimers();
-    const sent: Array<{ kind: string }> = [];
+    const sent: Array<{ kind: string; session?: string }> = [];
     vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async (m: unknown) => {
       sent.push(m as { kind: string });
       return true;
     });
     const got: string[] = [];
     const s = startVoice({ onInterim: () => {}, onFinal: () => {}, onError: (c) => got.push(c), onEnd: () => got.push("end") });
+    await fakeBrowser.runtime.onMessage.trigger({ kind: "voice:event", session: sent[0]!.session, seq: 1, type: "started" }, {}, () => {});
     s.stop();
     vi.advanceTimersByTime(STOP_TIMEOUT_MS);
     expect(got).toEqual(["stop-timeout", "end"]);

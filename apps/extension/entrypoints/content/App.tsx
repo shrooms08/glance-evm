@@ -21,12 +21,12 @@ import { reportIdleFrames, sampleFrames } from "../../lib/motionBudget";
 import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
+import type { VoiceCommandContext } from "../../lib/voiceMessages";
 import type { Message, PageMatchesReply } from "../../lib/messages";
 import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
 import { rememberOrbAnchor } from "../../lib/updatedNotice";
-import { startVoice, type VoiceSession } from "../../lib/voiceClient";
 
 const HOVER_DWELL_MS = 300;
 const HOVER_GRACE_MS = 250;
@@ -52,7 +52,8 @@ function companiesFrom(mentions: Mention[], catalog: ReturnType<typeof useGlance
 
 function Floating({ underliner }: { underliner: Underliner }) {
   const g = useGlance();
-  const assistant = useAssistant();
+  const voiceContext = useRef<() => VoiceCommandContext>(() => ({}));
+  const assistant = useAssistant({ context: () => voiceContext.current() });
   const [mentions, setMentions] = useState<Mention[]>(underliner.current());
   const [panelOpen, setPanelOpen] = useState(false);
   const [openedByKeyboard, setOpenedByKeyboard] = useState(false);
@@ -69,10 +70,13 @@ function Floating({ underliner }: { underliner: Underliner }) {
   /** Once the reader clicks or types in the hover card it stays open (its content can resize under the pointer). */
   const cardPinned = useRef(false);
   const orbRef = useRef<HTMLButtonElement>(null);
-  const dockedListener = useRef<VoiceSession | null>(null);
+  /** Option+V is held on this page while docked: its release goes to the side panel too. */
+  const heldForPanel = useRef(false);
 
   const companies = useMemo(() => companiesFrom(mentions, g.catalog), [mentions, g.catalog]);
   const host = location.hostname.replace(/^www\./, "");
+  // What the voice API may use to understand a command: this page and the companies found on it.
+  voiceContext.current = () => ({ host, companies: companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) });
 
   useEffect(() => underliner.onChange(setMentions), [underliner]);
   // One quiet-time frame sample: if this page can't hold frame rate on its own, skip the idle breathing pulse.
@@ -135,26 +139,9 @@ function Floating({ underliner }: { underliner: Underliner }) {
   const startTalking = useCallback(() => {
     if (dockAnim) return;
     if (docked) {
-      // The side panel owns the conversation; listen (in the offscreen document) and hand the words over.
-      if (dockedListener.current) return;
-      const relay = (m: AssistantMessage) => void send(m).catch(() => {});
-      relay({ kind: "assistant:listening", listening: true });
-      let failed = false;
-      let finalText = "";
-      dockedListener.current = startVoice({
-        onInterim: (text) => relay({ kind: "assistant:heard", text }),
-        onFinal: (text) => {
-          finalText = text;
-        },
-        onError: (code) => {
-          failed = true;
-          relay({ kind: "assistant:error", code });
-        },
-        onEnd: () => {
-          dockedListener.current = null;
-          if (!failed) relay({ kind: "assistant:run", text: finalText });
-        },
-      });
+      // The side panel owns the conversation (and the voice session, recorded in the offscreen document either way).
+      heldForPanel.current = true;
+      void send({ kind: "assistant:hold", down: true } satisfies AssistantMessage).catch(() => {});
       return;
     }
     setPanelOpen(true);
@@ -162,8 +149,10 @@ function Floating({ underliner }: { underliner: Underliner }) {
   }, [docked, assistant, dockAnim]);
 
   const stopTalking = useCallback(() => {
-    if (dockedListener.current) dockedListener.current.stop();
-    else assistant.stopListening();
+    if (heldForPanel.current) {
+      heldForPanel.current = false;
+      void send({ kind: "assistant:hold", down: false } satisfies AssistantMessage).catch(() => {});
+    } else assistant.stopListening();
   }, [assistant]);
 
   const closePanel = useCallback(() => {

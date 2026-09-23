@@ -93,6 +93,14 @@ pnpm --filter api dev       # http://localhost:8790
 pnpm --filter api test
 ```
 
+## Voice
+
+Hold Option+V on any page and speak ("buy ten dollars of Tesla", "what's Tesla at"). Voice works in any Chromium browser,
+including Brave and Arc, because transcription is server-side: the extension records in its own context, Deepgram
+transcribes, Claude turns the words into an intent (validated against our catalog and against what was actually said),
+and Fish Audio speaks the reply. A spoken buy only opens the same confirm card as a typed one: nothing trades without
+the tap, and every vault guard applies. Keys live only in `apps/api/.env`. See [apps/api/README.md](apps/api/README.md#voice).
+
 ## Feed keeper
 
 `apps/keeper` mirrors the live Chainlink feeds on Robinhood Chain mainnet onto our testnet stand-in feeds. It copies

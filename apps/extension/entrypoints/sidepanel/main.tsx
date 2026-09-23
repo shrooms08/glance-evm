@@ -4,7 +4,7 @@
  * found. Speech started in the panel runs right here (an extension page, under Glance's own microphone permission);
  * speech started on the page runs in the offscreen document and its words are handed over.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
@@ -20,8 +20,10 @@ import { defaultMode } from "../../lib/settings";
 
 function SidePanel() {
   const g = useGlance();
-  const assistant = useAssistant();
+  const pageRef = useRef<PageMatchesReply>({ host: "", companies: [] });
+  const assistant = useAssistant({ context: () => ({ host: pageRef.current.host, companies: pageRef.current.companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) }) });
   const [page, setPage] = useState<PageMatchesReply>({ host: "", companies: [] });
+  pageRef.current = page;
 
   // Tell the background we are open, so the page hides its floating orb.
   useEffect(() => {
@@ -54,19 +56,17 @@ function SidePanel() {
     };
   }, [refreshPage]);
 
-  // Speech captured on the page while docked.
+  // The page's hotkeys while docked.
   useEffect(() => {
     const onMessage = (msg: AssistantMessage) => {
-      if (msg.kind === "assistant:listening") g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
-      if (msg.kind === "assistant:heard") g.setOrb({ state: "listening", line: `“${msg.text}”`, meta: "Release to send" });
-      if (msg.kind === "assistant:error") assistant.voiceFailed(msg.code);
+      // Option+V held on the page: the panel runs the session, exactly as if it were held here.
+      if (msg.kind === "assistant:hold") {
+        if (msg.down) assistant.startListening();
+        else assistant.stopListening();
+      }
       if (msg.kind === "assistant:glance") {
         setPage(msg.reply);
         g.setOrb({ state: "idle", line: glanceLine(msg.reply.host, msg.reply.companies), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
-      }
-      if (msg.kind === "assistant:run") {
-        if (msg.text) void assistant.run(msg.text);
-        else g.setOrb({ state: "idle", line: "I didn't hear anything.", meta: "" });
       }
     };
     browser.runtime.onMessage.addListener(onMessage);

@@ -70,14 +70,15 @@ Close the banner.
     cnbc.com, 1 name found, Tesla 16×". It never listens.
   - **Option + V, hold: talk.** Glance listens while you hold the keys, thinks when you let go, and speaks the reply.
     Option + V types a symbol in some Mac apps; if it clashes with one you use, pick another letter in settings.
-- **Talk.** Hold **Option + V** (or use the mic button in the panel) and say one of these:
+- **Talk.** Hold **Option + V** (or use the mic button in the panel) and say one of these. The orb goes lime while
+  you hold, thinks when you let go, and moves while it answers:
   - "buy ten dollars of Tesla"
   - "buy $25 of TSLA"
   - "what's Tesla at"
   - "how much have I spent today"
 
-  Release the keys to send. When Glance quotes a buy, say "yes" or click Confirm. You can type the same things in the
-  box instead.
+  Release the keys to send. A spoken buy opens the confirm card: tap Confirm to buy (saying "yes" never confirms a
+  trade). You can type the same things in the box instead.
 - **Market closed.** When the stock market is shut, an amber badge shows how old the prices are, and that your limits
   are cut to 25%.
 - **Floating or docked.** The orb floats on every page and can be dragged anywhere; it remembers where you put it.
@@ -89,9 +90,11 @@ Close the banner.
 
 ## Good to know
 
-- **Voice needs Google Chrome.** Glance uses the browser's built-in speech recognition, which sends audio to Google's
-  speech service. Only Google Chrome ships with it. Arc, Brave, open-source Chromium and other non-Google Chromium
-  builds don't, so voice can't work there; Glance says so plainly, and you can always type.
+- **Voice works in any Chromium browser** (Chrome, Brave, Arc, Edge), because transcription is server-side: Glance
+  records your voice in its own extension context (never in the web page), the Glance API transcribes it (Deepgram),
+  works out what you meant (Claude), and answers in a calm voice (Fish Audio). The API needs `DEEPGRAM_API_KEY` and
+  `FISH_API_KEY` in `apps/api/.env`. If it can't be reached, Glance falls back to the browser's own speech
+  recognition (which Brave and Arc lack) and says so in the panel. You can always type.
   Websites never see your microphone: Glance listens in its own extension context, under the permission you gave it
   once in settings, so a site that blocks microphones doesn't stop it.
 - **After you reload or update Glance** (for example from `chrome://extensions`), refresh the tabs that were already
@@ -112,6 +115,7 @@ pnpm --filter extension zip         # .output/glance-extension-<version>.zip, fo
 pnpm --filter extension test        # unit tests (commands, blocked card, page text, tokens, voice, hotkeys, goo, reloads)
 node apps/extension/e2e/smoke.mjs   # loads the build on a real CNBC article (API must be running)
 node apps/extension/e2e/voice.mjs   # voice plumbing in Chromium, on a page that blocks the microphone
+node apps/extension/e2e/voice-server.mjs brave http://localhost:8797   # server voice end to end in Brave, with latency
 node apps/extension/e2e/interaction.mjs  # hotkeys, the gooey panel, orb-click docking, and an extension reload, on CNBC
 ```
 
@@ -158,8 +162,20 @@ How it's built:
 
 ## Voice: manual test checklist
 
-Voice can't be fully tested headlessly (no real microphone or Google speech service), so run this by hand in
-**Google Chrome** after any change to voice. Reload the extension in `chrome://extensions` first.
+Run this by hand after any change to voice, in **Brave** (or any Chromium browser): transcription is server-side, so
+Brave's missing speech recognition doesn't matter. Start the API with real `DEEPGRAM_API_KEY` and `FISH_API_KEY` (its
+startup log names the active providers), and reload the extension first.
+
+- [ ] Settings → Voice: "Transcription (Glance API)" reads `deepgram (nova-3)` and "Spoken replies" reads `fish (…)`.
+- [ ] Hold **Option + V**, say "what's Tesla at", let go: lime (listening) while held, thinking on release, then the orb
+      moves while a calm voice says the price, and returns to the eye when it stops.
+- [ ] Say "buy ten dollars of Tesla": the voice says "$10 of Tesla. Checking your vault's limits.", the confirm card
+      appears after the preflight, and nothing is bought until you tap Confirm. Saying "yes" does not confirm.
+- [ ] Say "don't buy Tesla" and "should I buy Tesla?": neither opens a buy.
+- [ ] Stop the API and hold Option + V: the panel says the voice server isn't reachable and that it's trying the
+      browser's speech recognition (in Brave, that it isn't available either). Typing still works.
+
+The older checks below cover the microphone permission and the failure messages.
 
 **Settings**
 

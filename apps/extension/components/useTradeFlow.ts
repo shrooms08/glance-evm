@@ -8,7 +8,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { api } from "../lib/api";
-import { speak } from "../lib/voice";
+import { speak } from "../lib/voiceClient";
 import type { Guard, Quote, Trade } from "../lib/api-types";
 import { isAddress } from "../lib/settings";
 import { useGlance } from "./context";

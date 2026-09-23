@@ -48,7 +48,14 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
   const meta = g.orb.meta || (host ? `Reading ${host} · ${companies.length} ${companies.length === 1 ? "name" : "names"} found` : "");
 
   return (
-    <div className="g-card" style={{ display: "flex", flexDirection: "column", height: layout === "tall" ? "100%" : undefined, maxHeight: "inherit", borderRadius: layout === "tall" ? 0 : undefined, border: layout === "tall" ? 0 : undefined }} role="dialog" aria-label="Glance assistant">
+    <div
+      className="g-card"
+      style={{ display: "flex", flexDirection: "column", height: layout === "tall" ? "100%" : undefined, maxHeight: "inherit", borderRadius: layout === "tall" ? 0 : undefined, border: layout === "tall" ? 0 : undefined }}
+      role="dialog"
+      aria-label="Glance assistant"
+      // The last voice command's latency from key release (transcript, intent, speaking), for checks and demos.
+      data-voice-latency={assistant.timing ? JSON.stringify(assistant.timing) : undefined}
+    >
       <div className="g-head">
         {layout === "tall" && <PanelOrb />}
         <div className="g-head-title">

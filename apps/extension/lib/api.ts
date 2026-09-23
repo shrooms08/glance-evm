@@ -24,6 +24,11 @@ const q = (params: Record<string, string | number | undefined>) =>
 
 export const api = {
   health: () => call<Health>("GET", "/health"),
+  voiceStatus: () =>
+    call<{ transcription: string; speech: string; intent: string; available: { transcription: boolean; speech: boolean; stream: boolean }; warnings: string[] }>(
+      "GET",
+      "/voice/status",
+    ),
   catalog: () => call<Catalog>("GET", "/catalog"),
   resolve: (text: string) => call<Resolve>("POST", "/resolve", { text }),
   price: (symbol: string, vault?: string) => call<Price>("GET", `/price/${encodeURIComponent(symbol)}${vault ? `?${q({ vault })}` : ""}`),

@@ -1,14 +1,15 @@
 /**
  * Voice in settings: the one place Glance asks for the microphone ("Enable voice"), an honest diagnostics block with
- * each check shown separately, and tests for both halves (listening through the offscreen document the pages use,
- * and speaking with the orb following the real utterance).
+ * each check shown separately (including which voice services the Glance API has), and tests for both halves: a real
+ * command through the same path the pages use (recorded here, transcribed and answered by the API), and speaking with
+ * the orb following the real playback.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
 
 import { Orb, type OrbState } from "../../components/Orb";
-import { speak, stopSpeaking } from "../../lib/voice";
-import { startVoice, type VoiceSession } from "../../lib/voiceClient";
+import { api } from "../../lib/api";
+import { hush, speak, startVoice, type VoiceSession } from "../../lib/voiceClient";
 import { diagnose, requestMic, type VoiceDiagnostics } from "../../lib/voiceDiagnostics";
 import { reasonFor, type VoiceCode } from "../../lib/voiceReasons";
 
@@ -17,12 +18,18 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const [asking, setAsking] = useState(false);
   const [orb, setOrb] = useState<OrbState>("idle");
   const [line, setLine] = useState("");
+  const [server, setServer] = useState<{ transcription: string; speech: string; intent: string; ok: boolean; reachable: boolean } | null>(null);
   const session = useRef<VoiceSession | null>(null);
   const markUrl = browser.runtime.getURL("/glance-mark.png");
 
   const refresh = useCallback(async () => {
-    const d = await diagnose();
+    const [d, s] = await Promise.all([diagnose(), api.voiceStatus()]);
     setDiag(d);
+    setServer(
+      s.ok
+        ? { ...s.data, ok: s.data.available.transcription, reachable: true }
+        : { transcription: "unreachable", speech: "unreachable", intent: "unreachable", ok: false, reachable: false },
+    );
     if (import.meta.env.DEV) console.info(`[glance] voice diagnostics in ${d.browser.name} ${d.browser.version}`, d);
   }, []);
 
@@ -43,31 +50,38 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
     if (session.current) return session.current.stop();
     let heard = "";
     let failed = false;
+    let replied = false;
     setOrb("listening");
     setLine("Listening… say “what's Tesla at”, then click Stop.");
-    session.current = startVoice(
-      {
-        onInterim: (t) => setLine(`“${t}”`),
-        onFinal: (t) => {
-          heard = t;
-        },
-        onError: (code) => {
-          failed = true;
-          setLine(reason(code));
-        },
-        onEnd: () => {
-          session.current = null;
-          setOrb("idle");
-          if (!failed) setLine(heard ? `Heard “${heard}”. Voice works.` : reason("no-speech"));
-        },
+    session.current = startVoice({
+      onReleased: () => setOrb("thinking"),
+      onInterim: (t) => setLine(`“${t}”`),
+      onFallback: () => setLine("The Glance voice server isn't available, so this uses the browser's speech recognition."),
+      onFinal: (t) => {
+        heard = t;
       },
-      { via: "offscreen" },
-    );
+      onIntent: (it) => {
+        replied = true;
+        setLine(`Heard “${heard}” → ${it.intent}${it.symbol ? ` ${it.symbol}` : ""}${it.amount ? ` $${it.amount}` : ""}. Reply: “${it.reply}”`);
+      },
+      onReplyStart: () => setOrb("speaking"),
+      onReplyEnd: () => setOrb("idle"),
+      onTiming: (t) => setLine((l) => `${l} (${t.transcript}ms to the words${t.speaking ? `, ${t.speaking}ms to the voice` : ""})`),
+      onError: (code) => {
+        failed = true;
+        setLine(reason(code));
+      },
+      onEnd: () => {
+        session.current = null;
+        if (!replied) setOrb("idle");
+        if (!failed && !replied) setLine(heard ? `Heard “${heard}”. Voice works.` : reason("no-speech"));
+      },
+    });
   };
 
   const testSpeak = () => {
-    stopSpeaking();
-    const text = "Tesla is at two hundred and fifty dollars. Confirm?";
+    hush();
+    const text = "Tesla is at $250. Confirm?";
     setLine(`Saying “${text}”`);
     void speak(text, true, { onStart: () => setOrb("speaking"), onEnd: () => setOrb("idle") }).then(() => {
       setLine((l) => (l.startsWith("Saying") && diag?.voices === 0 ? "No speech voices are installed, so replies are shown, not spoken." : l));
@@ -78,14 +92,14 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const blocked = diag?.micPermission === "denied";
   const status = !diag
     ? ""
-    : !diag.recognition
-      ? reason("no-recognition")
-      : blocked
+    : blocked
         ? reason("mic-denied")
         : diag.micDevice === false
           ? reason("no-mic")
           : granted
-            ? `Voice is on. Hold ⌥ ${voiceKey || "V"}, or use the mic button in Glance's panel, to talk.`
+            ? server?.ok
+              ? `Voice is on. Hold ⌥ ${voiceKey || "V"}, or use the mic button in Glance's panel, to talk.`
+              : `The microphone is ready, but the Glance API has no transcription service${server?.reachable ? "" : " (it isn't reachable)"}: voice falls back to this browser's speech recognition.`
             : "Click “Enable voice” once. Your browser will ask to let Glance use your microphone.";
 
   return (
@@ -95,7 +109,7 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
           Voice
         </h2>
         <div className="g-row" style={{ gap: 12 }}>
-          <button className="g-btn g-btn-primary" onClick={() => void enable()} disabled={asking || granted || !diag?.recognition}>
+          <button className="g-btn g-btn-primary" onClick={() => void enable()} disabled={asking || granted}>
             {granted ? "Voice enabled" : asking ? "Waiting for your answer…" : "Enable voice"}
           </button>
           <span className="g-meta" role="status">
@@ -113,11 +127,15 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
             <dd>
               {diag.browser.name} {diag.browser.version}
             </dd>
-            <dt>Speech recognition</dt>
-            <dd>{diag.recognition ? "available" : "missing in this build"}</dd>
-            <dt>Speech output</dt>
-            <dd>{diag.synthesis ? "available" : "missing"}</dd>
-            <dt>Voices installed</dt>
+            <dt>Transcription (Glance API)</dt>
+            <dd>{server?.transcription ?? "…"}</dd>
+            <dt>Spoken replies (Glance API)</dt>
+            <dd>{server?.speech ?? "…"}</dd>
+            <dt>Understanding (Glance API)</dt>
+            <dd>{server?.intent ?? "…"}</dd>
+            <dt>Browser speech recognition</dt>
+            <dd>{diag.recognition ? "available (fallback only)" : "missing in this build (not needed: transcription is server-side)"}</dd>
+            <dt>Browser voices</dt>
             <dd>{diag.voices > 0 ? diag.voices : "none (replies are shown, not spoken)"}</dd>
             <dt>Microphone permission</dt>
             <dd>{{ granted: "granted to Glance", prompt: "not asked yet", denied: "blocked", unknown: "unknown" }[diag.micPermission]}</dd>

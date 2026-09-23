@@ -120,34 +120,6 @@ describe("listen() in the offscreen document or side panel", () => {
   });
 });
 
-describe("the offscreen document", () => {
-  beforeEach(() => {
-    fakeBrowser.reset();
-    vi.resetModules();
-    vi.stubGlobal("webkitSpeechRecognition", FakeRecognition);
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.doUnmock("../lib/voiceDiagnostics");
-  });
-
-  it("a key released while the microphone is still being checked stops recognition as soon as it starts", async () => {
-    let allow!: (v: null) => void;
-    vi.doMock("../lib/voiceDiagnostics", () => ({ voiceBlocker: () => new Promise((r) => (allow = r)) }));
-    const sent: VoiceEvent[] = [];
-    vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async (m: unknown) => void sent.push(m as VoiceEvent));
-    await import("../entrypoints/offscreen/main");
-
-    await fakeBrowser.runtime.onMessage.trigger({ kind: "offscreen:start", session: "s1", lang: "en-US" }, {}, () => {});
-    await fakeBrowser.runtime.onMessage.trigger({ kind: "offscreen:stop", session: "s1" }, {}, () => {}); // released early
-    allow(null);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(FakeRecognition.last.calls).toEqual(["start", "stop"]);
-    FakeRecognition.last.onend!();
-    expect(sent.map((e) => (e.type === "error" ? `error:${e.code}` : e.type === "final" ? `final:${e.text}` : e.type))).toEqual(["final:", "end"]);
-  });
-});
-
 describe("startVoice never hangs", () => {
   beforeEach(() => {
     fakeBrowser.reset();
@@ -155,7 +127,7 @@ describe("startVoice never hangs", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("gives up with a reason if recognition never starts", async () => {
+  it("gives up with a reason if recording never starts", async () => {
     vi.spyOn(browser.runtime, "sendMessage").mockResolvedValue(true as never);
     const { got, h } = record();
     startVoice(h);

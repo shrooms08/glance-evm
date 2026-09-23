@@ -7,7 +7,7 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
-import type { OffscreenRequest, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
+import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
 
 const READ_TIMEOUT_MS = 15_000;
 const TRADE_TIMEOUT_MS = 90_000; // a trade waits for its receipt
@@ -71,11 +71,13 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
 }
 
 /**
- * Voice: speech recognition runs in Glance's offscreen document (its own origin, so the mic permission is Glance's and
- * no website can block it). Each session remembers the tab that asked, so its events go back to that tab only.
- * Extension pages (side panel, settings) receive the offscreen document's messages directly.
+ * Voice: Glance's offscreen document records the audio (its own origin, so the mic permission is Glance's and no
+ * website can block it), streams it to the Glance API for transcription, and plays the spoken reply. Each session
+ * and each spoken reply remembers the tab that asked, so its events go back to that tab only. Extension pages (side
+ * panel, settings) receive the offscreen document's messages directly.
  */
 const voiceTabs = new Map<string, number>();
+const speechTabs = new Map<string, number>();
 let creatingOffscreen: Promise<void> | null = null;
 
 async function ensureOffscreen(): Promise<void> {
@@ -85,12 +87,18 @@ async function ensureOffscreen(): Promise<void> {
   const existing = await browser.runtime.getContexts?.({ contextTypes: ["OFFSCREEN_DOCUMENT" as never], documentUrls: [url] });
   if (existing && existing.length > 0) return;
   creatingOffscreen ??= offscreen
-    .createDocument({ url, reasons: ["USER_MEDIA" as chrome.offscreen.Reason], justification: "Speech recognition for push-to-talk, under Glance's own microphone permission." })
+    .createDocument({
+      url,
+      reasons: ["USER_MEDIA" as chrome.offscreen.Reason, "AUDIO_PLAYBACK" as chrome.offscreen.Reason],
+      justification: "Records push-to-talk audio under Glance's own microphone permission, and plays Glance's spoken replies.",
+    })
     .finally(() => {
       creatingOffscreen = null;
     });
   await creatingOffscreen;
 }
+
+const apiBase = async () => (await apiBaseUrl.getValue()).replace(/\/+$/, "");
 
 async function startVoice(req: Extract<VoiceRequest, { kind: "voice:start" }>, tabId: number | undefined): Promise<boolean> {
   if (tabId !== undefined) voiceTabs.set(req.session, tabId);
@@ -101,13 +109,34 @@ async function startVoice(req: Extract<VoiceRequest, { kind: "voice:start" }>, t
     voiceTabs.delete(req.session);
     return false;
   }
-  await browser.runtime.sendMessage({ kind: "offscreen:start", session: req.session, lang: req.lang } satisfies OffscreenRequest).catch(() => {});
+  // The spoken reply is played under the session's id: route its playback events to the same tab.
+  if (tabId !== undefined) speechTabs.set(req.session, tabId);
+  const start: OffscreenRequest = { kind: "offscreen:start", session: req.session, lang: req.lang, api: await apiBase(), context: req.context, vault: req.vault };
+  await browser.runtime.sendMessage(start).catch(() => {});
+  return true;
+}
+
+async function speakVoice(req: Extract<VoiceRequest, { kind: "voice:speak" }>, tabId: number | undefined): Promise<boolean> {
+  if (tabId !== undefined) speechTabs.set(req.id, tabId);
+  try {
+    await ensureOffscreen();
+  } catch {
+    speechTabs.delete(req.id);
+    return false;
+  }
+  await browser.runtime.sendMessage({ kind: "offscreen:speak", id: req.id, text: req.text, api: await apiBase() } satisfies OffscreenRequest).catch(() => {});
   return true;
 }
 
 function relayVoice(event: VoiceEvent) {
   const tabId = voiceTabs.get(event.session);
   if (event.type === "end") voiceTabs.delete(event.session);
+  if (tabId !== undefined) browser.tabs.sendMessage(tabId, event).catch(() => {});
+}
+
+function relaySpeech(event: SpeechEvent) {
+  const tabId = speechTabs.get(event.id);
+  if (event.type !== "start") speechTabs.delete(event.id);
   if (tabId !== undefined) browser.tabs.sendMessage(tabId, event).catch(() => {});
 }
 
@@ -144,10 +173,18 @@ export default defineBackground(() => {
     });
   });
 
-  browser.runtime.onMessage.addListener((message: Message | VoiceRequest | VoiceEvent, sender) => {
+  browser.runtime.onMessage.addListener((message: Message | VoiceRequest | VoiceEvent | SpeechEvent, sender) => {
     switch (message.kind) {
       case "voice:start":
         return startVoice(message, sender.tab?.id);
+      case "voice:speak":
+        return speakVoice(message, sender.tab?.id);
+      case "voice:hush":
+        void browser.runtime.sendMessage({ kind: "offscreen:hush" } satisfies OffscreenRequest).catch(() => {});
+        return undefined;
+      case "voice:speech":
+        relaySpeech(message);
+        return undefined;
       case "voice:stop":
       case "voice:abort":
         void browser.runtime
