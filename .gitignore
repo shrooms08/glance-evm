@@ -1,0 +1,13 @@
+# Foundry
+cache/
+out/
+broadcast/
+docs/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
