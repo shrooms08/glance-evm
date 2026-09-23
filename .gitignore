@@ -2,7 +2,6 @@
 cache/
 out/
 broadcast/
-docs/
 
 # Secrets
 .env
@@ -11,3 +10,7 @@ docs/
 
 # OS
 .DS_Store
+
+# Local and dry-run deployment records (real testnet records in deployments/ are committed)
+deployments/31337.json
+deployments/*.dry-run.json
