@@ -10,7 +10,7 @@ F="deployments/$CHAIN_ID.json"
 [[ -n "${PRIVATE_KEY:-}" ]] || { echo "PRIVATE_KEY is not set"; exit 1; }
 now=$(cast block latest --field timestamp --rpc-url "$RPC")
 case "$MODE" in weekend) ts=$((now - 30 * 3600));; weekday) ts=$now;; *) echo "mode must be weekend or weekday"; exit 1;; esac
-symbols=$([[ "$SYMBOL" == all ]] && jq -r '.stocks | keys[]' "$F" || echo "$SYMBOL")
+symbols=$([[ "$SYMBOL" == all ]] && jq -r '.stocks | to_entries[] | select(.value.skipped != true) | .key' "$F" || echo "$SYMBOL")
 for s in $symbols; do
   feed=$(jq -r ".stocks.$s.feed" "$F")
   [[ "$(jq -r ".stocks.$s.feedReal" "$F")" == "true" ]] && { echo "$s uses a real feed; skipping"; continue; }

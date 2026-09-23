@@ -220,6 +220,8 @@ contract GlanceVaultTest is VaultFixture {
         vault.setTokenApproval(address(usdg), address(feed), true);
         vm.expectRevert(GlanceVault.NotOwner.selector);
         vault.setRouterApproval(agent, true);
+        vm.expectRevert(GlanceVault.NotOwner.selector);
+        vault.setTokenFreshness(address(stock), 1 hours, 7 days);
 
         vm.stopPrank();
     }
@@ -345,7 +347,7 @@ contract GlanceVaultTest is VaultFixture {
         vm.prank(owner);
         h.setAgent(agent, uint64(block.timestamp) + AGENT_TTL);
         h.forceApproveWithoutFeed(address(stock));
-        (bool approved, address priceFeed) = h.tokenConfig(address(stock));
+        (bool approved, address priceFeed,,) = h.tokenConfig(address(stock));
         assertTrue(approved);
         assertEq(priceFeed, address(0));
 
@@ -387,7 +389,7 @@ contract GlanceVaultTest is VaultFixture {
     }
 
     function test_revert_buy_staleOracle() public {
-        uint256 age = MarketStatusLib.CLOSED_MAX_AGE + 1;
+        uint256 age = MarketStatusLib.DEFAULT_CLOSED_MAX_AGE + 1;
         _setFeedAge(age);
         _expectBuyRevert(ONE_USDG, abi.encodeWithSelector(GlanceVault.OracleStale.selector, block.timestamp - age));
     }
@@ -432,7 +434,7 @@ contract GlanceVaultTest is VaultFixture {
     function test_checkOrder_isPauseAgentTokenRouterOracleCaps() public {
         MockERC20 other = new MockERC20("Other", "OTH", 18);
         address badRouter = makeAddr("badRouter");
-        _setFeedAge(MarketStatusLib.CLOSED_MAX_AGE + 1);
+        _setFeedAge(MarketStatusLib.DEFAULT_CLOSED_MAX_AGE + 1);
         vm.prank(owner);
         vault.setPaused(true);
 
@@ -684,6 +686,147 @@ contract GlanceVaultTest is VaultFixture {
     }
 
     // ---------------------------------------------------------------------
+    // Per-token oracle freshness
+    // ---------------------------------------------------------------------
+
+    /// @dev Thresholds for a Chainlink-style feed with a 24h heartbeat: OPEN up to 26h, CLOSED up to 96h.
+    uint32 internal constant HB24_OPEN = 26 hours;
+    uint32 internal constant HB24_CLOSED = 96 hours;
+
+    function test_freshness_defaultsSetOnApproval() public view {
+        (,, uint32 openMaxAge, uint32 closedMaxAge) = vault.tokenConfig(address(stock));
+        assertEq(openMaxAge, MarketStatusLib.DEFAULT_OPEN_MAX_AGE);
+        assertEq(closedMaxAge, MarketStatusLib.DEFAULT_CLOSED_MAX_AGE);
+        assertEq(openMaxAge, 3600);
+        assertEq(closedMaxAge, 288_000);
+    }
+
+    function test_freshness_defaultsBehaveAsBefore() public {
+        // 20h old with the defaults: CLOSED, so a full-size buy is over the 25% cap.
+        _setFeedAge(20 hours);
+        _expectBuyRevert(
+            PER_BUY_CAP, abi.encodeWithSelector(GlanceVault.ExceedsPerTradeCap.selector, PER_BUY_CAP, PER_BUY_CAP / 4)
+        );
+    }
+
+    function test_freshness_24hHeartbeatConfigReadsOpenAt20Hours() public {
+        vm.expectEmit(address(vault));
+        emit GlanceVault.TokenFreshnessSet(address(stock), HB24_OPEN, HB24_CLOSED);
+        vm.prank(owner);
+        vault.setTokenFreshness(address(stock), HB24_OPEN, HB24_CLOSED);
+
+        _setFeedAge(20 hours);
+        vm.expectEmit(address(vault));
+        emit GlanceVault.Bought(
+            address(stock),
+            address(router),
+            PER_BUY_CAP,
+            _quote(PER_BUY_CAP),
+            uint256(PRICE),
+            MarketStatusLib.MarketState.OPEN,
+            PER_BUY_CAP,
+            DAILY_CAP
+        );
+        _buy(PER_BUY_CAP);
+    }
+
+    function test_freshness_24hHeartbeatConfigClosedAndStaleBoundaries() public {
+        vm.prank(owner);
+        vault.setTokenFreshness(address(stock), HB24_OPEN, HB24_CLOSED);
+
+        _setFeedAge(uint256(HB24_OPEN) + 1); // CLOSED
+        _expectBuyRevert(
+            PER_BUY_CAP, abi.encodeWithSelector(GlanceVault.ExceedsPerTradeCap.selector, PER_BUY_CAP, PER_BUY_CAP / 4)
+        );
+
+        _setFeedAge(90 hours); // STALE under the defaults, still CLOSED here
+        _buy(PER_BUY_CAP / 4);
+
+        uint256 staleAt = block.timestamp - HB24_CLOSED - 1;
+        feed.setUpdatedAt(staleAt);
+        _expectBuyRevert(ONE_USDG, abi.encodeWithSelector(GlanceVault.OracleStale.selector, staleAt));
+    }
+
+    function test_freshness_tighterClosedMaxAgeMakesFeedStaleSooner() public {
+        vm.prank(owner);
+        vault.setTokenFreshness(address(stock), 30 minutes, 2 hours);
+        _setFeedAge(45 minutes); // CLOSED under a 30 minute openMaxAge
+        _buy(PER_BUY_CAP / 4);
+        uint256 staleAt = block.timestamp - 3 hours;
+        feed.setUpdatedAt(staleAt);
+        _expectBuyRevert(ONE_USDG, abi.encodeWithSelector(GlanceVault.OracleStale.selector, staleAt));
+    }
+
+    function test_freshness_perTokenChangeDoesNotAffectOtherTokens() public {
+        MockERC20 other = new MockERC20("Other tokenized", "OTHx", 18);
+        MockPriceFeed otherFeed = new MockPriceFeed(FEED_DECIMALS, PRICE);
+        vm.startPrank(owner);
+        vault.setTokenApproval(address(other), address(otherFeed), true);
+        vault.setTokenFreshness(address(stock), HB24_OPEN, HB24_CLOSED);
+        vm.stopPrank();
+
+        (,, uint32 otherOpen, uint32 otherClosed) = vault.tokenConfig(address(other));
+        assertEq(otherOpen, MarketStatusLib.DEFAULT_OPEN_MAX_AGE);
+        assertEq(otherClosed, MarketStatusLib.DEFAULT_CLOSED_MAX_AGE);
+
+        _setFeedAge(20 hours);
+        otherFeed.setUpdatedAt(block.timestamp - 20 hours);
+
+        _buy(PER_BUY_CAP); // stock: OPEN under its 24h-heartbeat thresholds
+        uint256 minOut = _quote(PER_BUY_CAP); // same price and decimals as `stock`
+        vm.prank(agent);
+        vm.expectRevert(abi.encodeWithSelector(GlanceVault.ExceedsPerTradeCap.selector, PER_BUY_CAP, PER_BUY_CAP / 4));
+        vault.buy(address(other), address(router), PER_BUY_CAP, minOut); // other: CLOSED under the defaults
+    }
+
+    function test_freshness_survivesReapproval() public {
+        vm.startPrank(owner);
+        vault.setTokenFreshness(address(stock), HB24_OPEN, HB24_CLOSED);
+        vault.setTokenApproval(address(stock), address(feed), false);
+        vault.setTokenApproval(address(stock), address(feed), true);
+        vm.stopPrank();
+        (,, uint32 openMaxAge, uint32 closedMaxAge) = vault.tokenConfig(address(stock));
+        assertEq(openMaxAge, HB24_OPEN);
+        assertEq(closedMaxAge, HB24_CLOSED);
+    }
+
+    function test_freshness_canBeSetBeforeApproval() public {
+        MockERC20 other = new MockERC20("Other tokenized", "OTHx", 18);
+        vm.startPrank(owner);
+        vault.setTokenFreshness(address(other), HB24_OPEN, HB24_CLOSED);
+        vault.setTokenApproval(address(other), address(feed), true);
+        vm.stopPrank();
+        (bool approved,, uint32 openMaxAge,) = vault.tokenConfig(address(other));
+        assertTrue(approved);
+        assertEq(openMaxAge, HB24_OPEN, "approval keeps thresholds set earlier");
+    }
+
+    function test_freshness_validation() public {
+        uint32 maxAge = vault.MAX_FRESHNESS_AGE();
+        vm.startPrank(owner);
+        vm.expectRevert(abi.encodeWithSelector(GlanceVault.InvalidFreshness.selector, 0, 1 hours));
+        vault.setTokenFreshness(address(stock), 0, 1 hours);
+        vm.expectRevert(abi.encodeWithSelector(GlanceVault.InvalidFreshness.selector, 2 hours, 2 hours));
+        vault.setTokenFreshness(address(stock), 2 hours, 2 hours);
+        vm.expectRevert(abi.encodeWithSelector(GlanceVault.InvalidFreshness.selector, 3 hours, 2 hours));
+        vault.setTokenFreshness(address(stock), 3 hours, 2 hours);
+        vm.expectRevert(abi.encodeWithSelector(GlanceVault.InvalidFreshness.selector, 1 hours, maxAge + 1));
+        vault.setTokenFreshness(address(stock), 1 hours, maxAge + 1);
+        vm.expectRevert(GlanceVault.ZeroAddress.selector);
+        vault.setTokenFreshness(address(0), 1 hours, 2 hours);
+        vm.expectRevert(GlanceVault.InvalidTokenConfig.selector);
+        vault.setTokenFreshness(address(usdg), 1 hours, 2 hours);
+        vault.setTokenFreshness(address(stock), maxAge - 1, maxAge); // the bound itself is allowed
+        vm.stopPrank();
+    }
+
+    function test_revert_freshness_nonOwner() public {
+        vm.prank(agent);
+        vm.expectRevert(GlanceVault.NotOwner.selector);
+        vault.setTokenFreshness(address(stock), 1 hours, 2 hours);
+    }
+
+    // ---------------------------------------------------------------------
     // Separate buy and sell windows
     // ---------------------------------------------------------------------
 
@@ -805,7 +948,7 @@ contract GlanceVaultTest is VaultFixture {
 
     function test_revert_sell_staleOracle() public {
         stock.mint(address(vault), 1e18);
-        _setFeedAge(MarketStatusLib.CLOSED_MAX_AGE + 1);
+        _setFeedAge(MarketStatusLib.DEFAULT_CLOSED_MAX_AGE + 1);
         _expectSellRevert(ONE_USDG, abi.encodeWithSelector(GlanceVault.OracleStale.selector, feed.updatedAt()));
     }
 

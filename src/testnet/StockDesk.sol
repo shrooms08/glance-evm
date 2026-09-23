@@ -33,7 +33,7 @@ contract StockDesk is IStockRouter, Ownable, ReentrancyGuard {
     /// @notice Largest spread the owner may set (5%).
     uint16 public constant MAX_SPREAD_BPS = 500;
     /// @notice Prices older than this are refused. Matches the vault's CLOSED window so weekend demos still fill.
-    uint256 public constant MAX_PRICE_AGE = MarketStatusLib.CLOSED_MAX_AGE;
+    uint256 public constant MAX_PRICE_AGE = MarketStatusLib.DEFAULT_CLOSED_MAX_AGE;
 
     /// @notice The quote currency.
     IERC20 public immutable usdg;
@@ -201,7 +201,9 @@ contract StockDesk is IStockRouter, Ownable, ReentrancyGuard {
     function _price(address token) internal view returns (uint256 price, uint8 priceDecimals) {
         AggregatorV3Interface feed = feedOf[token];
         if (address(feed) == address(0)) revert NotListed(token);
-        MarketStatusLib.OracleReading memory r = MarketStatusLib.read(feed);
+        // Only the validated price and updatedAt are used; the desk applies its own MAX_PRICE_AGE.
+        MarketStatusLib.OracleReading memory r =
+            MarketStatusLib.read(feed, MarketStatusLib.DEFAULT_OPEN_MAX_AGE, MarketStatusLib.DEFAULT_CLOSED_MAX_AGE);
         if (block.timestamp - r.updatedAt > MAX_PRICE_AGE) revert StalePrice(token, r.updatedAt);
         return (r.price, r.decimals);
     }

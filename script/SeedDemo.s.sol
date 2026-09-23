@@ -10,8 +10,9 @@ import {StockDesk} from "../src/testnet/StockDesk.sol";
 import {TestUSDG} from "../src/testnet/TestUSDG.sol";
 
 /// @title SeedDemo
-/// @notice Funds a deployed Glance demo: mints TestUSDG to a named address, deposits USDG into the demo vault, and
-///         prints a ready-to-use summary. Run by the vault owner (the deployer) after script/Deploy.s.sol.
+/// @notice Funds a deployed Glance demo: mints TestUSDG to a named address, deposits USDG into the TestUSDG demo vault,
+///         and prints a ready-to-use summary. Run by the vault owner (the deployer) after script/Deploy.s.sol.
+///         The Paxos USDG demo vault on Robinhood testnet is left unfunded: nothing dispenses Paxos USDG on testnet.
 /// @dev Environment:
 ///        DEMO_RECIPIENT       address to receive demo USDG (optional; skipped when unset)
 ///        DEMO_USDG_AMOUNT     raw USDG minted to DEMO_RECIPIENT (default 1,000 USDG)
@@ -29,7 +30,7 @@ contract SeedDemo is Script {
 
         address usdg = vm.parseJsonAddress(json, ".usdg.address");
         bool usdgReal = vm.parseJsonBool(json, ".usdg.real");
-        GlanceVault vault = GlanceVault(vm.parseJsonAddress(json, ".demoVault.address"));
+        GlanceVault vault = GlanceVault(vm.parseJsonAddress(json, ".demoVaultTestUSDG.address"));
         StockDesk desk = StockDesk(vm.parseJsonAddress(json, ".stockDesk.address"));
 
         address recipient = vm.envOr("DEMO_RECIPIENT", address(0));
@@ -84,6 +85,11 @@ contract SeedDemo is Script {
         for (uint256 i; i < SYMBOLS.length; ++i) {
             _logStock(json, SYMBOLS[i], desk);
         }
+        if (vm.keyExistsJson(json, ".demoVaultPaxosUSDG")) {
+            console2.log("");
+            console2.log("Paxos USDG demo vault ", vm.parseJsonAddress(json, ".demoVaultPaxosUSDG.address"));
+            console2.log("  configured on the real Paxos USDG, UNFUNDED (no testnet faucet); proven in test/fork");
+        }
         console2.log("");
         console2.log("Agent buy example (from the agent key), minOut from the desk's own quote:");
         console2.log("  cast call  <desk>  'quoteBuy(address,uint256)(uint256)' <token> 25000000");
@@ -93,6 +99,10 @@ contract SeedDemo is Script {
 
     function _logStock(string memory json, string memory symbol, StockDesk desk) internal view {
         string memory base = string.concat(".stocks.", symbol);
+        if (!vm.keyExistsJson(json, base) || vm.parseJsonBool(json, string.concat(base, ".skipped"))) {
+            console2.log(string.concat(symbol, " not listed (no trustworthy price at deploy time)"));
+            return;
+        }
         address token = vm.parseJsonAddress(json, string.concat(base, ".token"));
         bool tokenReal = vm.parseJsonBool(json, string.concat(base, ".tokenReal"));
         bool feedReal = vm.parseJsonBool(json, string.concat(base, ".feedReal"));
@@ -105,6 +115,9 @@ contract SeedDemo is Script {
         (, int256 answer,, uint256 updatedAt,) = desk.feedOf(token).latestRoundData();
         // forge-lint: disable-next-line(unsafe-typecast)
         console2.log(string.concat(symbol, " price (8dp)       "), uint256(answer));
+        console2.log(
+            string.concat(symbol, " price source      ", vm.parseJsonString(json, string.concat(base, ".priceSource")))
+        );
         console2.log(string.concat(symbol, " price age (s)     "), block.timestamp - updatedAt);
     }
 }

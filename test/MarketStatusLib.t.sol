@@ -11,7 +11,15 @@ import {MockPriceFeed} from "./mocks/MockPriceFeed.sol";
 /// @dev Exposes the library's internal functions as external calls so reverts can be asserted.
 contract MarketStatusHarness {
     function read(AggregatorV3Interface feed) external view returns (MarketStatusLib.OracleReading memory) {
-        return MarketStatusLib.read(feed);
+        return MarketStatusLib.read(feed, MarketStatusLib.DEFAULT_OPEN_MAX_AGE, MarketStatusLib.DEFAULT_CLOSED_MAX_AGE);
+    }
+
+    function readWith(AggregatorV3Interface feed, uint256 openMaxAge, uint256 closedMaxAge)
+        external
+        view
+        returns (MarketStatusLib.OracleReading memory)
+    {
+        return MarketStatusLib.read(feed, openMaxAge, closedMaxAge);
     }
 }
 
@@ -31,23 +39,67 @@ contract MarketStatusLibTest is Test {
     // Classification
     // ---------------------------------------------------------------------
 
+    /// @dev Classification with the default thresholds, which is what every token gets unless configured.
+    function _classify(uint256 updatedAt, uint256 nowTs) internal pure returns (MarketStatusLib.MarketState) {
+        return MarketStatusLib.classify(
+            updatedAt, nowTs, MarketStatusLib.DEFAULT_OPEN_MAX_AGE, MarketStatusLib.DEFAULT_CLOSED_MAX_AGE
+        );
+    }
+
     function test_classify_boundaries() public pure {
         uint256 t = START;
-        assertEq(uint8(MarketStatusLib.classify(t, t)), uint8(MarketStatusLib.MarketState.OPEN));
-        assertEq(uint8(MarketStatusLib.classify(t - 1 hours, t)), uint8(MarketStatusLib.MarketState.OPEN));
-        assertEq(uint8(MarketStatusLib.classify(t - 1 hours - 1, t)), uint8(MarketStatusLib.MarketState.CLOSED));
-        assertEq(uint8(MarketStatusLib.classify(t - 30 hours, t)), uint8(MarketStatusLib.MarketState.CLOSED));
-        assertEq(uint8(MarketStatusLib.classify(t - 80 hours, t)), uint8(MarketStatusLib.MarketState.CLOSED));
-        assertEq(uint8(MarketStatusLib.classify(t - 80 hours - 1, t)), uint8(MarketStatusLib.MarketState.STALE));
-        assertEq(uint8(MarketStatusLib.classify(0, t)), uint8(MarketStatusLib.MarketState.STALE));
+        assertEq(uint8(_classify(t, t)), uint8(MarketStatusLib.MarketState.OPEN));
+        assertEq(uint8(_classify(t - 1 hours, t)), uint8(MarketStatusLib.MarketState.OPEN));
+        assertEq(uint8(_classify(t - 1 hours - 1, t)), uint8(MarketStatusLib.MarketState.CLOSED));
+        assertEq(uint8(_classify(t - 30 hours, t)), uint8(MarketStatusLib.MarketState.CLOSED));
+        assertEq(uint8(_classify(t - 80 hours, t)), uint8(MarketStatusLib.MarketState.CLOSED));
+        assertEq(uint8(_classify(t - 80 hours - 1, t)), uint8(MarketStatusLib.MarketState.STALE));
+        assertEq(uint8(_classify(0, t)), uint8(MarketStatusLib.MarketState.STALE));
     }
 
     function testFuzz_classify_matchesThresholds(uint256 age) public pure {
         age = bound(age, 0, START);
-        MarketStatusLib.MarketState s = MarketStatusLib.classify(START - age, START);
-        if (age <= MarketStatusLib.OPEN_MAX_AGE) assertEq(uint8(s), uint8(MarketStatusLib.MarketState.OPEN));
-        else if (age <= MarketStatusLib.CLOSED_MAX_AGE) assertEq(uint8(s), uint8(MarketStatusLib.MarketState.CLOSED));
+        MarketStatusLib.MarketState s = _classify(START - age, START);
+        if (age <= MarketStatusLib.DEFAULT_OPEN_MAX_AGE) {
+            assertEq(uint8(s), uint8(MarketStatusLib.MarketState.OPEN));
+        } else if (age <= MarketStatusLib.DEFAULT_CLOSED_MAX_AGE) {
+            assertEq(uint8(s), uint8(MarketStatusLib.MarketState.CLOSED));
+        } else {
+            assertEq(uint8(s), uint8(MarketStatusLib.MarketState.STALE));
+        }
+    }
+
+    function test_classify_customThresholds() public pure {
+        uint256 t = START;
+        // 24h-heartbeat style thresholds: OPEN up to 26h, CLOSED up to 96h.
+        assertEq(
+            uint8(MarketStatusLib.classify(t - 20 hours, t, 26 hours, 96 hours)),
+            uint8(MarketStatusLib.MarketState.OPEN)
+        );
+        assertEq(
+            uint8(MarketStatusLib.classify(t - 26 hours - 1, t, 26 hours, 96 hours)),
+            uint8(MarketStatusLib.MarketState.CLOSED)
+        );
+        assertEq(
+            uint8(MarketStatusLib.classify(t - 96 hours - 1, t, 26 hours, 96 hours)),
+            uint8(MarketStatusLib.MarketState.STALE)
+        );
+    }
+
+    function testFuzz_classify_customThresholds(uint256 age, uint256 openMaxAge, uint256 closedMaxAge) public pure {
+        openMaxAge = bound(openMaxAge, 1, 7 days - 1);
+        closedMaxAge = bound(closedMaxAge, openMaxAge + 1, 7 days);
+        age = bound(age, 0, START);
+        MarketStatusLib.MarketState s = MarketStatusLib.classify(START - age, START, openMaxAge, closedMaxAge);
+        if (age <= openMaxAge) assertEq(uint8(s), uint8(MarketStatusLib.MarketState.OPEN));
+        else if (age <= closedMaxAge) assertEq(uint8(s), uint8(MarketStatusLib.MarketState.CLOSED));
         else assertEq(uint8(s), uint8(MarketStatusLib.MarketState.STALE));
+    }
+
+    function test_read_usesSuppliedThresholds() public {
+        feed.setUpdatedAt(START - 20 hours);
+        assertEq(uint8(harness.read(feed).state), uint8(MarketStatusLib.MarketState.CLOSED), "defaults");
+        assertEq(uint8(harness.readWith(feed, 26 hours, 96 hours).state), uint8(MarketStatusLib.MarketState.OPEN));
     }
 
     // ---------------------------------------------------------------------

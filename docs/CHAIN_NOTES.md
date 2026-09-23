@@ -7,15 +7,33 @@ Researched 2026-09-23, Robinhood Chain testnet block ~123,140,000. "Verified" me
 it has code, and token metadata (`name`, `symbol`, `decimals`) or feed data (`decimals`, `latestRoundData`) came
 back as listed.
 
+## What runs on real contracts, what is a stand-in, and why
+
+- **Glance's own contracts** (vault, factory, libraries) are the production code on every chain.
+- **Stock Tokens are real** on Robinhood Chain testnet: the five tokens the official faucet hands out.
+- **Paxos USDG is real, and the vault is deployed against it.** On Robinhood Chain testnet the deploy script creates
+  `demoVaultPaxosUSDG` on the real Paxos USDG, with the same token approvals, limits and freshness settings as the
+  public demo vault. `test/fork/GlanceVaultFork.t.sol` runs the whole vault flow against that real USDG and the real
+  Stock Tokens on a fork: deposit, buy, sell, owner withdraw, agent withdraw refused. It repeats the flow on a
+  Robinhood mainnet fork against the real Chainlink TSLA feed (`make test-fork`).
+- **The interactive demo uses a stand-in USDG** (`TestUSDG`, `demoVaultTestUSDG`). Nothing hands out Paxos USDG on
+  testnet (the organizers confirmed there is no faucet), so the Paxos vault is configured but unfunded, and a judge
+  could not fund it. That is the only reason for the stand-in.
+- **Prices come from Chainlink mainnet, through a stand-in feed.** Chainlink has no feeds on Robinhood testnet, so each
+  stock gets a `TestPriceFeed` seeded at deploy time from the live Chainlink feed on Robinhood mainnet. NFLX has no
+  Chainlink feed, so it uses a public quote. `deployments/46630.json` records each price's `priceSource` and
+  `priceSourceKind` (`chainlink-live`, `public-quote`, `env` or `snapshot`).
+- **The trading venue is a stand-in** (`StockDesk`) because no DEX pool holds these tokens on testnet.
+
 ## Summary
 
 | Component | Robinhood Chain testnet (46630) | Arbitrum Sepolia (421614) |
 | --- | --- | --- |
 | Stock tokens (TSLA, AMZN, PLTR, NFLX, AMD) | **REAL**: official faucet Stock Tokens | STAND-IN: `TestStockToken` |
-| USDG | STAND-IN: `TestUSDG` (real Paxos USDG exists but has no public faucet) | STAND-IN: `TestUSDG` |
+| USDG | **REAL** Paxos USDG for `demoVaultPaxosUSDG` (configured, unfunded); STAND-IN `TestUSDG` for the fundable demo vault | STAND-IN: `TestUSDG` |
 | Stock price feeds | STAND-IN: `TestPriceFeed`, seeded from live Chainlink **mainnet** prices | STAND-IN: `TestPriceFeed` |
 | L2 sequencer uptime feed | None exists: check left disabled | None exists: check left disabled |
-| Trading venue | STAND-IN: `StockDesk` (no DEX pools exist) | STAND-IN: `StockDesk` |
+| Trading venue | STAND-IN: `StockDesk` (no DEX pools exist); a second desk quotes Paxos USDG for the Paxos vault | STAND-IN: `StockDesk` |
 | Vault, factory, libraries | Glance production code | Glance production code |
 
 The stand-ins live in `src/testnet/`. Each one says so in its header, the deploy script prints `[STAND-IN]` or
@@ -54,18 +72,37 @@ for TSLA, AMZN, and NFLX with mock Chainlink feeds"
 https://faucet.testnet.chain.robinhood.com. It rate-limited our automated requests (HTTP 429), so the token list
 above comes from the faucet contract itself.
 
-### USDG: real but unusable for a public demo, so a stand-in is used
+### USDG: real Paxos USDG, used by a configured but unfunded vault
 
 | Candidate | Address | Status | Evidence |
 | --- | --- | --- | --- |
-| "Global Dollar" (USDG, 6 dp) | `0x7E955252E15c84f5768B83c41a71F9eba181802F` | **Verified; probably Paxos, not used** | Proxy bytecode is byte-identical to mainnet Paxos USDG (codehash `0x864cc9ad…`); implementation `USDG` verified on the explorer; moves only by `transfer` / `transferWithAuthorization`; no faucet |
+| "Global Dollar" (USDG, 6 dp) | `0x7E955252E15c84f5768B83c41a71F9eba181802F` | **Verified, used by `demoVaultPaxosUSDG`** | Proxy bytecode is byte-identical to mainnet Paxos USDG (codehash `0x864cc9ad…`); implementation `USDG` verified on the explorer; moves only by `transfer` / `transferWithAuthorization`; no faucet |
 | "USDG" (6 dp) | `0x915Ef7c9F9f80a69e3BE47A38EE0Bb47607103ec` | Community token, not used | Different bytecode; owner-controlled mint by `0x99F7F9d6…` |
 | "USD Gold (testnet)", "Mock USDG" ×2, others | several | Community tokens, not used | Explorer search for `USDG` returns at least 8 contracts |
 | `0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168` | - | **Mainnet only** | Listed on docs.robinhood.com/chain/contracts. It is Paxos USDG on mainnet 4663 (verified there), with no code on testnet |
 
-Why a stand-in: no faucet dispenses the Paxos-looking USDG, so a judge could not fund a vault without asking us.
-`TestUSDG` has a public `faucet(amount)` capped at 1,000 USDG per address per UTC day. To use real USDG instead, set
-`USDG_ADDRESS=0x7E955252E15c84f5768B83c41a71F9eba181802F` before deploying (the deployer must then already hold it).
+### The Paxos USDG demo vault
+
+Nothing dispenses Paxos USDG on testnet (the organizers confirmed there is no faucet). So on chain 46630 the deploy
+script creates two demo vaults:
+
+| Vault | USDG | Funded | Purpose |
+| --- | --- | --- | --- |
+| `demoVaultTestUSDG` | `TestUSDG` stand-in | Yes, from `TestUSDG.faucet()` (1,000 per address per UTC day) | The clickable demo a judge can fund |
+| `demoVaultPaxosUSDG` | Paxos USDG `0x7E955252E15c84f5768B83c41a71F9eba181802F` | **No**: no faucet exists for this token | The same vault code, approvals, limits and freshness settings, wired to the real stablecoin |
+
+The Paxos vault is not a shortcut or a mock. It holds no funds only because nobody can obtain testnet Paxos USDG.
+Two details:
+
+- A `StockDesk` quotes exactly one USDG, so the Paxos vault has its own desk (`stockDeskPaxosUSDG`) over the same
+  feeds and spread. It is listed but not stocked, because the few faucet Stock Tokens go to the fundable desk.
+- The factory allows one vault per owner, so the script deploys the Paxos vault directly. It is the same `GlanceVault`
+  contract.
+
+What proves it works with the real token is `test/fork/GlanceVaultFork.t.sol`. It uses `deal()` to give a test user
+real Paxos USDG, asserts that the balance really moved, and runs deposit, buy, sell, owner withdraw and a refused agent
+withdraw against the real USDG and real Stock Tokens. `deal()` finds the balance slot of both the Paxos proxy and the
+Stock Token beacon proxies without help, so no manual slot was needed.
 
 Sources: https://docs.robinhood.com/chain/contracts, the explorer (`/api/v2/search?q=USDG`), RPC bytecode comparison
 against `https://rpc.mainnet.chain.robinhood.com`.
@@ -83,8 +120,13 @@ against `https://rpc.mainnet.chain.robinhood.com`.
 | NFLX / USD | - | **Does not exist on either network** | Not in Chainlink's Robinhood mainnet directory |
 
 What we do instead: deploy one `TestPriceFeed` per stock and seed it with the **live mainnet Chainlink price**.
-`make deploy-*` runs `script/fetch-prices.sh`, which reads the proxies above over mainnet RPC. NFLX has no feed to
-read, so its price is a manual placeholder (`PRICE_NFLX`, default $100.00).
+`make deploy-*` runs `script/fetch-prices.sh`, which reads the proxies above over mainnet RPC.
+
+NFLX has no Chainlink feed to read, so the script fetches a free public quote: Yahoo Finance's chart API, then
+Nasdaq's quote API as a fallback. At the time of writing that was $72.16. If both fail it uses `PRICE_NFLX` from
+`.env`, and if that is missing too, NFLX is **skipped** (not listed on the desk or vault) rather than seeded with a
+wrong price. Each stock in `deployments/<chainid>.json` records `priceSource` and `priceSourceKind`: `chainlink-live`,
+`public-quote`, `env`, or `snapshot` (a dated Chainlink value used only if the mainnet read fails).
 
 All mainnet feeds above report a 24 hour heartbeat (`heartbeat: 86400`) in Chainlink's directory.
 
@@ -136,11 +178,13 @@ https://arbitrum-sepolia.blockscout.com (`/api/v2/search?q=USDG`).
 
 ## Findings to review before mainnet
 
-1. **Oracle freshness vs heartbeat.** `MarketStatusLib` treats a feed older than 1 hour as CLOSED. The Robinhood
-   mainnet equity feeds have a 24 hour heartbeat and update on deviation, so a quiet stock during market hours could
-   read as CLOSED. That fails safe: caps drop to 25% and slippage tightens, and nothing becomes unsafe. When we read
-   them at about 10:30 UTC on a Wednesday (before the US open), the feeds were roughly 2 hours old. Tune
-   `OPEN_MAX_AGE` against real update cadence, or use a market-status signal if Chainlink exposes one.
+1. **Oracle freshness vs heartbeat (fixed).** The vault used to treat any feed older than 1 hour as CLOSED. The
+   Robinhood mainnet equity feeds have a 24 hour heartbeat, so healthy feeds are often hours old: on 2026-09-23 at
+   11:06 UTC, TSLA was 2.9 hours old and PLTR 17.8 hours old. The thresholds are now per token (`openMaxAge`,
+   `closedMaxAge`, set with `setTokenFreshness`). The defaults stay at 1h / 80h, which suits the testnet stand-in
+   feeds that are refreshed on deploy. **A mainnet deployment must set them per feed**, for example 26h / 96h for a
+   24h-heartbeat feed. `test_mainnetFork_realFeedAt20Hours_defaultsVsHeartbeatConfig` shows the real TSLA feed at 20
+   hours old reading CLOSED under the defaults and OPEN under the 24h configuration.
 2. **USDG / USD is not exactly $1.** Mainnet reads $1.00005. The vault assumes 1 USDG = $1 (documented in
    `GlanceVault`). A mainnet version could read the USDG / USD feed.
 3. **Stock Tokens are upgradeable.** Both testnet and mainnet tokens are beacon proxies controlled by Robinhood.

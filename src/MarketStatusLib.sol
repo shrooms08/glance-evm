@@ -7,10 +7,18 @@ import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
 /// @title MarketStatusLib
 /// @notice Reads a Chainlink-style stock price feed and infers whether the underlying market is open.
 /// @dev Tokenized-stock feeds stop updating when the exchange is closed. The age of the last update is therefore a
-///      proxy for market status:
-///        age <= 1 hour   -> OPEN   (feed is updating normally)
-///        age <= 80 hours -> CLOSED (overnight or weekend: Fri close to Mon open is ~65.5h, plus margin)
-///        otherwise       -> STALE  (feed is broken or halted; no trade should be priced off it)
+///      proxy for market status, with two thresholds supplied per feed by the caller:
+///        age <= openMaxAge   -> OPEN   (feed is updating normally)
+///        age <= closedMaxAge -> CLOSED (overnight or weekend: Fri close to Mon open is ~65.5h, plus margin)
+///        otherwise           -> STALE  (feed is broken or halted; no trade should be priced off it)
+///
+///      Heartbeat caveat: this only reads market hours correctly if the feed's heartbeat (the longest it goes without
+///      an update while the market is open) is shorter than openMaxAge. Chainlink's Robinhood equity feeds have a 24
+///      hour heartbeat and otherwise update on price deviation, so a healthy but quiet feed can be many hours old
+///      during trading. With a 1 hour openMaxAge it would read CLOSED most of the day. A mainnet deployment must set
+///      both thresholds per feed from that feed's heartbeat, e.g. openMaxAge just above the heartbeat and
+///      closedMaxAge above heartbeat + the longest scheduled closure. The defaults below suit a feed that updates at
+///      least hourly, such as the testnet stand-ins.
 ///
 ///      Pricing convention used throughout:
 ///        - `price` is the USD value of ONE WHOLE stock token, scaled by 10^priceDecimals.
@@ -32,10 +40,10 @@ library MarketStatusLib {
         MarketState state;
     }
 
-    /// @notice Maximum age of the last update for the market to be considered open.
-    uint256 internal constant OPEN_MAX_AGE = 1 hours;
-    /// @notice Maximum age of the last update for the market to be considered closed rather than stale.
-    uint256 internal constant CLOSED_MAX_AGE = 80 hours;
+    /// @notice Default maximum age for OPEN, for feeds that update at least hourly.
+    uint32 internal constant DEFAULT_OPEN_MAX_AGE = 1 hours;
+    /// @notice Default maximum age for CLOSED rather than STALE: a weekend (~65.5h) plus margin.
+    uint32 internal constant DEFAULT_CLOSED_MAX_AGE = 80 hours;
 
     /// @notice The feed reported a zero or negative price.
     error InvalidOraclePrice(int256 answer);
@@ -45,7 +53,14 @@ library MarketStatusLib {
     /// @notice Reads the latest round of `feed`, validates the price and classifies market status.
     /// @dev Reverts on a non-positive answer or a future timestamp. A STALE reading is returned, not reverted on,
     ///      so callers can decide how to handle it (the vault refuses to trade).
-    function read(AggregatorV3Interface feed) internal view returns (OracleReading memory reading) {
+    /// @param feed The price feed.
+    /// @param openMaxAge Maximum age of the last update for OPEN. Must exceed the feed's market-hours heartbeat.
+    /// @param closedMaxAge Maximum age for CLOSED; anything older is STALE. Must be greater than openMaxAge.
+    function read(AggregatorV3Interface feed, uint256 openMaxAge, uint256 closedMaxAge)
+        internal
+        view
+        returns (OracleReading memory reading)
+    {
         (, int256 answer,, uint256 updatedAt,) = feed.latestRoundData();
         if (answer <= 0) revert InvalidOraclePrice(answer);
         if (updatedAt > block.timestamp) revert OracleTimestampInFuture(updatedAt);
@@ -55,16 +70,22 @@ library MarketStatusLib {
         reading.price = uint256(answer);
         reading.decimals = feed.decimals();
         reading.updatedAt = updatedAt;
-        reading.state = classify(updatedAt, block.timestamp);
+        reading.state = classify(updatedAt, block.timestamp, openMaxAge, closedMaxAge);
     }
 
     /// @notice Classifies market status from the age of the last oracle update.
     /// @param updatedAt Timestamp of the last oracle update. Must not be after `nowTs`.
     /// @param nowTs Current timestamp.
-    function classify(uint256 updatedAt, uint256 nowTs) internal pure returns (MarketState) {
+    /// @param openMaxAge Maximum age for OPEN.
+    /// @param closedMaxAge Maximum age for CLOSED; anything older is STALE.
+    function classify(uint256 updatedAt, uint256 nowTs, uint256 openMaxAge, uint256 closedMaxAge)
+        internal
+        pure
+        returns (MarketState)
+    {
         uint256 age = nowTs - updatedAt;
-        if (age <= OPEN_MAX_AGE) return MarketState.OPEN;
-        if (age <= CLOSED_MAX_AGE) return MarketState.CLOSED;
+        if (age <= openMaxAge) return MarketState.OPEN;
+        if (age <= closedMaxAge) return MarketState.CLOSED;
         return MarketState.STALE;
     }
 

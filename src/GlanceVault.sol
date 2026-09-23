@@ -35,10 +35,14 @@ contract GlanceVault is ReentrancyGuard {
     // Types
     // ---------------------------------------------------------------------
 
-    /// @notice Per-token configuration.
+    /// @notice Per-token configuration. Packs into one storage slot.
+    /// @dev `openMaxAge` and `closedMaxAge` are this feed's freshness thresholds (see MarketStatusLib). They must suit
+    ///      the feed's heartbeat: openMaxAge has to exceed the longest gap between updates while the market is open.
     struct TokenConfig {
         bool approved;
         address priceFeed;
+        uint32 openMaxAge;
+        uint32 closedMaxAge;
     }
 
     /// @notice Trade direction. Buys and sells have separate rolling windows and daily caps.
@@ -71,6 +75,8 @@ contract GlanceVault is ReentrancyGuard {
     uint256 public constant MAX_AGENT_TTL = 30 days;
     /// @notice How long after the L2 sequencer comes back up before feed data is trusted again.
     uint256 public constant SEQUENCER_GRACE_PERIOD = 3600;
+    /// @notice Largest closedMaxAge the owner may set (7 days). Anything older is not a market closure.
+    uint32 public constant MAX_FRESHNESS_AGE = 7 days;
     /// @notice Sequencer uptime feed answer meaning "up". Any other answer means down.
     int256 internal constant SEQUENCER_UP = 0;
 
@@ -150,6 +156,8 @@ contract GlanceVault is ReentrancyGuard {
     event PausedSet(bool paused);
     /// @notice Emitted when a token's approval or price feed changes.
     event TokenApprovalSet(address indexed token, address indexed priceFeed, bool approved);
+    /// @notice Emitted when a token's oracle freshness thresholds change.
+    event TokenFreshnessSet(address indexed token, uint32 openMaxAge, uint32 closedMaxAge);
     /// @notice Emitted when a router's approval changes.
     event RouterApprovalSet(address indexed router, bool approved);
     /// @notice Emitted on every successful agent buy.
@@ -193,6 +201,8 @@ contract GlanceVault is ReentrancyGuard {
     error InvalidLimits();
     /// @notice Token configuration is invalid (e.g. approving without a feed, or configuring USDG itself).
     error InvalidTokenConfig();
+    /// @notice Freshness thresholds are zero, out of order, or above MAX_FRESHNESS_AGE.
+    error InvalidFreshness(uint32 openMaxAge, uint32 closedMaxAge);
     /// @notice Agent trading is paused.
     error VaultPaused();
     /// @notice Caller is not the current agent.
@@ -329,14 +339,37 @@ contract GlanceVault is ReentrancyGuard {
     }
 
     /// @notice Approves or unapproves a stock token and sets its price feed.
+    /// @dev The first time a token is configured it gets the default freshness thresholds (1h OPEN, 80h CLOSED),
+    ///      which suit a feed that updates at least hourly. Thresholds set earlier with `setTokenFreshness` are kept.
+    ///      For a feed with a longer heartbeat, such as Chainlink's 24h equity feeds, call `setTokenFreshness` too.
     /// @param token The stock token. Cannot be USDG.
     /// @param priceFeed Chainlink-style USD feed for one whole token. Required when approving.
     /// @param approved Whether the agent may trade this token.
     function setTokenApproval(address token, address priceFeed, bool approved) external onlyOwner {
-        if (token == address(0)) revert ZeroAddress();
-        if (token == address(usdg) || (approved && priceFeed == address(0))) revert InvalidTokenConfig();
-        tokenConfig[token] = TokenConfig({approved: approved, priceFeed: priceFeed});
+        _checkConfigurableToken(token);
+        if (approved && priceFeed == address(0)) revert InvalidTokenConfig();
+        TokenConfig storage cfg = tokenConfig[token];
+        cfg.approved = approved;
+        cfg.priceFeed = priceFeed;
         emit TokenApprovalSet(token, priceFeed, approved);
+        if (cfg.openMaxAge == 0) {
+            _setFreshness(cfg, token, MarketStatusLib.DEFAULT_OPEN_MAX_AGE, MarketStatusLib.DEFAULT_CLOSED_MAX_AGE);
+        }
+    }
+
+    /// @notice Sets how old `token`'s price may be before the market reads CLOSED, and before it reads STALE.
+    /// @dev Set these from the feed's heartbeat. A feed that can go `h` seconds without an update while the market is
+    ///      open needs openMaxAge > h, otherwise a healthy feed reads CLOSED and the vault runs at weekend caps. For a
+    ///      24h-heartbeat feed, for example, openMaxAge 26h and closedMaxAge 96h (24h + a ~66h weekend + margin).
+    /// @param token The stock token. Cannot be USDG.
+    /// @param openMaxAge Maximum age for OPEN, in seconds. Must be non-zero.
+    /// @param closedMaxAge Maximum age for CLOSED, in seconds. Must exceed openMaxAge and be <= MAX_FRESHNESS_AGE.
+    function setTokenFreshness(address token, uint32 openMaxAge, uint32 closedMaxAge) external onlyOwner {
+        _checkConfigurableToken(token);
+        if (openMaxAge == 0 || closedMaxAge <= openMaxAge || closedMaxAge > MAX_FRESHNESS_AGE) {
+            revert InvalidFreshness(openMaxAge, closedMaxAge);
+        }
+        _setFreshness(tokenConfig[token], token, openMaxAge, closedMaxAge);
     }
 
     /// @notice Sets or clears the Chainlink L2 sequencer uptime feed.
@@ -523,9 +556,10 @@ contract GlanceVault is ReentrancyGuard {
         // 4. Router approval.
         if (!approvedRouters[router]) revert RouterNotApproved(router);
 
-        // 5. Oracle: sequencer uptime, then validated price and freshness. STALE refuses the trade.
+        // 5. Oracle: sequencer uptime, then validated price and freshness against this token's thresholds.
+        //    STALE refuses the trade.
         _checkSequencer();
-        ctx.oracle = AggregatorV3Interface(cfg.priceFeed).read();
+        ctx.oracle = AggregatorV3Interface(cfg.priceFeed).read(cfg.openMaxAge, cfg.closedMaxAge);
         if (ctx.oracle.state == MarketStatusLib.MarketState.STALE) revert OracleStale(ctx.oracle.updatedAt);
 
         ctx.tokenDecimals = IERC20Metadata(token).decimals();
@@ -563,6 +597,17 @@ contract GlanceVault is ReentrancyGuard {
         if (answer != SEQUENCER_UP || startedAt == 0) revert SequencerDown();
         uint256 trustedFrom = startedAt + SEQUENCER_GRACE_PERIOD;
         if (block.timestamp < trustedFrom) revert SequencerGracePeriod(trustedFrom);
+    }
+
+    function _checkConfigurableToken(address token) internal view {
+        if (token == address(0)) revert ZeroAddress();
+        if (token == address(usdg)) revert InvalidTokenConfig();
+    }
+
+    function _setFreshness(TokenConfig storage cfg, address token, uint32 openMaxAge, uint32 closedMaxAge) internal {
+        cfg.openMaxAge = openMaxAge;
+        cfg.closedMaxAge = closedMaxAge;
+        emit TokenFreshnessSet(token, openMaxAge, closedMaxAge);
     }
 
     /// @dev Returns `amount` reduced by `slippageBps`, rounded down.

@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Reads live Chainlink Robinhood MAINNET prices and prints them as env assignments for script/Deploy.s.sol, which
-# seeds the testnet stand-in feeds with them. Chainlink publishes no feeds on Robinhood testnet (docs/CHAIN_NOTES.md).
-# NFLX has no Chainlink feed on Robinhood mainnet, so it keeps the Deploy.s.sol default unless PRICE_NFLX is set.
-# On any RPC failure it prints nothing for that symbol and Deploy.s.sol falls back to its dated snapshot.
+# Prints env assignments for script/Deploy.s.sol: the price each testnet stand-in feed is seeded with, and where it
+# came from. Chainlink publishes no feeds on Robinhood Chain testnet (docs/CHAIN_NOTES.md), so:
+#   TSLA, AMZN, PLTR, AMD  live reads of the real Chainlink feeds on Robinhood MAINNET  -> source "chainlink-live: ..."
+#   NFLX                   no Chainlink feed anywhere: a free public quote (Yahoo Finance, then Nasdaq)
+#                          -> source "public-quote: ..."
+# A symbol that cannot be fetched prints nothing. Deploy.s.sol then uses PRICE_<SYMBOL> from .env if set (recorded as
+# "env"), else its dated snapshot, and skips NFLX entirely rather than seed a wrong price.
 set -uo pipefail
 
 RPC="${RH_MAINNET_RPC:-https://rpc.mainnet.chain.robinhood.com}"
+UA="Mozilla/5.0 (glance-evm deploy script)"
 FEEDS=(
   "TSLA:0x4A1166a659A55625345e9515b32adECea5547C38"
   "AMZN:0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C"
@@ -13,18 +17,44 @@ FEEDS=(
   "AMD:0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72"
 )
 
-fetched=()
+# Decimal dollar string -> 8-decimal integer, or empty if not a positive number.
+to_8dp() { awk -v p="$1" 'BEGIN { if (p ~ /^[0-9]+(\.[0-9]+)?$/ && p + 0 > 0) printf "%.0f", p * 1e8 }'; }
+iso() { date -u -r "$1" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%MZ; }
+
+echo "PRICES_FETCHED_AT=\"$(date -u +%Y-%m-%dT%H:%MZ)\""
+
 for entry in "${FEEDS[@]}"; do
   symbol="${entry%%:*}"; feed="${entry##*:}"
-  answer=$(cast call "$feed" "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url "$RPC" 2>/dev/null \
-    | sed -n '2p' | awk '{print $1}')
+  round=$(cast call "$feed" "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url "$RPC" 2>/dev/null)
+  answer=$(echo "$round" | sed -n '2p' | awk '{print $1}')
+  updated=$(echo "$round" | sed -n '4p' | awk '{print $1}')
   if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer > 0 )); then
     echo "PRICE_${symbol}=${answer}"
-    fetched+=("$symbol")
+    echo "PRICE_SOURCE_${symbol}=\"chainlink-live: Robinhood mainnet feed ${feed}, updated $(iso "$updated")\""
   else
-    echo "fetch-prices: could not read ${symbol} from ${feed}; using the snapshot default" >&2
+    echo "fetch-prices: could not read ${symbol} from Chainlink ${feed}" >&2
   fi
 done
-if (( ${#fetched[@]} > 0 )); then
-  echo "PRICE_SOURCE=\"Chainlink Robinhood mainnet feeds read $(date -u +%Y-%m-%dT%H:%MZ) for ${fetched[*]}; NFLX manual (no Chainlink feed)\""
+
+# NFLX: public quote. Yahoo Finance first, Nasdaq second.
+nflx=""; nflx_source=""
+if json=$(curl -sS -m 15 -A "$UA" "https://query1.finance.yahoo.com/v8/finance/chart/NFLX?interval=1d&range=1d" 2>/dev/null); then
+  px=$(echo "$json" | jq -r '.chart.result[0].meta.regularMarketPrice // empty' 2>/dev/null)
+  at=$(echo "$json" | jq -r '.chart.result[0].meta.regularMarketTime // empty' 2>/dev/null)
+  nflx=$(to_8dp "$px")
+  [[ -n "$nflx" ]] && nflx_source="public-quote: Yahoo Finance NFLX regularMarketPrice USD ${px} at $(iso "$at")"
+fi
+if [[ -z "$nflx" ]]; then
+  if json=$(curl -sS -m 15 -A "$UA" -H "Accept: application/json" "https://api.nasdaq.com/api/quote/NFLX/info?assetclass=stocks" 2>/dev/null); then
+    px=$(echo "$json" | jq -r '.data.primaryData.lastSalePrice // empty' 2>/dev/null | tr -d '$,')
+    at=$(echo "$json" | jq -r '.data.primaryData.lastTradeTimestamp // empty' 2>/dev/null)
+    nflx=$(to_8dp "$px")
+    [[ -n "$nflx" ]] && nflx_source="public-quote: Nasdaq NFLX lastSalePrice USD ${px} (${at})"
+  fi
+fi
+if [[ -n "$nflx" ]]; then
+  echo "PRICE_NFLX=${nflx}"
+  echo "PRICE_SOURCE_NFLX=\"${nflx_source}\""
+else
+  echo "fetch-prices: no public NFLX quote; Deploy.s.sol will use PRICE_NFLX from .env or skip NFLX" >&2
 fi

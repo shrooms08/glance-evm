@@ -4,11 +4,12 @@ export
 
 NETWORK ?= robinhood
 
-.PHONY: help build test fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
+.PHONY: help build test test-fork fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
 	verify-commands weekend weekday
 
 help:
-	@echo "make test                  forge fmt check + forge test"
+	@echo "make test                  forge fmt check + all offline tests"
+	@echo "make test-fork             fork tests against real Robinhood Chain testnet and mainnet contracts"
 	@echo "make prices                show the live Chainlink mainnet prices the stand-in feeds will be seeded with"
 	@echo "make dry-run-robinhood     simulate the Robinhood Chain testnet deploy (sends nothing)"
 	@echo "make deploy-robinhood      deploy + verify on Robinhood Chain testnet (46630)"
@@ -22,7 +23,11 @@ build:
 
 test:
 	forge fmt --check
-	forge test
+	forge test --no-match-path "test/fork/*"
+
+# Real Paxos USDG, real Stock Tokens and real Chainlink feeds, on forks. Needs network access.
+test-fork:
+	forge test --match-path "test/fork/*" -vv
 
 fmt:
 	forge fmt
