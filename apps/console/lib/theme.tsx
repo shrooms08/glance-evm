@@ -3,7 +3,7 @@
  * Dark by default, light supported. The choice is a per-viewer convenience kept in this browser (localStorage); a
  * small inline script in the layout applies it before the first paint, so the page never flashes the other theme.
  */
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 
 import type { ThemeName } from "@glance/design";
 
@@ -14,11 +14,8 @@ export const themeBootScript = `try{var t=localStorage.getItem("${KEY}");if(t===
 const ThemeContext = createContext<{ theme: ThemeName; toggle(): void }>({ theme: "dark", toggle() {} });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<ThemeName>("dark");
-  useEffect(() => {
-    const t = document.documentElement.dataset.theme;
-    if (t === "light" || t === "dark") setTheme(t);
-  }, []);
+  // The console renders in the browser only (components/ClientRoot.tsx), after the boot script set data-theme.
+  const [theme, setTheme] = useState<ThemeName>(() => (typeof document !== "undefined" && document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const toggle = useCallback(() => {
     setTheme((prev) => {
       const next: ThemeName = prev === "dark" ? "light" : "dark";

@@ -355,3 +355,23 @@ em { font-style: normal; color: var(--t-text); font-weight: 500; }
 .fold[open] .fold-hint::after { content: " (hide)"; }
 .fold-items { display: flex; flex-direction: column; gap: var(--g-s3); margin-top: var(--g-s6); padding-top: var(--g-s6); border-top: 1px solid var(--t-line); }
 .fold-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--g-s2) var(--g-s7); font-size: var(--g-ui-size); }
+
+/* ---------- Withdraw ---------- */
+.withdraw { display: flex; flex-direction: column; gap: var(--g-s7); max-width: 520px; }
+.grow { flex: 1; min-width: 0; }
+.card[data-locked] .withdraw { opacity: 0.6; }
+
+/* ---------- Get started: funded state, add more ---------- */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+fieldset.segmented { border: 1px solid var(--t-line); min-width: 0; }
+label.segment { display: inline-flex; align-items: center; }
+label.segment:has(input:checked) { background: var(--t-surface); color: var(--t-text); box-shadow: 0 1px 2px var(--t-shadow), 0 0 0 1px var(--t-line-strong); }
+label.segment:has(input:focus-visible) { outline: 2px solid var(--t-accent-text); outline-offset: 2px; }
+fieldset.segmented:disabled label.segment { opacity: 0.5; cursor: not-allowed; }
+.success { display: flex; gap: var(--g-s6); align-items: flex-start; padding: var(--g-s7) var(--g-s9); border-radius: var(--g-r-lg); border: 1px solid color-mix(in srgb, var(--t-accent-text) 40%, transparent); background: var(--t-accent-wash); }
+.success > div { display: flex; flex-direction: column; gap: var(--g-s2); }
+.success-mark { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--t-accent); color: var(--t-on-accent); font-size: 12px; font-weight: 700; }
+.add-more { display: flex; flex-direction: column; gap: var(--g-s4); padding-top: var(--g-s7); border-top: 1px solid var(--t-line); }
+.progress { flex-direction: column; align-items: flex-end; }
+.progress[data-complete] .ui { color: var(--t-accent-text); }
+.step[data-status="failed"] { border-color: var(--t-fail-line); }

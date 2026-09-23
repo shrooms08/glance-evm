@@ -6,12 +6,13 @@
  * reason. The console never signs anything itself.
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { Abi, Address, Hex } from "viem";
 import { useAccount, useWriteContract } from "wagmi";
 
 import { publicClient } from "./chain";
 import { CHAIN_ID } from "./deployment";
+import { SingleFlight } from "./singleFlight";
 import { describeTxError, TX_MESSAGES } from "./txMessages";
 
 export type TxState =
@@ -35,13 +36,14 @@ export function useOwnerTx(usdgDecimals: number) {
   const { writeContractAsync } = useWriteContract();
   const queryClient = useQueryClient();
   const [state, setState] = useState<TxState>({ status: "idle" });
+  // One owner transaction at a time: a double click never sends a second one.
+  const flight = useRef(new SingleFlight());
 
-  const send = useCallback(
-    async (req: TxRequest): Promise<boolean> => {
+  const run = async (req: TxRequest): Promise<Hex | null> => {
       const { label, ...call } = req;
       const fail = (err: unknown, hash?: Hex) => {
         setState({ status: "failed", label, message: describeTxError(err, { usdgDecimals }), hash });
-        return false;
+        return null;
       };
       if (!address) return fail(new Error("no wallet"));
       setState({ status: "checking", label });
@@ -71,14 +73,16 @@ export function useOwnerTx(usdgDecimals: number) {
         }
       } catch {
         setState({ status: "failed", label, message: TX_MESSAGES.unconfirmed(hash), hash });
-        return false;
+        return null;
       }
       setState({ status: "confirmed", label, hash });
+      // Every read on the page refetches: the vault's balances, the wallet's, and the chain state behind each step.
       void queryClient.invalidateQueries();
-      return true;
-    },
-    [address, writeContractAsync, usdgDecimals, queryClient],
-  );
+      return hash;
+  };
+
+  /** Sends one owner transaction. While one is in flight, any further call is ignored and returns null. */
+  const send = async (req: TxRequest): Promise<Hex | null> => (await flight.current.run(() => run(req))) ?? null;
 
   const reset = useCallback(() => setState({ status: "idle" }), []);
   const busy = state.status === "checking" || state.status === "wallet" || state.status === "pending";

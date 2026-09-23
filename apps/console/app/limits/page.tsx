@@ -1,19 +1,19 @@
 "use client";
 import { glanceVaultAbi } from "@glance/core/abi";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
 
-import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
 import { TxStatus } from "@/components/TxStatus";
 import { useGate } from "@/components/useGate";
-import { GateNotice, WriteGate, type GateReason } from "@/components/WriteGate";
+import { GateNotice, WriteGate } from "@/components/WriteGate";
 import { effectiveCap } from "@/lib/caps";
 import { addressUrl, publicClient } from "@/lib/chain";
 import { demoVaults, VAULT_SETUP } from "@/lib/deployment";
 import { formatDuration, formatUsd, formatWhen, shortAddress, toDecimalString } from "@/lib/format";
 import { parseLimits, sameLimits, type LimitsForm } from "@/lib/limits";
+import { useNow } from "@/lib/useNow";
 import { useOwnerTx, type TxRequest } from "@/lib/useOwnerTx";
 import { useSelectedVault, useVaultChain, type VaultChainState } from "@/lib/vault";
 
@@ -24,7 +24,10 @@ export default function LimitsPage() {
   const chain = useVaultChain(vault);
   const gate = useGate(chain.data?.owner);
   const tx = useOwnerTx(chain.data?.usdgDecimals ?? 6);
-  const send = (req: Omit<TxRequest, "address" | "abi">) => tx.send({ ...req, address: vault, abi: vaultAbi }).then((ok) => (ok && void chain.refetch(), ok));
+  const send = (req: Omit<TxRequest, "address" | "abi">) => tx.send({ ...req, address: vault, abi: vaultAbi }).then((hash) => {
+      if (hash) void chain.refetch();
+      return hash !== null;
+    });
 
   return (
     <div className="page">
@@ -51,9 +54,15 @@ export default function LimitsPage() {
         <WriteGate reason={tx.busy ? "loading" : gate.reason}>
           <div className="grid grid-2">
             <Controls v={chain.data} send={send} />
-            <AgentControls v={chain.data} vault={vault} send={send} reason={gate.reason} />
+            {/* Keyed so a new agent or a changed gate starts the revoke confirmation over. */}
+            <AgentControls key={`${chain.data.agent}-${gate.reason}`} v={chain.data} vault={vault} send={send} />
           </div>
-          <LimitsEditor v={chain.data} send={send} />
+          {/* Keyed by the vault's limits, so the form starts from the new values after a change is mined. */}
+          <LimitsEditor
+            key={`${chain.data.perBuyCap}-${chain.data.dailyCap}-${chain.data.dailySellCap}-${chain.data.maxSlippageBps}-${chain.data.weekendCapBps}`}
+            v={chain.data}
+            send={send}
+          />
         </WriteGate>
       )}
     </div>
@@ -85,14 +94,13 @@ function Controls({ v, send }: { v: VaultChainState; send: Send }) {
   );
 }
 
-function AgentControls({ v, vault, send, reason }: { v: VaultChainState; vault: Address; send: Send; reason: GateReason }) {
+function AgentControls({ v, vault, send }: { v: VaultChainState; vault: Address; send: Send }) {
   const [confirming, setConfirming] = useState(false);
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow();
   const hasAgent = !isAddressEqual(v.agent, zeroAddress);
   const active = hasAgent && now < v.agentExpiry;
   const demo = demoVaults.find((d) => isAddressEqual(d.address, vault));
   const agentToAuthorise = hasAgent ? v.agent : (demo?.agent ?? demoVaults[0]!.agent);
-  useEffect(() => setConfirming(false), [v.agent, reason]);
 
   const renew = async () => {
     const block = await publicClient.getBlock();
@@ -169,7 +177,6 @@ function LimitsEditor({ v, send }: { v: VaultChainState; send: Send }) {
     [v, d],
   );
   const [form, setForm] = useState<LimitsForm>(initial);
-  useEffect(() => setForm(initial), [initial]);
 
   const parsed = parseLimits(form, d);
   const current = {

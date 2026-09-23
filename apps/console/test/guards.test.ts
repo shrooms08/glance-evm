@@ -4,13 +4,13 @@
  */
 import { glanceVaultAbi } from "@glance/core/abi";
 import { RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
-import { BaseError, ContractFunctionRevertedError, encodeErrorResult, HttpRequestError, UserRejectedRequestError } from "viem";
+import { BaseError, ContractFunctionRevertedError, encodeErrorResult, HttpRequestError, InsufficientFundsError, UserRejectedRequestError } from "viem";
 import { describe, expect, it } from "vitest";
 
 import type { ActivityItem } from "../lib/api";
 import { foldOwnerRuns } from "../lib/activity";
 import { guardCounts, guardLabel } from "../lib/guards";
-import { describeTxError, TX_MESSAGES } from "../lib/txMessages";
+import { describeTxError, isUserRejection, TX_MESSAGES } from "../lib/txMessages";
 
 const reverted = (errorName: string, args: readonly unknown[] = []) => {
   const data = encodeErrorResult({ abi: glanceVaultAbi, errorName: errorName as never, args: args as never });
@@ -29,6 +29,23 @@ describe("an owner's transaction that doesn't go through", () => {
   it("says plainly when the owner cancelled, and that nothing changed", () => {
     expect(describeTxError(new BaseError("x", { cause: new UserRejectedRequestError(new Error("User rejected the request.")) }), { usdgDecimals: 6 })).toBe(TX_MESSAGES.rejected);
     expect(describeTxError({ code: 4001, message: "User denied transaction signature" }, { usdgDecimals: 6 })).toBe(TX_MESSAGES.rejected);
+  });
+
+  it("says cancelled ONLY for code 4001 or UserRejectedRequestError, wherever it sits in the cause chain", () => {
+    const walletError = Object.assign(new Error("MetaMask Tx Signature: User denied transaction signature."), { code: 4001 });
+    expect(describeTxError(new BaseError("Request failed", { cause: new BaseError("inner", { cause: walletError }) }), { usdgDecimals: 6 })).toBe(TX_MESSAGES.rejected);
+    // Words that sound like a rejection, without the code, are not one.
+    expect(describeTxError(new Error("User denied something"), { usdgDecimals: 6 })).toBe("Transaction failed.");
+    expect(describeTxError({ code: -32603, message: "Internal JSON-RPC error." }, { usdgDecimals: 6 })).toBe("Transaction failed.");
+    expect(isUserRejection({ code: 4100 })).toBe(false);
+  });
+
+  it("gives the real reason otherwise: a plain revert reason, no gas, or just Transaction failed", () => {
+    const reason = new BaseError("x", { cause: new ContractFunctionRevertedError({ abi: glanceVaultAbi, message: "execution reverted: ERC20: insufficient allowance", functionName: "deposit" }) });
+    expect(describeTxError(reason, { usdgDecimals: 6 })).toBe("ERC20: insufficient allowance");
+    const gas = new BaseError("x", { cause: new InsufficientFundsError() });
+    expect(describeTxError(gas, { usdgDecimals: 6 })).toBe(TX_MESSAGES.noGas);
+    expect(describeTxError(new Error("estimateGas failed"), { usdgDecimals: 6 })).toBe("Transaction failed.");
   });
 
   it("uses the API's testnet wording when the RPC is the problem", () => {

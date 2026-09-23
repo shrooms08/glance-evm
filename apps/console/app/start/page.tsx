@@ -1,21 +1,35 @@
 "use client";
-import { useQueryClient } from "@tanstack/react-query";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
-import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
-import { zeroAddress, type Address } from "viem";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Address, Hex } from "viem";
 import { useAccount } from "wagmi";
 
 import { Notice } from "@/components/Notice";
 import { TxStatus } from "@/components/TxStatus";
 import { useGate } from "@/components/useGate";
-import { addressUrl } from "@/lib/chain";
+import { VaultStep } from "@/components/VaultStep";
 import { CHAIN_ID, demoVaults, primaryVault, type DemoVault } from "@/lib/deployment";
-import { formatUsd, parseDecimal, shortAddress } from "@/lib/format";
-import { planSetup, vaultReady, type SetupStep } from "@/lib/setup";
+import { formatUsd, parseDecimal } from "@/lib/format";
+import { SingleFlight } from "@/lib/singleFlight";
+import { addMorePlan, setupPlan } from "@/lib/setup";
+import { STATUS_LABELS, stepStatuses, summarize, vaultProgress, type Activity, type StepStatus, type StatusInputs } from "@/lib/setupStatus";
+import { describeTxError } from "@/lib/txMessages";
 import { useOwnerTx } from "@/lib/useOwnerTx";
 import { readStartState, useStartState } from "@/lib/useSetupSnapshot";
 import { useHref } from "@/lib/vault";
+
+type RunMode = "setup" | "add-more";
+
+function parseAmount(value: string, decimals: number): { raw: bigint; error: string | null } {
+  const text = value.trim().replace(/^\$/, "").replace(/,/g, "");
+  if (!text) return { raw: 0n, error: null };
+  try {
+    return { raw: parseDecimal(text, decimals), error: null };
+  } catch {
+    return { raw: 0n, error: `Enter an amount in USDG, up to ${decimals} decimal places.` };
+  }
+}
 
 export default function StartPage() {
   const { address, isConnected, chainId } = useAccount();
@@ -28,15 +42,102 @@ export default function StartPage() {
   const s = q.data;
   const effective = s?.vaultFlavour ?? flavour;
   const decimals = s?.usdgDecimals[effective.key] ?? 6;
+  const tx = useOwnerTx(decimals);
+  const queryClient = useQueryClient();
+  const href = useHref();
 
-  const done = {
-    connect: isConnected,
-    network: isConnected && onChain,
-    funds: Boolean(s && s.eth > 0n && (s.usdg.paxos > 0n || s.usdg.test > 0n || s.snapshot.vaultUsdgBalance > 0n)),
-    vault: Boolean(s && vaultReady(s.snapshot, effective, decimals)),
+  const [deposit, setDeposit] = useState("10");
+  const [addMore, setAddMore] = useState("");
+  const [running, setRunning] = useState<RunMode | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  // A deposit confirmed in this session, for the wallet that made it (switching accounts never carries it over).
+  const [confirmedDeposit, setConfirmedDeposit] = useState<{ owner: string; hash: Hex } | null>(null);
+  const depositConfirmed = Boolean(address && confirmedDeposit?.owner === address);
+  const depositHash = depositConfirmed ? confirmedDeposit!.hash : null;
+  // Which kind of run the last transaction came from: a failed "Add more" must not mark step 4 as failed.
+  const [lastMode, setLastMode] = useState<RunMode | null>(null);
+  // One run at a time: a double click lands before React re-renders, and must never start a second run.
+  const flight = useRef(new SingleFlight());
+
+  const first = parseAmount(deposit, decimals);
+  const more = parseAmount(addMore, decimals);
+  const plan = s ? setupPlan(s.snapshot, effective, decimals, first.raw, depositConfirmed) : null;
+  const morePlan = s && more.raw > 0n ? addMorePlan(s.snapshot, effective, decimals, more.raw) : null;
+
+  // What's in flight, and for which step. An "Add more" deposit is its own action: it never moves step 4's status.
+  const inFlight = tx.state.status === "checking" || tx.state.status === "wallet" ? "wallet" : tx.state.status === "pending" ? "confirming" : null;
+  let activity: Activity = { step: null, phase: "idle" };
+  if (gate.switching) activity = { step: "network", phase: "wallet" };
+  else if (running === "setup") activity = { step: "vault", phase: inFlight ?? "confirming" };
+  else if (tx.state.status === "failed" && lastMode === "setup") activity = { step: "vault", phase: "failed" };
+
+  const inputs: StatusInputs = {
+    connected: isConnected,
+    onChain,
+    chain: s ? { eth: s.eth, walletUsdg: s.usdg[effective.key], snapshot: s.snapshot, flavour: effective, usdgDecimals: decimals } : undefined,
+    depositConfirmed,
     extension,
+    activity,
   };
-  const count = Object.values(done).filter(Boolean).length;
+  const statuses = stepStatuses(inputs);
+  const summary = summarize(statuses);
+  const busy = running !== null || tx.busy;
+
+  /**
+   * Runs one action to the end, a wallet confirmation at a time. Before every transaction it re-reads the chain and
+   * re-plans, so nothing already in place is sent again; a step confirmed in this run is never repeated even if a
+   * lagging RPC hasn't caught up yet. Setup deposits only while the vault holds nothing; "Add more" deposits once.
+   */
+  function run(mode: RunMode, amount: bigint) {
+    if (!address) return;
+    void flight.current.run(() => runSteps(address, mode, amount));
+  }
+
+  async function runSteps(owner: Address, mode: RunMode, amount: bigint) {
+    setLastMode(mode);
+    setRunning(mode);
+    setRunError(null);
+    const confirmed = new Set<string>();
+    let deposited = depositConfirmed;
+    try {
+      for (let guard = 0; guard < 25; guard++) {
+        let fresh = await readStartState(owner, flavour);
+        // Just created: give the RPC a moment to show the new vault before planning its configuration.
+        for (let wait = 0; confirmed.has("create") && !fresh.snapshot.vault && wait < 5; wait++) {
+          await new Promise((r) => setTimeout(r, 1_000));
+          fresh = await readStartState(owner, flavour);
+        }
+        const f = fresh.vaultFlavour ?? flavour;
+        const dec = fresh.usdgDecimals[f.key];
+        const next = mode === "setup" ? setupPlan(fresh.snapshot, f, dec, amount, deposited) : addMorePlan(fresh.snapshot, f, dec, amount);
+        if (next.blocked) {
+          setRunError(next.blocked);
+          break;
+        }
+        const step = next.steps.find((st) => !confirmed.has(st.id));
+        if (!step) break;
+        const target = step.call.address ?? fresh.snapshot.vault;
+        if (!target || (!fresh.snapshot.vault && step.id !== "create")) break;
+        const args = step.id === "allow" ? [fresh.snapshot.vault, step.call.args[1]] : step.call.args;
+        const hash = await tx.send({ label: step.label, address: target, abi: step.call.abi, functionName: step.call.functionName, args });
+        if (!hash) break; // failed or cancelled: TxStatus says why; nothing else is sent
+        confirmed.add(step.id);
+        if (step.id === "deposit") {
+          deposited = true;
+          setConfirmedDeposit({ owner, hash });
+          if (mode === "add-more") {
+            setAddMore("");
+            break; // one deposit per click, never more
+          }
+        }
+      }
+    } catch (err) {
+      setRunError(isRpcTrouble(err) ? RPC_TROUBLE_MESSAGE : describeTxError(err, { usdgDecimals: decimals }));
+    } finally {
+      setRunning(null);
+      await queryClient.invalidateQueries();
+    }
+  }
 
   return (
     <div className="page">
@@ -44,12 +145,12 @@ export default function StartPage() {
         <div>
           <p className="eyebrow">Get started</p>
           <h1 className="title">Five steps to your own vault</h1>
-          <p className="meta">Each step is checked against the chain, not remembered by this page, so it's right on any device.</p>
+          <p className="meta">Each step is checked against the chain, not remembered by this page, so it&apos;s right on any device.</p>
         </div>
-        <div className="progress" aria-label={`${count} of 5 done`}>
-          <span className="figure">{count}</span>
-          <span className="meta">of 5 done</span>
-        </div>
+        <output className="progress" data-complete={summary.complete || undefined}>
+          <span className="ui">{summary.text}</span>
+          {!summary.complete && <span className="meta">{summary.done} of 5 done</span>}
+        </output>
       </div>
       {q.error && (
         <Notice tone={isRpcTrouble(q.error) ? "guard" : "fail"} title={isRpcTrouble(q.error) ? RPC_TROUBLE_MESSAGE : "Couldn't read your wallet's state"}>
@@ -58,9 +159,9 @@ export default function StartPage() {
       )}
 
       <ol className="steps">
-        <Step n={1} title="Connect your wallet" done={done.connect}>
+        <Step n={1} title="Connect your wallet" status={statuses.connect}>
           <p className="meta">A browser wallet: MetaMask, Rabby, Brave Wallet or Coinbase Wallet. Glance never holds your key.</p>
-          {!done.connect && (
+          {!isConnected && (
             <button className="btn btn-primary" onClick={gate.onConnect}>
               Connect wallet
             </button>
@@ -68,8 +169,8 @@ export default function StartPage() {
           {address && <p className="meta mono">{address}</p>}
         </Step>
 
-        <Step n={2} title="Add Robinhood Chain testnet" done={done.network}>
-          <p className="meta">Chain 46630. One click adds it to your wallet if it's missing and switches to it.</p>
+        <Step n={2} title="Add Robinhood Chain testnet" status={statuses.network}>
+          <p className="meta">Chain 46630. One click adds it to your wallet if it&apos;s missing and switches to it.</p>
           {isConnected && !onChain && (
             <button className="btn btn-primary" onClick={gate.onSwitchNetwork} disabled={gate.switching}>
               {gate.switching ? "Check your wallet…" : "Add and switch"}
@@ -77,27 +178,61 @@ export default function StartPage() {
           )}
         </Step>
 
-        <Step n={3} title="Get test ETH and USDG" done={done.funds}>
+        <Step n={3} title="Get test ETH and USDG" status={statuses.funds}>
           <ul className="checks">
             <Check ok={Boolean(s && s.eth > 0n)}>
-              Test ETH for gas: <a href="https://faucet.testnet.chain.robinhood.com" target="_blank" rel="noreferrer">faucet.testnet.chain.robinhood.com ↗</a>
+              Test ETH for gas:{" "}
+              <a href="https://faucet.testnet.chain.robinhood.com" target="_blank" rel="noreferrer">
+                faucet.testnet.chain.robinhood.com ↗
+              </a>
             </Check>
-            <Check ok={Boolean(s && s.usdg.paxos > 0n)}>
-              Paxos USDG: <a href="https://faucet.paxos.com/" target="_blank" rel="noreferrer">faucet.paxos.com ↗</a> (choose Robinhood Chain testnet)
-              {s && s.usdg.paxos > 0n && <span className="meta mono"> · you hold {formatUsd(s.usdg.paxos, s.usdgDecimals.paxos)}</span>}
+            <Check ok={Boolean(s && (s.usdg[effective.key] > 0n || s.snapshot.vaultUsdgBalance > 0n))}>
+              {effective.key === "paxos" ? (
+                <>
+                  Paxos USDG:{" "}
+                  <a href="https://faucet.paxos.com/" target="_blank" rel="noreferrer">
+                    faucet.paxos.com ↗
+                  </a>{" "}
+                  (choose Robinhood Chain testnet)
+                </>
+              ) : (
+                "TestUSDG: step 4 takes it from its on-chain faucet for you"
+              )}
+              {s && s.usdg[effective.key] > 0n && (
+                <span className="meta mono"> · your wallet holds {formatUsd(s.usdg[effective.key], s.usdgDecimals[effective.key])}</span>
+              )}
             </Check>
           </ul>
-          <p className="meta">No Paxos USDG? The TestUSDG fallback has its own on-chain faucet: pick it in step 4 and the setup takes it for you.</p>
         </Step>
 
-        <Step n={4} title="Create your vault and fund it" done={done.vault}>
-          <CreateVault owner={address} flavour={flavour} setFlavour={setFlavourKey} state={s} ready={onChain && isConnected} refetch={() => q.refetch()} />
+        <Step n={4} title="Create your vault and fund it" status={statuses.vault}>
+          <VaultStep
+            status={statuses.vault}
+            progress={vaultProgress(inputs)}
+            plan={plan}
+            ready={isConnected && onChain && Boolean(s)}
+            busy={busy}
+            flavour={effective}
+            flavours={demoVaults}
+            flavourLocked={Boolean(s?.vaultFlavour)}
+            onFlavour={setFlavourKey}
+            vault={s?.snapshot.vault ?? null}
+            vaultHref={s?.snapshot.vault ? href("/", s.snapshot.vault) : undefined}
+            vaultBalance={s?.snapshot.vaultUsdgBalance ?? 0n}
+            decimals={decimals}
+            depositHash={depositHash}
+            deposit={{ value: deposit, error: first.error ?? (first.raw === 0n && !s?.snapshot.vaultUsdgBalance ? "Enter an amount above zero." : null), onChange: setDeposit }}
+            addMore={{ value: addMore, error: more.error, plan: morePlan, onChange: setAddMore, onSubmit: () => run("add-more", more.raw) }}
+            onFinish={() => run("setup", first.raw)}
+            runError={runError}
+          />
+          <TxStatus state={tx.state} />
         </Step>
 
-        <Step n={5} title="Install the Glance extension" done={done.extension}>
+        <Step n={5} title="Install the Glance extension" status={statuses.extension}>
           <p className="meta">
-            Build it with <code>pnpm --filter extension build</code> and load <code>apps/extension/.output/chrome-mv3</code> as an unpacked extension (Brave,
-            Arc, Chrome). In its settings, paste your vault's address. Then tap Option + G on any article.
+            Build it with <code>pnpm --filter extension build</code> and load <code>apps/extension/.output/chrome-mv3</code> as an unpacked extension (Brave, Arc,
+            Chrome). In its settings, paste your vault&apos;s address. Then tap Option + G on any article.
           </p>
           <p className="meta">{extension ? "Detected on this page." : "Not detected on this page yet. (The extension marks the console when it's installed; this step isn't on chain.)"}</p>
         </Step>
@@ -106,16 +241,26 @@ export default function StartPage() {
   );
 }
 
-function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children: ReactNode }) {
+const STATUS_CHIP: Record<StepStatus, string> = {
+  "not-started": "chip",
+  "in-progress": "chip",
+  "waiting-wallet": "chip chip-guard",
+  confirming: "chip chip-guard",
+  done: "chip chip-accent",
+  failed: "chip chip-fail",
+};
+
+function Step({ n, title, status, children }: { n: number; title: string; status: StepStatus; children: ReactNode }) {
+  const done = status === "done";
   return (
-    <li className="step" data-done={done || undefined}>
+    <li className="step" data-done={done || undefined} data-status={status}>
       <span className="step-n" aria-hidden>
         {done ? "✓" : n}
       </span>
       <div className="step-body">
         <div className="between">
           <h2 className="heading">{title}</h2>
-          <span className={`chip ${done ? "chip-accent" : ""}`}>{done ? "Done" : "Not done"}</span>
+          <span className={STATUS_CHIP[status]}>{STATUS_LABELS[status]}</span>
         </div>
         {children}
       </div>
@@ -132,146 +277,19 @@ function Check({ ok, children }: { ok: boolean; children: ReactNode }) {
   );
 }
 
-function CreateVault({
-  owner,
-  flavour,
-  setFlavour,
-  state,
-  ready,
-  refetch,
-}: {
-  owner: Address | undefined;
-  flavour: DemoVault;
-  setFlavour(k: DemoVault["key"]): void;
-  state: Awaited<ReturnType<typeof readStartState>> | undefined;
-  ready: boolean;
-  refetch(): void;
-}) {
-  const effective = state?.vaultFlavour ?? flavour;
-  const decimals = state?.usdgDecimals[effective.key] ?? 6;
-  const [deposit, setDeposit] = useState("10");
-  const [running, setRunning] = useState(false);
-  const [runError, setRunError] = useState<string | null>(null);
-  const tx = useOwnerTx(decimals);
-  const href = useHref();
-  const queryClient = useQueryClient();
-
-  let depositRaw = 0n;
-  let depositError: string | null = null;
-  try {
-    depositRaw = parseDecimal(deposit.replace(/^\$/, ""), decimals);
-  } catch {
-    depositError = `Enter an amount in USDG, up to ${decimals} decimal places.`;
-  }
-  const plan = state ? planSetup(state.snapshot, { flavour: effective, testUsdg: effective.key === "test", usdgDecimals: decimals, deposit: depositRaw }) : null;
-  const vault = state?.snapshot.vault ?? null;
-
-  /** Runs the plan one transaction at a time, re-reading the chain before each, until nothing is left (or one fails). */
-  const run = async () => {
-    if (!owner) return;
-    setRunning(true);
-    setRunError(null);
-    let toDeposit = depositRaw;
-    try {
-      for (let guard = 0; guard < 20; guard++) {
-        const fresh = await readStartState(owner, flavour);
-        const f = fresh.vaultFlavour ?? flavour;
-        const next = planSetup(fresh.snapshot, { flavour: f, testUsdg: f.key === "test", usdgDecimals: fresh.usdgDecimals[f.key], deposit: toDeposit });
-        if (next.blocked) {
-          setRunError(next.blocked);
-          break;
-        }
-        const step: SetupStep | undefined = next.steps[0];
-        if (!step) break;
-        const address = step.call.address ?? fresh.snapshot.vault;
-        if (!address) break;
-        const args = step.id === "allow" ? [fresh.snapshot.vault ?? zeroAddress, toDeposit] : step.call.args;
-        const ok = await tx.send({ label: step.label, address, abi: step.call.abi, functionName: step.call.functionName, args });
-        if (!ok) break;
-        if (step.id === "deposit") toDeposit = 0n;
-      }
-    } catch (err) {
-      setRunError(isRpcTrouble(err) ? RPC_TROUBLE_MESSAGE : (err as Error).message);
-    } finally {
-      setRunning(false);
-      await queryClient.invalidateQueries();
-      refetch();
-    }
-  };
-
-  return (
-    <div className="create">
-      <p className="meta">
-        Exactly what <code>make create-vault</code> does: the vault, the five stocks with their price feeds and freshness (20 hours open, 96 hours
-        closed), the stock desk, the Glance agent for 29 days, then your deposit. It starts with the vault's default limits: $100 a trade, $500 a day
-        each way, 1% slippage, 25% while the market's closed. Change them any time under Limits.
-      </p>
-      {!state?.vaultFlavour && (
-        <div className="segmented" role="radiogroup" aria-label="Which USDG">
-          {demoVaults.map((d) => (
-            <button key={d.key} role="radio" aria-checked={flavour.key === d.key} className="segment" onClick={() => setFlavour(d.key)} disabled={running}>
-              {d.usdgLabel}
-              {d.primary ? " (recommended)" : ""}
-            </button>
-          ))}
-        </div>
-      )}
-      {vault && (
-        <p className="meta">
-          Your vault:{" "}
-          <Link className="mono" href={href("/", vault)}>
-            {shortAddress(vault)}
-          </Link>{" "}
-          on {effective.usdgLabel} ·{" "}
-          <a className="mono" href={addressUrl(vault)} target="_blank" rel="noreferrer">
-            explorer ↗
-          </a>
-        </p>
-      )}
-      <div className="field field-inline">
-        <label htmlFor="deposit" className="ui">
-          Deposit
-        </label>
-        <div className="input-unit" data-unit="$">
-          <span aria-hidden>$</span>
-          <input id="deposit" className="input mono" inputMode="decimal" value={deposit} onChange={(e) => setDeposit(e.target.value)} disabled={running} />
-        </div>
-        <span className={depositError ? "meta text-fail" : "meta"}>{depositError ?? `${effective.usdgLabel}, from your wallet into the vault.`}</span>
-      </div>
-      {plan && plan.steps.length > 0 && (
-        <ol className="plan">
-          {plan.steps.map((st) => (
-            <li key={st.id} className="meta">
-              {st.label}
-            </li>
-          ))}
-        </ol>
-      )}
-      {plan && plan.steps.length === 0 && !plan.blocked && <p className="meta">Everything is in place.</p>}
-      {plan?.blocked && <Notice tone="guard" title="Can't finish yet">{plan.blocked}</Notice>}
-      {runError && runError !== plan?.blocked && <Notice tone="fail" title="Setup stopped">{runError}</Notice>}
-      <TxStatus state={tx.state} />
-      <div className="row wrap">
-        <button className="btn btn-primary" onClick={() => void run()} disabled={!ready || running || !plan || plan.steps.length === 0 || Boolean(depositError) || Boolean(plan.blocked)}>
-          {running ? "Setting up…" : vault ? "Finish setup" : "Create my vault"}
-        </button>
-        {!ready && <span className="meta">Connect and switch to Robinhood Chain testnet first.</span>}
-        {plan && plan.steps.length > 0 && <span className="meta">{plan.steps.length} wallet confirmations, one at a time.</span>}
-      </div>
-    </div>
-  );
-}
-
 /** The Glance extension marks the console page when it's installed (it looks for the glance-console meta tag). */
 function useExtensionInstalled(): boolean {
   const [installed, setInstalled] = useState(false);
   useEffect(() => {
     const el = document.documentElement;
     const check = () => setInstalled(el.dataset.glanceExtension === "installed");
-    check();
     const obs = new MutationObserver(check);
     obs.observe(el, { attributes: true, attributeFilter: ["data-glance-extension"] });
-    return () => obs.disconnect();
+    const id = setTimeout(check, 0);
+    return () => {
+      obs.disconnect();
+      clearTimeout(id);
+    };
   }, []);
   return installed;
 }

@@ -94,6 +94,8 @@ API, add the console's URL to `CORS_ORIGINS` (for example `https://glance-consol
 ```sh
 pnpm --filter console test        # formatting, cap maths, limits rules, guard wording, the setup plan, the API client,
                                   # and the not-owner and wrong-network states rendered in jsdom
+pnpm --filter console lint        # oxlint (React, hooks, Next.js, a11y, TypeScript rules); typescript-eslint doesn't
+                                  # support TypeScript 7 yet, which the workspace uses
 pnpm --filter console typecheck
 pnpm --filter console build
 ```

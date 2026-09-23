@@ -174,8 +174,31 @@ export function planSetup(s: SetupSnapshot, t: SetupTarget): SetupPlan {
 }
 
 /** Step 4 is done when the vault exists, is configured exactly like the script leaves it, and holds USDG. */
-export function vaultReady(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: number): boolean {
+export function vaultReady(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: number, depositConfirmed = false): boolean {
+  return vaultConfigured(s, flavour, usdgDecimals) && (s.vaultUsdgBalance > 0n || depositConfirmed);
+}
+
+/**
+ * What "Finish setup" runs: the configuration steps still missing, and the first deposit only while the vault holds no
+ * USDG. Once the vault holds any USDG (or a deposit confirmed in this session, even if a lagging RPC hasn't caught up
+ * yet), setup never deposits again. More USDG only goes in through addMorePlan, from its own explicit input.
+ */
+export function setupPlan(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: number, initialDeposit: bigint, depositConfirmed = false): SetupPlan {
+  const funded = s.vaultUsdgBalance > 0n || depositConfirmed;
+  return planSetup(s, { flavour, testUsdg: flavour.key === "test", usdgDecimals, deposit: funded ? 0n : initialDeposit });
+}
+
+/** "Add more USDG": only the funding steps (faucet for TestUSDG, approve if the allowance is short, deposit). */
+export function addMorePlan(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: number, amount: bigint): SetupPlan {
+  if (!s.vault) return { steps: [], blocked: "Create your vault first." };
+  if (amount <= 0n) return { steps: [], blocked: null };
+  const plan = planSetup(s, { flavour, testUsdg: flavour.key === "test", usdgDecimals, deposit: amount });
+  return { steps: plan.steps.filter((st) => st.id === "faucet" || st.id === "allow" || st.id === "deposit"), blocked: plan.blocked };
+}
+
+/** The vault exists and is configured exactly like the script leaves it (funding aside). */
+export function vaultConfigured(s: SetupSnapshot, flavour: DemoVault, usdgDecimals: number): boolean {
   if (!s.vault) return false;
   const { steps, blocked } = planSetup(s, { flavour, testUsdg: flavour.key === "test", usdgDecimals, deposit: 0n });
-  return !blocked && steps.length === 0 && s.vaultUsdgBalance > 0n;
+  return !blocked && steps.length === 0;
 }

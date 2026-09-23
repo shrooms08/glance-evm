@@ -6,12 +6,13 @@ import { Skeleton } from "@/components/Skeleton";
 import type { CatalogStock, FeedStatus } from "@/lib/api";
 import { addressUrl, txUrl } from "@/lib/chain";
 import { formatAgeHours, formatAgo, formatUsd, formatWhen, shortAddress } from "@/lib/format";
+import { useNow } from "@/lib/useNow";
 import { useCatalog, useHealth } from "@/lib/vault";
 
 export default function PricesPage() {
   const health = useHealth();
   const catalog = useCatalog();
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow(30_000);
   const error = health.error ?? catalog.error;
   const feeds = health.data?.feeds ?? [];
   const stocks = catalog.data?.stocks ?? [];

@@ -8,6 +8,7 @@ import type { ActivityItem, ActivityView } from "@/lib/api";
 import { dayLabel, formatWhen, shortAddress } from "@/lib/format";
 import { foldOwnerRuns } from "@/lib/activity";
 import { guardCounts } from "@/lib/guards";
+import { useNow } from "@/lib/useNow";
 import { useActivity, useSelectedVault } from "@/lib/vault";
 
 type Filter = "all" | "trade" | "refusal" | "owner";
@@ -92,7 +93,7 @@ function Stat({ n, label, tone }: { n: number; label: string; tone: "accent" | "
 }
 
 function Timeline({ items, filter }: { items: ActivityItem[]; filter: Filter }) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow(60_000);
   const shown = items.filter((i) => filter === "all" || i.kind === filter);
   const days = useMemo(() => {
     const groups: Array<{ day: string; items: ActivityItem[] }> = [];
@@ -144,7 +145,7 @@ function OwnerRun({ items }: { items: ActivityItem[] }) {
     <li className="event" data-kind="owner">
       <span className="node" aria-hidden />
       <details className="event-body fold">
-        <summary>
+        <summary aria-label={`${items.length} owner changes: show each, with its transaction`}>
           <div className="fold-summary">
             <p className="event-title">{items.length} owner changes</p>
             <span className="meta mono">

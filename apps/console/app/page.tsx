@@ -6,6 +6,7 @@ import { Meter } from "@/components/Meter";
 import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
+import { WithdrawCard } from "@/components/WithdrawCard";
 import type { VaultView } from "@/lib/api";
 import { capRows, freesUp, marketNow, type CapRow, type CapState, type CapUse } from "@/lib/caps";
 import { addressUrl } from "@/lib/chain";
@@ -31,6 +32,14 @@ export default function Dashboard() {
       {q.data && (
         <>
           <Balances v={q.data} />
+          <WithdrawCard
+            vault={q.data.address}
+            owner={q.data.owner}
+            usdg={q.data.usdg.address}
+            decimals={q.data.usdg.decimals}
+            balance={BigInt(q.data.balances.usdg.raw)}
+            usdgLabel={q.data.usdg.real === true ? "Paxos USDG" : q.data.usdg.real === false ? "TestUSDG" : "USDG"}
+          />
           <Caps v={q.data} />
           <div className="grid grid-2">
             <Agent v={q.data} limitsHref={href("/limits")} />
