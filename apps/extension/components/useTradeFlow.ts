@@ -5,9 +5,10 @@
  *                   -> failed (API offline, no vault, extension reloaded, ...)
  * The preflight is the API's on-chain simulation (GET /quote), never a guess.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
+import { onChainRecovered } from "../lib/chainStatus";
 import { speak } from "../lib/voiceClient";
 import type { Guard, Quote, Trade } from "../lib/api-types";
 import { isAddress } from "../lib/settings";
@@ -86,6 +87,13 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean } = {}) {
       g.setOrb({ state: "idle", line: res.message, meta: "" });
     }
   }, [flow, g, symbol]);
+
+  // A quote that failed only because the testnet wasn't answering tries again, on its own, once it answers.
+  useEffect(() => {
+    if (flow.step !== "failed" || flow.code !== "RPC_UNAVAILABLE") return;
+    const amount = flow.amount;
+    return onChainRecovered(() => void start(amount));
+  }, [flow, start]);
 
   const reset = useCallback(() => {
     run.current++;

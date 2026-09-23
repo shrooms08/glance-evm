@@ -46,10 +46,12 @@ interface Props {
   placement: CSSProperties;
   /** The panel has fully drained back into the orb (docking waits for this before its next beat). */
   onClosed?(): void;
+  /** The liquid starts moving, on this very frame (the moment for the open or close sound). */
+  onLiquidStart?(direction: "open" | "close"): void;
   children?: ReactNode;
 }
 
-export function GooPanel({ open, orb, placement, onClosed, children }: Props) {
+export function GooPanel({ open, orb, placement, onClosed, onLiquidStart, children }: Props) {
   const [phase, setPhase] = useState<Phase>(open ? "open" : "closed");
   /** Where the liquid items are headed: gathered in the orb, or spread out as the panel. */
   const [pose, setPose] = useState<"orb" | "panel">("orb");
@@ -61,6 +63,8 @@ export function GooPanel({ open, orb, placement, onClosed, children }: Props) {
   const frameLoop = useRef(0);
   const closed = useRef(onClosed);
   closed.current = onClosed;
+  const liquidStart = useRef(onLiquidStart);
+  liquidStart.current = onLiquidStart;
 
   useEffect(() => {
     if (open && (phase === "closed" || phase === "closing")) {
@@ -111,15 +115,25 @@ export function GooPanel({ open, orb, placement, onClosed, children }: Props) {
     let raf = 0;
     if (phase === "opening") {
       if (reduced) {
-        raf = requestAnimationFrame(() => setContentShown(true));
+        raf = requestAnimationFrame(() => {
+          liquidStart.current?.("open");
+          setContentShown(true);
+        });
         timers.push(setTimeout(() => setPhase("open"), FADE_MS));
       } else {
         startFrames();
-        raf = requestAnimationFrame(() => (raf = requestAnimationFrame(() => setPose("panel"))));
+        raf = requestAnimationFrame(
+          () =>
+            (raf = requestAnimationFrame(() => {
+              liquidStart.current?.("open"); // the same frame the library starts moving the items
+              setPose("panel");
+            })),
+        );
       }
     } else if (phase === "closing") {
       setContentShown(false);
       if (reduced) {
+        liquidStart.current?.("close");
         timers.push(
           setTimeout(() => {
             setPhase("closed");
@@ -129,7 +143,12 @@ export function GooPanel({ open, orb, placement, onClosed, children }: Props) {
       } else {
         startFrames();
         // The text fades out first; only then does the liquid move.
-        timers.push(setTimeout(() => setPose("orb"), FADE_MS));
+        timers.push(
+          setTimeout(() => {
+            liquidStart.current?.("close");
+            setPose("orb");
+          }, FADE_MS),
+        );
       }
     }
     return () => {

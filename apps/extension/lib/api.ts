@@ -3,9 +3,36 @@
  */
 import type { Catalog, Health, Price, Quote, Resolve, Side, Trade, Vault } from "./api-types";
 import { send } from "./lifecycle";
+import { setChainStatus } from "./chainStatus";
 import type { ApiRequest, ApiResponse } from "./messages";
 
+/** Backoff between retries of a read when the testnet RPC isn't responding (then the caller gets the message). */
+export const RPC_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
+let sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** For tests only. */
+export function setSleepForTests(fn: (ms: number) => Promise<void>) {
+  sleep = fn;
+}
+
+/** Reads are safe to repeat. A trade is never retried on our own: it might already have gone through. */
+const retryable = (method: "GET" | "POST", path: string) => method === "GET" || path === "/resolve";
+
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<ApiResponse<T>> {
+  let res = await once<T>(method, path, body);
+  if (retryable(method, path)) {
+    for (const delay of RPC_RETRY_DELAYS_MS) {
+      if (res.ok || res.code !== "RPC_UNAVAILABLE") break;
+      await sleep(delay);
+      res = await once<T>(method, path, body);
+    }
+  }
+  // Any answer that reached the chain means it's answering again; RPC_UNAVAILABLE means it isn't.
+  if (res.ok || (!res.offline && res.code !== "RPC_UNAVAILABLE")) setChainStatus("ok");
+  else if (res.code === "RPC_UNAVAILABLE") setChainStatus("trouble");
+  return res;
+}
+
+async function once<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<ApiResponse<T>> {
   const request: ApiRequest = { kind: "api", method, path, body };
   try {
     // send() never settles once Glance has been reloaded under this page: the page UI shuts down instead.

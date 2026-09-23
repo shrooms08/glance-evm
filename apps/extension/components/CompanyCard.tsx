@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../lib/api";
+import { onChainRecovered } from "../lib/chainStatus";
 import type { Price } from "../lib/api-types";
 import { ageHours, priceUsd, shortHash } from "../lib/format";
 import { BlockedCard } from "./BlockedCard";
@@ -45,6 +46,8 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
   useEffect(() => {
     void loadPrice();
   }, [loadPrice]);
+  // The price couldn't load because the testnet wasn't answering: load it again once it does.
+  useEffect(() => (priceError && g.chainTrouble ? onChainRecovered(() => void loadPrice()) : undefined), [priceError, g.chainTrouble, loadPrice]);
 
   useEffect(() => {
     if (autoAmount) void start(autoAmount);

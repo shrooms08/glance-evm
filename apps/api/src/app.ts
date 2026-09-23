@@ -10,7 +10,8 @@ import { z } from "zod";
 
 import type { AppContext } from "./context.js";
 import { rateLimit } from "./rateLimit.js";
-import { ApiError, activityView, healthView, priceView, quoteView, tradeView, vaultView } from "./services.js";
+import { isRpcTrouble } from "./rpc.js";
+import { ApiError, activityView, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
@@ -135,6 +136,8 @@ export function createServerApp(ctx: AppContext) {
   app.notFound((c) => send(c, { error: { code: "NOT_FOUND", message: "No such endpoint." } }, 404));
 
   app.onError((err, c) => {
+    // Anything else that failed because the RPC did: say so (the extension retries), not "something went wrong".
+    if (!(err instanceof ApiError) && isRpcTrouble(err)) err = rpcUnavailable();
     if (err instanceof ApiError) {
       return send(c, { error: { code: err.code, message: err.message, guard: err.guard } }, err.status);
     }

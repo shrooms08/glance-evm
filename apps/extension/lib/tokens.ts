@@ -124,6 +124,17 @@ export const spring = {
   maxMs: 700,
 } as const;
 
+/**
+ * Sound: a short water drop as the panel melts open (public/sfx/glance-open.ogg, ~0.19s) and the same drop pitched
+ * down as it drains back into the orb (glance-close.ogg, ~0.21s). Only on open and close, never on cards, trades,
+ * voice or docking. `volume` is the gain (0-1); `enabledByDefault` is the Settings "Sounds" switch's first state.
+ */
+export const sound = {
+  volume: 0.4,
+  enabledByDefault: true,
+  files: { open: "/sfx/glance-open.ogg", close: "/sfx/glance-close.ogg" },
+} as const;
+
 /** Idle: a slow breath so the orb never looks frozen. Noticeable only if you stare. Dropped first on slow pages. */
 export const breathe = { period: "7s", scale: 1.012 } as const;
 

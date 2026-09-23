@@ -10,6 +10,7 @@ import { defineContentScript } from "wxt/utils/define-content-script";
 
 import { contextAlive } from "../../lib/lifecycle";
 import { installPageLifecycle } from "../../lib/pageLifecycle";
+import { Sfx } from "../../lib/sfx";
 import { stylesheet } from "../../lib/styles";
 import { layer } from "../../lib/tokens";
 import { injectPageStyles, Underliner } from "../../lib/underline";
@@ -25,6 +26,14 @@ export default defineContentScript({
     // Reloading or updating Glance orphans this script: shut down quietly and leave a refresh notice.
     installPageLifecycle(ctx);
     injectPageStyles((path) => browser.runtime.getURL(path as "/glance-mark.png"));
+    // Decode the open and close sounds now, so the first open has no load delay. Silent on any failure.
+    const sfx = new Sfx({
+      createContext: () => new AudioContext(),
+      load: async (path) => (await fetch(browser.runtime.getURL(path as "/glance-mark.png"))).arrayBuffer(),
+      target: window,
+    });
+    void sfx.init();
+    ctx.onInvalidated(() => sfx.dispose());
 
     const ui = await createShadowRootUi<Root>(ctx, {
       name: "glance-orb",
@@ -40,7 +49,7 @@ export default defineContentScript({
         underliner.start();
         ctx.onInvalidated(() => underliner.stop());
         const root = createRoot(container);
-        root.render(<App underliner={underliner} />);
+        root.render(<App underliner={underliner} sfx={sfx} />);
         return root;
       },
       onRemove(root) {

@@ -25,6 +25,7 @@ import { warmVoice } from "../../lib/voiceClient";
 import type { VoiceCommandContext } from "../../lib/voiceMessages";
 import type { Message, PageMatchesReply } from "../../lib/messages";
 import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
+import { SoundCue, type Sfx } from "../../lib/sfx";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
 import { rememberOrbAnchor } from "../../lib/updatedNotice";
@@ -33,11 +34,11 @@ const HOVER_DWELL_MS = 300;
 const HOVER_GRACE_MS = 250;
 const DRAG_THRESHOLD = 4;
 
-export function App({ underliner }: { underliner: Underliner }) {
+export function App({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   return (
     <GlanceProvider idleLine="">
       <div className="g-root">
-        <Floating underliner={underliner} />
+        <Floating underliner={underliner} sfx={sfx} />
       </div>
     </GlanceProvider>
   );
@@ -51,8 +52,15 @@ function companiesFrom(mentions: Mention[], catalog: ReturnType<typeof useGlance
     .sort((a, b) => b.mentions - a.mentions);
 }
 
-function Floating({ underliner }: { underliner: Underliner }) {
+function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const g = useGlance();
+  /**
+   * The open and close sounds belong to four gestures only: the Option+G tap, the orb's Enter/Space, Escape and the
+   * panel's close button. Each asks for its sound here; GooPanel plays it on the frame the liquid starts moving. Any
+   * other open or close (voice, a card, docking) asks for nothing, so it stays silent.
+   */
+  const soundCue = useRef(new SoundCue());
+  useEffect(() => sfx?.setEnabled(g.sounds), [sfx, g.sounds]);
   const voiceContext = useRef<() => VoiceCommandContext>(() => ({}));
   const assistant = useAssistant({ context: () => voiceContext.current() });
   const [mentions, setMentions] = useState<Mention[]>(underliner.current());
@@ -132,9 +140,10 @@ function Floating({ underliner }: { underliner: Underliner }) {
       void send({ kind: "assistant:glance", reply: { host, companies: found } } satisfies AssistantMessage).catch(() => {});
       return;
     }
+    if (!panelOpen) soundCue.current.request("open");
     setPanelOpen(true);
     g.setOrb({ state: "idle", line: glanceLine(host, found), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
-  }, [underliner, g, docked, host, dockAnim]);
+  }, [underliner, g, docked, host, dockAnim, panelOpen]);
 
   // ---- voice (Option+V, hold) --------------------------------------------------------------------------------
   const startTalking = useCallback(() => {
@@ -159,6 +168,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
   const closePanel = useCallback(() => {
     setHover(null);
     if (!panelOpen) return;
+    soundCue.current.request("close");
     setPanelOpen(false);
     orbRef.current?.focus();
   }, [panelOpen]);
@@ -359,6 +369,9 @@ function Floating({ underliner }: { underliner: Underliner }) {
             open={panelOpen}
             orb={orbDisc(pos, vw, vh)}
             placement={panelPlacement}
+            onLiquidStart={(dir) => {
+              if (soundCue.current.take(dir)) sfx?.play(dir);
+            }}
             onClosed={() => {
               if (!dockAfterClose.current) return;
               dockAfterClose.current = false;
@@ -373,6 +386,7 @@ function Floating({ underliner }: { underliner: Underliner }) {
               onRevealCompany={(s) => underliner.reveal(s)}
               onSwitchMode={switchToDocked}
               onClose={() => {
+                soundCue.current.request("close");
                 setPanelOpen(false);
                 assistant.setCard(null);
               }}

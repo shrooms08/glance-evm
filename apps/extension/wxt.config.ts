@@ -20,6 +20,6 @@ export default defineConfig({
     optional_host_permissions: ["https://*/*", "http://*/*"],
     action: { default_title: "Open Glance in the side panel" },
     icons: { 16: "icon/16.png", 32: "icon/32.png", 48: "icon/48.png", 128: "icon/128.png" },
-    web_accessible_resources: [{ resources: ["fonts/*", "glance-mark.png"], matches: ["<all_urls>"] }],
+    web_accessible_resources: [{ resources: ["fonts/*", "glance-mark.png", "sfx/*"], matches: ["<all_urls>"] }],
   },
 });

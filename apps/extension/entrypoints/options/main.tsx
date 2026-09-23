@@ -1,5 +1,5 @@
 /**
- * Settings: API base URL, vault address, the glance and voice keys, floating or docked default, console URL, voice replies, the
+ * Settings: API base URL, vault address, the glance and voice keys, floating or docked default, console URL, voice replies, sounds, the
  * "Enable voice" microphone grant with voice diagnostics, and a connection test against GET /health.
  */
 import { useEffect, useState, type ReactNode } from "react";
@@ -22,11 +22,13 @@ import {
   defaultMode,
   hotkeyLetter,
   isAddress,
+  soundsEnabled,
   vaultAddress,
   voiceKeyLetter,
   voiceReplies,
   type Mode,
 } from "../../lib/settings";
+import { sound } from "../../lib/tokens";
 
 type Test = { state: "idle" } | { state: "running" } | { state: "ok"; health: Health } | { state: "failed"; message: string };
 
@@ -41,14 +43,14 @@ function isLocal(url: string) {
 }
 
 function Settings() {
-  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: DEFAULT_VAULT as string, hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true });
+  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: DEFAULT_VAULT as string, hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true, sounds: sound.enabledByDefault as boolean });
   const [saved, setSaved] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [test, setTest] = useState<Test>({ state: "idle" });
 
   useEffect(() => {
-    void Promise.all([apiBaseUrl.getValue(), vaultAddress.getValue(), hotkeyLetter.getValue(), voiceKeyLetter.getValue(), defaultMode.getValue(), consoleUrl.getValue(), voiceReplies.getValue()]).then(
-      ([api, vault, hotkey, voiceKey, mode, console, voice]) => setForm({ api, vault, hotkey, voiceKey, mode, console, voice }),
+    void Promise.all([apiBaseUrl.getValue(), vaultAddress.getValue(), hotkeyLetter.getValue(), voiceKeyLetter.getValue(), defaultMode.getValue(), consoleUrl.getValue(), voiceReplies.getValue(), soundsEnabled.getValue()]).then(
+      ([api, vault, hotkey, voiceKey, mode, console, voice, sounds]) => setForm({ api, vault, hotkey, voiceKey, mode, console, voice, sounds }),
     );
   }, []);
 
@@ -94,6 +96,7 @@ function Settings() {
       defaultMode.setValue(form.mode),
       consoleUrl.setValue(form.console.replace(/\/+$/, "")),
       voiceReplies.setValue(form.voice),
+      soundsEnabled.setValue(form.sounds),
     ]);
     setSaved("Saved.");
     void runTest();
@@ -182,6 +185,10 @@ function Settings() {
           </Field>
           <label className="g-row g-ui" style={{ gap: 8 }}>
             <input type="checkbox" checked={form.voice} onChange={(e) => set("voice", e.target.checked)} /> Speak replies aloud
+          </label>
+          <label className="g-row g-ui" style={{ gap: 8 }}>
+            <input type="checkbox" checked={form.sounds} onChange={(e) => set("sounds", e.target.checked)} /> Sounds (a soft liquid sound when the panel
+            opens and closes)
           </label>
         </div>
       </section>

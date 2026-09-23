@@ -71,6 +71,20 @@ The remaining codes are `NOT_AGENT`, `NO_PRICE_FEED`, `SHORT_FILL`, `ZERO_AMOUNT
 Every error response has the shape `{ "error": { "code", "message", "guard"? } }`. `guard` is present when a
 contract guard caused the error.
 
+### When the testnet isn't responding
+
+A timed-out, rate-limited or unreachable RPC is never reported as an answer about a vault. It returns **503
+`RPC_UNAVAILABLE`**: "The Robinhood Chain testnet isn't responding right now. Trying again…". `NOT_A_VAULT` (404) is
+said only when the chain actually answered and the address holds no Glance vault, and a quote never turns RPC trouble
+into a guard. `src/rpc.ts` tells the two apart by walking viem's error chain.
+
+Each call tries `RPC_URL`, then each of `RPC_FALLBACK_URLS` in order (viem's `fallback` transport, 8s timeout per
+endpoint). Put a dedicated endpoint such as QuickNode in `RPC_URL` and keep the public RPC as the fallback, which is
+the default. Endpoint paths and tokens are redacted in the startup log.
+
+A trade is never retried. If the RPC fails while sending, the message says the outcome is unknown and to check the
+activity first. If it was sent but can't be confirmed, the message includes the transaction hash.
+
 ## Endpoints
 
 Amounts appear as `{ raw, value, formatted }`: `raw` is in the token's smallest unit, `value` is a plain decimal

@@ -18,6 +18,7 @@ import { erc20Abi, glanceVaultAbi, stockDeskAbi, testPriceFeedAbi } from "./abi.
 import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
 import { primaryVault } from "./deployment.js";
+import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "./rpc.js";
 import {
   decodeRevert,
   explainRevert,
@@ -266,8 +267,15 @@ async function readVaultCore(ctx: AppContext, vault: Address) {
     };
   } catch (err) {
     if (err instanceof ApiError) throw err;
+    // Only an answer from the chain can say this isn't a vault: a timeout or an unreachable RPC says nothing about it.
+    if (isRpcTrouble(err)) throw rpcUnavailable();
     throw new ApiError(404, "NOT_A_VAULT", `${vault} isn't a Glance vault.`);
   }
+}
+
+/** The testnet RPC (every configured endpoint) failed or timed out: nothing is known about the vault or the trade. */
+export function rpcUnavailable(message = RPC_TROUBLE_MESSAGE): ApiError {
+  return new ApiError(503, "RPC_UNAVAILABLE", message);
 }
 
 type VaultCore = Awaited<ReturnType<typeof readVaultCore>>;
@@ -580,6 +588,8 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
       : tokenValueInUsdg(p.amount, p.stock.tokenDecimals, price.price, price.decimals, d);
 
   const dq = await deskQuote;
+  // A desk quote that failed because the RPC did is not a refusal: never show it as a guard.
+  if (!dq.ok && isRpcTrouble(dq.err)) throw rpcUnavailable();
   const deskOut: bigint | null = dq.ok ? dq.value : null;
   const deskError: GuardError | null = dq.ok ? null : explainRevert(decodeRevert(revertDataFromError(dq.err)), exCtx);
   const spreadBps = Number(spreadRaw);
@@ -603,6 +613,8 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
       });
       preflight = { ok: true };
     } catch (err) {
+      // The preflight couldn't run (RPC trouble): that's not the vault saying no.
+      if (isRpcTrouble(err)) throw rpcUnavailable();
       preflight = { ok: false, guard: explainRevert(decodeRevert(revertDataFromError(err)), exCtx) };
     }
   }
@@ -660,10 +672,22 @@ export async function tradeView(ctx: AppContext, req: TradeRequest) {
     try {
       hash = await signer.wallet.writeContract(request);
     } catch (err) {
+      // The send itself may or may not have reached the chain: say exactly that, never retry on our own.
+      if (isRpcTrouble(err)) {
+        throw rpcUnavailable("The Robinhood Chain testnet stopped responding while sending, so I can't tell whether the trade went through. Check your activity before trying again.");
+      }
       const guard = explainRevert(decodeRevert(revertDataFromError(err)), exCtx);
       throw new ApiError(422, guard.code, guard.message, guard);
     }
-    const receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: 60_000 });
+    let receipt: Awaited<ReturnType<typeof ctx.client.waitForTransactionReceipt>>;
+    try {
+      receipt = await ctx.client.waitForTransactionReceipt({ hash, timeout: 60_000 });
+    } catch (err) {
+      if (isRpcTrouble(err) || (err as Error).name === "WaitForTransactionReceiptTimeoutError") {
+        throw rpcUnavailable(`The trade was sent (transaction ${hash}), but the testnet isn't responding to confirm it. Check the explorer before trying again.`);
+      }
+      throw err;
+    }
 
     if (receipt.status !== "success") {
       // Replay against the state just before the failing block to recover the reason.

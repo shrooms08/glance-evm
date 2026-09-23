@@ -6,10 +6,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { browser } from "wxt/browser";
 
 import { api } from "../lib/api";
+import { chainStatus, onChainStatus } from "../lib/chainStatus";
 import { safely, send } from "../lib/lifecycle";
 import type { CatalogStock, Health, Vault } from "../lib/api-types";
-import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, vaultAddress, voiceKeyLetter, voiceReplies, type Mode } from "../lib/settings";
-import { motion } from "../lib/tokens";
+import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, voiceKeyLetter, voiceReplies, type Mode } from "../lib/settings";
+import { motion, sound } from "../lib/tokens";
 import type { OrbState } from "./Orb";
 
 export interface OrbLine {
@@ -28,12 +29,16 @@ export interface Glance {
   voiceKey: string;
   mode: Mode;
   voiceReplies: boolean;
+  /** The open and close sounds (Settings → "Sounds"). */
+  sounds: boolean;
   catalog: CatalogStock[];
   health: Health | null;
   vault: Vault | null;
   /** The API could not be reached on the last attempt. */
   offline: boolean;
   offlineMessage: string;
+  /** The API is up but the testnet RPC isn't answering it: reads retry, and this clears on its own when it recovers. */
+  chainTrouble: boolean;
   usdgDecimals: number;
   markUrl: string;
   orb: OrbLine;
@@ -71,6 +76,8 @@ function useSetting<T>(item: { getValue(): Promise<T>; watch(cb: (v: T) => void)
 }
 
 const HEALTH_POLL_MS = 60_000;
+/** How long to wait between checks while the testnet isn't answering (each check retries on its own first). */
+export const CHAIN_RECOVERY_BACKOFF_MS = [5_000, 10_000, 20_000, 30_000];
 
 export function GlanceProvider({ children, idleLine }: { children: ReactNode; idleLine: string }) {
   const apiUrl = useSetting(apiBaseUrl, "");
@@ -80,12 +87,15 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const voiceKey = useSetting(voiceKeyLetter, "V");
   const mode = useSetting<Mode>(defaultMode, "floating");
   const voice = useSetting(voiceReplies, true);
+  const sounds = useSetting(soundsEnabled, sound.enabledByDefault);
 
   const [catalog, setCatalog] = useState<CatalogStock[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [vault, setVault] = useState<Vault | null>(null);
   const [offline, setOffline] = useState(false);
   const [offlineMessage, setOfflineMessage] = useState("");
+  const [chainTrouble, setChainTrouble] = useState(chainStatus() === "trouble");
+  useEffect(() => onChainStatus((st) => setChainTrouble(st === "trouble")), []);
   const [orb, setOrbState] = useState<OrbLine>({ state: "idle", line: idleLine, meta: "" });
   const successTimer = useRef<ReturnType<typeof setTimeout>>();
   const [stillCount, setStillCount] = useState(0);
@@ -152,6 +162,30 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
     void refreshVault();
   }, [refreshVault, health]);
 
+  // While the testnet isn't answering: check again with backoff until it does, then refresh what the panel shows.
+  useEffect(() => {
+    if (!chainTrouble || !apiUrl) return;
+    let live = true;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const next = () => {
+      const wait = CHAIN_RECOVERY_BACKOFF_MS[Math.min(attempt++, CHAIN_RECOVERY_BACKOFF_MS.length - 1)]!;
+      timer = setTimeout(async () => {
+        const h = await api.health();
+        if (!live) return;
+        if (h.ok) {
+          setHealth(h.data); // the store has flipped back to ok; the vault refreshes from this
+          setOffline(false);
+        } else next();
+      }, wait);
+    };
+    next();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [chainTrouble, apiUrl]);
+
   const value = useMemo<Glance>(
     () => ({
       apiUrl,
@@ -161,11 +195,13 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       voiceKey,
       mode,
       voiceReplies: voice,
+      sounds,
       catalog,
       health,
       vault,
       offline,
       offlineMessage,
+      chainTrouble,
       usdgDecimals: 6,
       markUrl: safely(() => browser.runtime.getURL("/glance-mark.png"), ""),
       orb,
@@ -176,7 +212,7 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
       openConsole: () => window.open(consoleLink, "_blank", "noopener"),
     }),
-    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, catalog, health, vault, offline, offlineMessage, orb, stillCount, holdStill, setOrb, refreshVault],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

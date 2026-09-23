@@ -10,6 +10,14 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(8790),
   RPC_URL: z.url().default("https://rpc.testnet.chain.robinhood.com"),
+  /**
+   * More endpoints for the same chain, comma separated, tried in order when the one before fails or times out. With a
+   * dedicated endpoint (e.g. QuickNode) as RPC_URL, the public RPC here is the backstop.
+   */
+  RPC_FALLBACK_URLS: z
+    .string()
+    .default("https://rpc.testnet.chain.robinhood.com")
+    .refine((v) => v.split(",").map((u) => u.trim()).filter(Boolean).every((u) => URL.canParse(u) && /^https?:/.test(u)), "RPC_FALLBACK_URLS must be comma-separated http(s) URLs"),
   DEPLOYMENT_FILE: z.string().default(resolve(import.meta.dirname, "../../../deployments/46630.json")),
   /** Where each stand-in feed gets its price (shared with apps/keeper). */
   PRICE_SOURCES_FILE: z.string().default(resolve(import.meta.dirname, "../../../config/price-sources.json")),

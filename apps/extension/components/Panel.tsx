@@ -81,6 +81,12 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           {assistant.listening && assistant.heard ? <span className="g-transcript">“{assistant.heard}”</span> : meta ? <span className="g-data">{meta}</span> : null}
         </div>
 
+        {g.chainTrouble && !g.offline ? (
+          <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
+            <span className="g-ui">The Robinhood Chain testnet isn't responding right now. Trying again…</span>
+            <span className="g-meta">This is the network, not your vault. Glance keeps checking and picks up where it left off.</span>
+          </div>
+        ) : null}
         {g.offline ? (
           <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
             <span className="g-ui">Glance can't reach its API</span>

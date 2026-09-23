@@ -190,6 +190,21 @@ The older checks below cover the microphone permission and the failure messages.
 - [ ] Click **Test speaking**. The orb's dots start moving (lime, a flowing band) the moment you hear the voice, and
       stop exactly when it finishes.
 
+**Sounds**
+
+- [ ] Tap **Option + G**. A short liquid sound plays as the orb starts melting into the panel. Press **Escape**, or
+      click the panel's close button: the close sound plays as the panel starts draining back. Nothing sounds for hover
+      cards, trades, voice, or docking and undocking.
+- [ ] Tap Option + G and Escape quickly several times. Sounds never overlap: each one cuts off the last.
+- [ ] Untick **Sounds** in settings. Opening and closing are silent. The setting is remembered after a restart. The
+      volume is `sound.volume` in `lib/tokens.ts` (0.4).
+
+**When the testnet isn't responding**
+
+- [ ] Point the API's `RPC_URL` and `RPC_FALLBACK_URLS` at an address that doesn't answer, then restart it. The panel
+      says "The Robinhood Chain testnet isn't responding right now. Trying again…", never "isn't a Glance vault".
+      Restore the RPC: within about 30 seconds the vault and prices come back without a reload.
+
 **Floating orb**
 
 - [ ] On a news article (for example a CNBC Tesla story), tap **Option + G**. The panel melts out of the orb and says

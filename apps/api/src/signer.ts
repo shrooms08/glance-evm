@@ -20,7 +20,9 @@
  * So the worst case of a stolen key is bounded, approved, oracle-priced trading until the owner revokes it. It is still
  * treated as a secret: it is never logged, never returned by any endpoint, and never included in an error message.
  */
-import { createWalletClient, http, type Account, type Chain, type WalletClient } from "viem";
+import { createWalletClient, type Account, type Chain, type WalletClient } from "viem";
+
+import { chainTransport } from "./chain.js";
 import { privateKeyToAccount } from "viem/accounts";
 
 export interface AgentSigner {
@@ -30,10 +32,10 @@ export interface AgentSigner {
   exclusive<T>(fn: () => Promise<T>): Promise<T>;
 }
 
-export function loadAgentSigner(privateKey: string | undefined, chain: Chain, rpcUrl: string): AgentSigner | null {
+export function loadAgentSigner(privateKey: string | undefined, chain: Chain, rpcUrls: string[]): AgentSigner | null {
   if (!privateKey) return null;
   const account = privateKeyToAccount(privateKey as `0x${string}`);
-  const wallet = createWalletClient({ account, chain, transport: http(rpcUrl, { timeout: 30_000 }) });
+  const wallet = createWalletClient({ account, chain, transport: chainTransport(rpcUrls, { timeout: 30_000 }) });
   let queue: Promise<unknown> = Promise.resolve();
   return {
     account,

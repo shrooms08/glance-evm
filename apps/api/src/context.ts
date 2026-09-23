@@ -9,6 +9,7 @@ import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
 import { Resolver } from "./resolver.js";
+import { rpcUrls } from "./rpc.js";
 import { loadAgentSigner, type AgentSigner } from "./signer.js";
 import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
@@ -41,8 +42,8 @@ export function createContext(config: Config): AppContext {
     deployment,
     catalog,
     chain,
-    client: createChainClient(chain, config.RPC_URL),
-    signer: loadAgentSigner(config.AGENT_PRIVATE_KEY, chain, config.RPC_URL),
+    client: createChainClient(chain, rpcUrls(config)),
+    signer: loadAgentSigner(config.AGENT_PRIVATE_KEY, chain, rpcUrls(config)),
     resolver: new Resolver(catalog.text),
     llm: createLlmResolver(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, catalog.text),
     desks: desksOf(deployment),

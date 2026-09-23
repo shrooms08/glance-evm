@@ -3,6 +3,8 @@
  */
 import { storage } from "wxt/utils/storage";
 
+import { sound } from "./tokens";
+
 export type Mode = "floating" | "docked";
 
 export const DEFAULT_API_URL = "http://localhost:8790";
@@ -29,6 +31,8 @@ export const voiceKeyLetter = storage.defineItem<string>("sync:voiceKeyLetter", 
 export const defaultMode = storage.defineItem<Mode>("sync:defaultMode", { fallback: "floating" });
 export const consoleUrl = storage.defineItem<string>("sync:consoleUrl", { fallback: DEFAULT_CONSOLE_URL });
 export const voiceReplies = storage.defineItem<boolean>("sync:voiceReplies", { fallback: true });
+/** The water-drop sound as the panel opens and closes (Settings → "Sounds"). */
+export const soundsEnabled = storage.defineItem<boolean>("sync:soundsEnabled", { fallback: sound.enabledByDefault });
 
 /** Orb position as distances from the viewport's right and bottom edges, so it survives window resizes. */
 export interface OrbPosition {

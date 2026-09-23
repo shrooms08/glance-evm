@@ -26,6 +26,11 @@ import { fakeSpeaker, fakeTranscriber } from "./fake.js";
  * trip) a new TLS connection costs about 0.8s before a request even starts. One undici version end to end: its own
  * fetch with its own Agent (mixing a package Agent into Node's built-in fetch mis-decodes compressed bodies).
  */
+// Importing undici makes its Agent the process's global dispatcher (undici's own import side effect). Node's built-in
+// fetch then can't decode gzip: the public testnet RPC's gzipped answers reach viem as garbage, and every chain read
+// fails. So the whole process uses the same undici's fetch, which pairs with that dispatcher and decodes as it should.
+globalThis.fetch = undiciFetch as unknown as typeof fetch;
+
 const keepAlive = new Agent({ keepAliveTimeout: 60_000, keepAliveMaxTimeout: 600_000, connections: 16 });
 export const providerFetch: typeof fetch = ((url: string | URL, init?: RequestInit) =>
   undiciFetch(url as never, { ...(init as object), dispatcher: keepAlive } as never)) as unknown as typeof fetch;

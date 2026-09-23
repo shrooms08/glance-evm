@@ -102,12 +102,15 @@ describe("GooPanel", () => {
   });
 
   const onClosed = vi.fn();
+  /** When (performance.now()) each onLiquidStart fired, and in which direction. */
+  let liquidStarts: Array<{ dir: string; at: number }> = [];
+  const onLiquidStart = (dir: string) => liquidStarts.push({ dir, at: performance.now() });
   const render = (open: boolean) =>
     act(() =>
       root.render(
         createElement(
           GooPanel,
-          { open, orb: orbDisc({ right: 24, bottom: 24 }, 1200, 800), placement: { right: 24, bottom: 96 }, onClosed },
+          { open, orb: orbDisc({ right: 24, bottom: 24 }, 1200, 800), placement: { right: 24, bottom: 96 }, onClosed, onLiquidStart },
           createElement("div", { className: "g-card" }, createElement("span", { className: "g-figure" }, "$250.00"), createElement("button", null, "Buy")),
         ),
       ),
@@ -262,6 +265,30 @@ describe("GooPanel", () => {
     expect(stage()!.querySelector("feGaussianBlur")!.getAttribute("stdDeviation")).toBe(String(liquid.blurLite));
   });
 
+  it("signals the sound on the frame the liquid starts moving: at once on open, after the text fades on close", () => {
+    liquidStarts = [];
+    render(false);
+    let t0 = performance.now();
+    render(true);
+    let frames = film(1_200);
+    expect(liquidStarts).toHaveLength(1);
+    expect(liquidStarts[0]!.dir).toBe("open");
+    let at = liquidStarts[0]!.at - t0;
+    expect(at).toBeLessThanOrEqual(48); // the two frames the liquid mounts on, before its pose flips
+    expect(firstMove(frames, "droplet")).toBeGreaterThanOrEqual(at);
+    expect(firstMove(frames, "droplet") - at).toBeLessThanOrEqual(32);
+
+    liquidStarts = [];
+    t0 = performance.now();
+    render(false);
+    frames = film(1_500);
+    expect(liquidStarts.map((s) => s.dir)).toEqual(["close"]);
+    at = liquidStarts[0]!.at - t0;
+    expect(at).toBeGreaterThanOrEqual(FADE); // not while the text is still fading
+    expect(firstMove(frames, "panel")).toBeGreaterThanOrEqual(at);
+    expect(firstMove(frames, "panel") - at).toBeLessThanOrEqual(32);
+  });
+
   it("with reduced motion, fades with no liquid", () => {
     reduced = true;
     onClosed.mockClear();
@@ -271,7 +298,9 @@ describe("GooPanel", () => {
     expect(stage()).toBeNull();
     expect(panel()!.classList.contains("g-panel-reduced")).toBe(true);
     expect(panel()!.classList.contains("is-shown")).toBe(true);
+    liquidStarts = [];
     render(false);
+    expect(liquidStarts.map((s) => s.dir)).toEqual(["close"]); // with the fade, since there is no liquid
     advance(FADE + 1);
     expect(panel()).toBeNull();
     expect(onClosed).toHaveBeenCalledTimes(1);
