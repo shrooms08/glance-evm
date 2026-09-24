@@ -24,6 +24,7 @@ import { loadAgentSigner, type AgentSigner } from "./signer.js";
 import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
 import { glanceVaultAbi } from "./abi.generated.js";
 import { createSessions, JsonSessionStore, type Sessions } from "./sessions.js";
+import { createTradeAuth, type TradeAuth } from "./tradeAuth.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
 export interface AppContext {
@@ -57,6 +58,8 @@ export interface AppContext {
   chartOverrides?: Partial<ChartDeps>;
   /** Browsers linked to vaults by their owners (src/sessions.ts). */
   sessions: Sessions;
+  /** Who may ask the agent to trade a vault: a signed request from a linked browser, or an open demo vault. */
+  tradeAuth: TradeAuth;
   /** The gitignored .cache dir for persisted caches (portfolio events, news, names); null keeps them in memory (tests). */
   cacheDir: string | null;
 }
@@ -85,6 +88,12 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
   const budget = new LlmBudget(budgetLimits(config), files.usage, log);
   const voice = selectVoiceProviders({ ...config, INTENT_MODEL: models.intent });
   const client = createChainClient(chain, rpcUrls(config));
+  const sessions = createSessions({
+    store: new JsonSessionStore(sessionStoreFile(config, cacheDir)),
+    ownerOf: (vault) => client.readContract({ address: vault, abi: glanceVaultAbi, functionName: "owner" }),
+    chainId: deployment.chainId,
+    log,
+  });
   return {
     config,
     deployment,
@@ -114,10 +123,12 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     llmModels: models,
     showMe: createShowMe({ apiKey: anthropicKey, model: models.other, budget, symbols: catalog.entries.map((e) => e.symbol), log }),
     cacheDir,
-    sessions: createSessions({
-      store: new JsonSessionStore(sessionStoreFile(config, cacheDir)),
-      ownerOf: (vault) => client.readContract({ address: vault, abi: glanceVaultAbi, functionName: "owner" }),
+    sessions,
+    tradeAuth: createTradeAuth({
+      sessions,
       chainId: deployment.chainId,
+      openDemoVaults: config.openDemoVaults.map((a) => getAddress(a)),
+      demoTradesPerHour: config.DEMO_TRADES_PER_HOUR,
       log,
     }),
     why: {

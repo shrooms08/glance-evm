@@ -17,6 +17,7 @@
     "test:integration": "vitest run test/integration",
     "abi": "node scripts/gen-abi.mjs",
     "check-vaults": "tsx --env-file-if-exists=.env scripts/check-vaults.ts",
+    "link-session": "tsx --env-file-if-exists=.env scripts/link-session.ts",
     "lint": "oxlint --deny-warnings src test scripts"
   },
   "dependencies": {

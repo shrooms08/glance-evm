@@ -176,11 +176,21 @@ describe.skipIf(!online)("live testnet", () => {
     expect(body.preflight.guard.message).toBe(`You only hold ${amd.quantity.formatted} in the vault.`);
   });
 
-  it("POST /trade refuses without the agent key and never sends", async () => {
+  it("POST /trade needs a linked browser (this vault isn't open for demos), and never sends", async () => {
     const res = await app!.request("/trade", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ vault, symbol: "TSLA", side: "buy", amount: "1" }),
+    });
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as any).error.code).toBe("SESSION_REQUIRED");
+  });
+
+  it("POST /trade on the open demo vault refuses without the agent key and never sends", async () => {
+    const res = await app!.request("/trade", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ vault: ctx!.config.openDemoVaults[0], symbol: "TSLA", side: "buy", amount: "1" }),
     });
     expect(res.status).toBe(503);
     expect(((await res.json()) as any).error.code).toBe("AGENT_KEY_MISSING");

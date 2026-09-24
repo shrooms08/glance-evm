@@ -9,6 +9,7 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
+import { signTrade, type TradeBody } from "../lib/session";
 import { relayShowMe, SHOWME_PORT } from "../lib/showStream";
 import type { ShowMeRequest } from "../lib/api";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
@@ -48,10 +49,12 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
   const timeout = req.path.startsWith("/trade") ? TRADE_TIMEOUT_MS : READ_TIMEOUT_MS;
   let res: Response;
   try {
+    // A trade is signed with this browser's session key (lib/session.ts): the API checks it before the agent signs.
+    const signed = req.method === "POST" && req.path === "/trade" ? await signTrade(req.body as TradeBody) : null;
     res = await fetch(`${base}${req.path}`, {
       method: req.method,
-      headers: req.body === undefined ? undefined : { "content-type": "application/json" },
-      body: req.body === undefined ? undefined : JSON.stringify(req.body),
+      headers: req.body === undefined ? undefined : { "content-type": "application/json", ...signed?.headers },
+      body: req.body === undefined ? undefined : (signed?.raw ?? JSON.stringify(req.body)),
       signal: AbortSignal.timeout(timeout),
     });
   } catch (err) {

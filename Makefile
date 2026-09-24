@@ -5,7 +5,7 @@ export
 NETWORK ?= robinhood
 
 .PHONY: help build test test-fork fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
-	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume feeds set-freshness fund-paxos check-vaults create-vault deploy-factory-v2 dry-run-factory-v2
+	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume link-demo-session feeds set-freshness fund-paxos check-vaults create-vault deploy-factory-v2 dry-run-factory-v2
 
 TESTNET_RPC_URL ?= https://rpc.testnet.chain.robinhood.com
 MAINNET_RPC_URL ?= https://rpc.mainnet.chain.robinhood.com
@@ -28,6 +28,7 @@ help:
 	@echo "make verify-commands       print manual verification commands [NETWORK=...]"
 	@echo "make keeper                mirror the mainnet Chainlink feeds (price AND updatedAt) onto the testnet feeds, once"
 	@echo "make keeper-watch          the same, every 120s, until Ctrl-C (use while recording)"
+	@echo "make link-demo-session     link a browser to the demo vault with the deployer key [SESSION=0x... VAULT=0x... API_URL=...]"
 	@echo "make keeper-pause / resume stop / restart the keeper (creates / removes keeper.paused)"
 	@echo "make feeds                 every feed's price, age, market state and source, from the API's /health"
 	@echo "make weekend               back-date the feeds 30h to demo the closed-market caps (run make keeper-pause first)"
@@ -119,6 +120,12 @@ keeper-pause:
 keeper-resume:
 	@rm -f keeper.paused
 	@echo "Keeper resumed locally (keeper.paused removed). If you committed keeper.paused, delete it in git and push to resume GitHub Actions."
+
+# Signs the owner's EIP-712 link with PRIVATE_KEY (or LINK_PRIVATE_KEY); the key is never printed. SESSION is the
+# session address shown in Glance's settings.
+link-demo-session:
+	@test -n "$(SESSION)" || { echo "Usage: make link-demo-session SESSION=0x... (the session address in Glance's settings)"; exit 1; }
+	@pnpm --silent --filter api link-session --session "$(SESSION)" $(if $(VAULT),--vault "$(VAULT)") --api "$(or $(API_URL),http://localhost:8790)"
 
 feeds:
 	@curl -s $(or $(API_URL),http://localhost:8790)/health | jq -r '.feeds[] | "\(.symbol)\t$$\(.price.value)\t\(.marketState)\tage \(.age)\t\(.source)\tlast write \(if .lastWrite then "\(.lastWrite.agoSeconds)s ago" else "none" end)"' | column -t -s $$'\t'

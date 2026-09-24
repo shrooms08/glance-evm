@@ -9,7 +9,7 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { storage } from "wxt/utils/storage";
 
-import { MAX_SESSION_SECONDS } from "@glance/core/session";
+import { bodyHash, MAX_SESSION_SECONDS, randomNonce, SESSION_HEADERS, tradeTypedData } from "@glance/core/session";
 
 const sessionPrivateKey = storage.defineItem<string | null>("local:sessionPrivateKey", { fallback: null });
 
@@ -54,4 +54,48 @@ export function linkExpiry(now = Date.now()): number {
 /** For tests only. */
 export function resetSessionCacheForTests() {
   cached = null;
+}
+
+/** A trade request's deadline: 45 seconds ahead (the API allows at most 60). */
+export const TRADE_REQUEST_SECONDS = 45;
+
+export interface TradeBody {
+  vault: string;
+  symbol: string;
+  side: "buy" | "sell";
+  amount: string;
+  slippageBps?: number;
+}
+
+/**
+ * Signs a trade request with this browser's session key (EIP-712 GlanceTradeRequest): the exact body to send, and the
+ * headers that carry the signature. A new random 128-bit nonce every time, so a request can be sent once only.
+ */
+export async function signTrade(body: TradeBody, now = Date.now()): Promise<{ raw: string; headers: Record<string, string> }> {
+  const account = await sessionAccount();
+  const raw = JSON.stringify(body);
+  const deadline = Math.floor(now / 1000) + TRADE_REQUEST_SECONDS;
+  const requestNonce = randomNonce(128);
+  const signature = await account.signTypedData(
+    tradeTypedData({
+      vault: body.vault as `0x${string}`,
+      action: "trade",
+      token: body.symbol,
+      amount: body.amount,
+      side: body.side,
+      maxSlippageBps: body.slippageBps ?? 0,
+      deadline: BigInt(deadline),
+      requestNonce,
+      bodyHash: bodyHash(raw),
+    }),
+  );
+  return {
+    raw,
+    headers: {
+      [SESSION_HEADERS.session]: account.address,
+      [SESSION_HEADERS.signature]: signature,
+      [SESSION_HEADERS.deadline]: String(deadline),
+      [SESSION_HEADERS.nonce]: `0x${requestNonce.toString(16)}`,
+    },
+  };
 }

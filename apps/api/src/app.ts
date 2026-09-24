@@ -13,7 +13,7 @@ import type { GuardError } from "./errors.js";
 import { z } from "zod";
 
 import type { AppContext } from "./context.js";
-import { rateLimit } from "./rateLimit.js";
+import { clientIp, rateLimit } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
 import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
@@ -245,8 +245,18 @@ export function createServerApp(ctx: AppContext) {
     return send(c, quote);
   });
 
+  // The only route that makes the agent sign a transaction: a signed request from a browser the vault's owner linked
+  // (or an open demo vault), checked before anything else (src/tradeAuth.ts). The on-chain caps still apply.
   app.post("/trade", async (c) => {
-    const body = parse(tradeBody, await jsonBody(c));
+    const raw = await c.req.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      throw new ApiError(400, "INVALID_JSON", "The request body must be JSON.");
+    }
+    const body = parse(tradeBody, json);
+    await ctx.tradeAuth.check({ raw, fields: { ...body, vault: getAddress(body.vault) }, header: (n) => c.req.header(n), ip: clientIp(c, config.TRUST_PROXY) });
     try {
       return send(c, await tradeView(ctx, body));
     } catch (err) {

@@ -134,9 +134,18 @@ const envSchema = z.object({
   /** Linked browser sessions (JSON). Default .cache/sessions.json; memory only in tests unless set; "" for memory. */
   SESSION_STORE_FILE: z.string().optional(),
   SESSION_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(30),
+  /**
+   * Vaults anyone may trade without a linked browser, so judges can try Glance (comma separated). Default: the Paxos
+   * USDG demo vault. "" for none. Their on-chain caps still apply, and each visitor is limited per hour.
+   */
+  OPEN_DEMO_VAULTS: z
+    .string()
+    .default("0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113")
+    .refine((v) => v.split(",").map((a) => a.trim()).filter(Boolean).every((a) => /^0x[0-9a-fA-F]{40}$/.test(a)), "OPEN_DEMO_VAULTS must be comma-separated 0x addresses"),
+  DEMO_TRADES_PER_HOUR: z.coerce.number().int().min(0).default(10),
 });
 
-export type Config = z.infer<typeof envSchema> & { corsOrigins: string[] };
+export type Config = z.infer<typeof envSchema> & { corsOrigins: string[]; openDemoVaults: `0x${string}`[] };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = envSchema.safeParse(env);
@@ -148,5 +157,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const corsOrigins = parsed.data.CORS_ORIGINS.split(",")
     .map((o) => o.trim())
     .filter(Boolean);
-  return { ...parsed.data, corsOrigins };
+  const openDemoVaults = parsed.data.OPEN_DEMO_VAULTS.split(",")
+    .map((a) => a.trim())
+    .filter(Boolean) as `0x${string}`[];
+  return { ...parsed.data, corsOrigins, openDemoVaults };
 }
