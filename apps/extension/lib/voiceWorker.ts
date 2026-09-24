@@ -11,12 +11,22 @@
  *              GET /voice/speak (Deepgram Aura), streamed into a MediaSource so it starts playing on the first chunks
  *
  * Fallback: only if the Glance API can't be reached, or has no transcription provider, the browser's own speech
- * recognition is used instead, and a "fallback" event says so, so the panel can say it plainly. Replies fall back to
- * the browser's speech synthesis the same way. Every browser dependency is injected, so this is unit tested.
+ * recognition is used instead (input only), and a "fallback" event says so, so the panel can say it plainly.
+ *
+ * Replies are only ever spoken in Glance's own voice (the API's /voice/speak). Never the browser's speech synthesis:
+ *   - no voice at all (the API down, or no speech provider): the text is shown, a soft tone plays, nothing is said
+ *   - the audio stops after it started (no progress for STALL_MS, or an error): it stops there ("cut"), and the page
+ *     shows the rest as text. A reply is never finished in another voice.
+ *   - the common lines with no values in them (@glance/core/persona FIXED_LINES) are fetched once per session and
+ *     replayed from memory (keyed by the voice the API reports).
+ * Every browser dependency is injected, so this is unit tested.
  */
 import type { Listener, ListenHandlers } from "./voice";
 import type { FallbackReason, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceTiming } from "./voiceMessages";
 import type { VoiceCode } from "./voiceReasons";
+import { FIXED_LINES } from "@glance/core/persona";
+
+const FIXED = new Set(FIXED_LINES);
 
 type EventBody = VoiceEvent extends infer E ? (E extends VoiceEvent ? Omit<E, "kind" | "session" | "seq"> : never) : never;
 
@@ -35,7 +45,7 @@ export interface WorkerDeps {
    * Points the element at a URL whose MP3 streams in, so playback starts on the first chunks rather than when the
    * whole file has arrived (MediaSource). Absent (tests, or no MediaSource): the element loads the URL itself.
    */
-  streamInto?(el: HTMLAudioElement, url: string): Promise<void>;
+  streamInto?(el: HTMLAudioElement, url: string, onVoice?: (voice: string | null) => void): Promise<void>;
   /**
    * getUserMedia failed with this error name: what to tell the user (the background decides from what it remembers:
    * enable voice, the browser's grant ran out, no microphone). See lib/voicePrefs.ts.
@@ -45,8 +55,12 @@ export interface WorkerDeps {
   micWorked(): void;
   /** The browser's speech recognition, for the fallback only. */
   listen(lang: string, h: ListenHandlers): Listener | null;
-  /** The browser's speech synthesis, for the fallback only. Resolves when done; onStart when audible. */
-  speakLocally(text: string, onStart: () => void): Promise<boolean>;
+  /** A soft tone for "no voice right now" (the text is shown; nothing is said). */
+  errorTone(): void;
+  /** An object URL for a whole clip (a pre-recorded line). */
+  objectUrl(blob: Blob): string;
+  /** Debug only: which voice spoke a reply (never the text). */
+  debug?(line: string): void;
   emit(e: VoiceEvent | SpeechEvent): void;
   now(): number;
 }
@@ -56,6 +70,8 @@ export const STATUS_TIMEOUT_MS = 800;
 /** How long the stream may take to open before the recording is uploaded whole instead. */
 export const STREAM_OPEN_GRACE_MS = 1_500;
 const TRANSCRIPT_TIMEOUT_MS = 6_000;
+/** Playback that makes no progress for this long, after it started, has stalled: the reply stops there. */
+export const STALL_MS = 2_500;
 const STATUS_TTL_MS = 30_000;
 
 interface Status {
@@ -63,6 +79,8 @@ interface Status {
   transcription: boolean;
   speech: boolean;
   stream: boolean;
+  /** The configured voice (the pre-recorded lines are kept per voice). */
+  voice: string | null;
 }
 
 interface Session {
@@ -142,10 +160,16 @@ export class VoiceWorker {
     let value: Status;
     try {
       const res = await this.d.fetch(`${api}/voice/status`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
-      const body = (await res.json()) as { available?: { transcription?: boolean; speech?: boolean; stream?: boolean } };
-      value = { reachable: res.ok, transcription: Boolean(body.available?.transcription), speech: Boolean(body.available?.speech), stream: Boolean(body.available?.stream) };
+      const body = (await res.json()) as { available?: { transcription?: boolean; speech?: boolean; stream?: boolean }; speechChain?: Array<{ voice?: string }> };
+      value = {
+        reachable: res.ok,
+        transcription: Boolean(body.available?.transcription),
+        speech: Boolean(body.available?.speech),
+        stream: Boolean(body.available?.stream),
+        voice: body.speechChain?.[0]?.voice ?? null,
+      };
     } catch {
-      value = { reachable: false, transcription: false, speech: false, stream: false };
+      value = { reachable: false, transcription: false, speech: false, stream: false, voice: null };
     }
     // Don't remember an outage for long: the API may just be starting.
     this.status = { at: value.reachable ? this.d.now() : this.d.now() - STATUS_TTL_MS + 3_000, api, value };
@@ -382,6 +406,9 @@ export class VoiceWorker {
   private chain: Promise<void> = Promise.resolve();
   private gen = 0;
 
+  /** Pre-recorded lines fetched this session, by voice and text. */
+  private fixed = new Map<string, Blob>();
+
   private async play(id: string, text: string, api: string, onStarted?: () => void) {
     let started = false;
     const markStarted = () => {
@@ -389,46 +416,99 @@ export class VoiceWorker {
       started = true;
       onStarted?.();
     };
-    const status = await this.apiStatus(api);
-    if (status.speech) {
-      const el = this.d.createAudio();
-      this.playing = { el, id };
-      const played = await new Promise<boolean>((resolve) => {
-        let begun = false;
-        el.onplaying = () => {
-          if (begun) return;
-          begun = true;
-          markStarted();
-          this.d.emit({ kind: "voice:speech", id, type: "start" });
-        };
-        const done = (ok: boolean) => () => {
-          if (this.playing?.el === el) this.playing = null;
-          if (begun) this.d.emit({ kind: "voice:speech", id, type: "end" });
-          resolve(ok || begun);
-        };
-        // Where playback is, for "Show me" (its drawings follow the voice). Duration is null while the audio streams in.
-        el.ontimeupdate = () => this.d.emit({ kind: "voice:speech", id, type: "progress", t: el.currentTime, d: Number.isFinite(el.duration) ? el.duration : null });
-        el.onended = done(true);
-        el.onpause = done(true);
-        el.onerror = done(false);
-        const url = `${api}/voice/speak?text=${encodeURIComponent(text)}`;
-        if (this.d.streamInto) {
-          void this.d.streamInto(el, url).catch(() => resolve(false));
-        } else el.src = url;
-        void el.play().catch(() => resolve(false));
-      });
-      if (played) return;
-    }
-    // The browser's own voice, as a last resort.
-    const spoke = await this.d.speakLocally(text, () => {
+    // No voice: the text is already on screen; a soft tone says there's no voice, and nothing is spoken.
+    const unavailable = () => {
       markStarted();
-      this.d.emit({ kind: "voice:speech", id, type: "start" });
-    });
-    if (spoke) this.d.emit({ kind: "voice:speech", id, type: "end" });
-    else {
-      markStarted();
+      this.d.errorTone();
       this.d.emit({ kind: "voice:speech", id, type: "unavailable" });
+    };
+    let status = await this.apiStatus(api);
+    if (!status.speech) {
+      // A remembered outage may be stale (the API restarting): ask once more before giving up.
+      this.status = null;
+      status = await this.apiStatus(api);
     }
+    if (!status.speech) return unavailable();
+
+    const url = `${api}/voice/speak?text=${encodeURIComponent(text)}`;
+    const el = this.d.createAudio();
+    this.playing = { el, id };
+    const outcome = await new Promise<"ended" | "cut" | "unavailable">((resolve) => {
+      let begun = false;
+      let settled = false;
+      let lastTime = -1;
+      let lastMove = this.d.now();
+      let watch: ReturnType<typeof setInterval> | undefined;
+      const settle = (o: "ended" | "cut" | "unavailable") => {
+        if (settled) return;
+        settled = true;
+        clearInterval(watch);
+        if (this.playing?.el === el) this.playing = null;
+        resolve(o);
+      };
+      // After it started, any stop that isn't the natural end is a cut: stop right there, in this voice.
+      const cut = () => {
+        if (settled) return;
+        const t = el.currentTime;
+        const d = Number.isFinite(el.duration) ? el.duration : null;
+        settle("cut"); // first, so the pause below isn't taken for a normal end
+        try {
+          el.pause();
+        } catch {
+          // already stopped
+        }
+        this.d.emit({ kind: "voice:speech", id, type: "cut", t, d });
+      };
+      el.onplaying = () => {
+        if (begun) return;
+        begun = true;
+        lastMove = this.d.now();
+        markStarted();
+        this.d.emit({ kind: "voice:speech", id, type: "start" });
+        watch = setInterval(() => {
+          if (el.currentTime !== lastTime) {
+            lastTime = el.currentTime;
+            lastMove = this.d.now();
+          } else if (this.d.now() - lastMove > STALL_MS) cut();
+        }, 250);
+      };
+      // Where playback is, for "Show me" (its drawings follow the voice). Duration is null while the audio streams in.
+      el.ontimeupdate = () => this.d.emit({ kind: "voice:speech", id, type: "progress", t: el.currentTime, d: Number.isFinite(el.duration) ? el.duration : null });
+      el.onended = () => {
+        if (begun) this.d.emit({ kind: "voice:speech", id, type: "end" });
+        settle(begun ? "ended" : "unavailable");
+      };
+      // A pause we didn't make (hush makes its own): treat as the end of this reply.
+      el.onpause = () => {
+        if (settled) return;
+        if (begun) this.d.emit({ kind: "voice:speech", id, type: "end" });
+        settle(begun ? "ended" : "unavailable");
+      };
+      el.onerror = () => (begun ? cut() : settle("unavailable"));
+      const failed = () => (begun ? undefined : settle("unavailable")); // after it began, the stall watch decides
+      void (async () => {
+        const key = `${status.voice ?? ""}\n${text}`;
+        if (FIXED.has(text.trim())) {
+          // A common line: fetched whole once this session, then from memory.
+          let blob = this.fixed.get(key);
+          if (!blob) {
+            const res = await this.d.fetch(url).catch(() => null);
+            if (!res?.ok) return failed();
+            this.d.debug?.(`[glance] reply voice: ${res.headers.get("x-voice") ?? "?"} (${res.headers.get("x-voice-cache") ?? "live"})`);
+            blob = await res.blob();
+            this.fixed.set(key, blob);
+          } else this.d.debug?.(`[glance] reply voice: ${status.voice ?? "?"} (this session's copy)`);
+          el.src = this.d.objectUrl(blob);
+        } else if (this.d.streamInto) {
+          await this.d.streamInto(el, url, (voice) => this.d.debug?.(`[glance] reply voice: ${voice ?? "?"}`)).catch(failed);
+          return;
+        } else el.src = url;
+      })().then(
+        () => void el.play().catch(failed),
+        failed,
+      );
+    });
+    if (outcome === "unavailable") unavailable();
   }
 
   /** Stops any reply that is playing, and drops any queued (a new command, or the user talking over it). */

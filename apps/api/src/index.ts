@@ -24,5 +24,8 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   console.log(`  voice speech chain:  ${ctx.voice.status.speechFallbacks}`);
   console.log(`  voice intent:        ${ctx.voice.status.intent}`);
   for (const w of ctx.voice.status.warnings) console.log(`  voice warning: ${w}`);
+  if (ctx.prerecorded) console.log(`  voice pre-recorded: ${ctx.prerecorded.size} common lines in ${ctx.prerecorded.voice} (.cache/voice)`);
+  // The common lines, recorded once in the configured voice (only the missing ones: a new voice records them all).
+  if (ctx.prerecorded && ctx.voice.chain) void ctx.prerecorded.warm(ctx.voice.chain, (l) => console.log(l));
 });
 injectWebSocket(server);

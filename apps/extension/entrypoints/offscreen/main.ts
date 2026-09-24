@@ -8,7 +8,7 @@
  */
 import { browser } from "wxt/browser";
 
-import { listen, speak as speakWithBrowser } from "../../lib/voice";
+import { listen } from "../../lib/voice";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../../lib/voiceMessages";
 import type { VoiceCode } from "../../lib/voiceReasons";
 import { toPcm16, VoiceWorker } from "../../lib/voiceWorker";
@@ -62,7 +62,7 @@ async function capturePcm(stream: MediaStream, onChunk: (pcm: Uint8Array) => voi
  * about when the provider's first bytes do (an <audio> element given the URL waits for the whole file). The element's
  * own playing/ended events still drive the speaking orb.
  */
-async function streamInto(el: HTMLAudioElement, url: string) {
+async function streamInto(el: HTMLAudioElement, url: string, onVoice?: (voice: string | null) => void) {
   if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported("audio/mpeg")) {
     el.src = url;
     return;
@@ -72,6 +72,7 @@ async function streamInto(el: HTMLAudioElement, url: string) {
   await new Promise((r) => ms.addEventListener("sourceopen", r, { once: true }));
   const sb = ms.addSourceBuffer("audio/mpeg");
   const res = await fetch(url);
+  onVoice?.(res.headers.get("x-voice"));
   if (!res.ok || !res.body) {
     ms.endOfStream("network");
     throw new Error(`speech answered ${res.status}`);
@@ -89,6 +90,33 @@ async function streamInto(el: HTMLAudioElement, url: string) {
   if (ms.readyState === "open") ms.endOfStream();
 }
 
+/**
+ * "No voice right now": a soft, short two-note tone (Glance never speaks in another voice instead). Web Audio, no
+ * file; quiet, and silent if audio can't play.
+ */
+function errorTone() {
+  try {
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+    for (const [i, f] of [660, 494].entries()) {
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      o.frequency.value = f;
+      o.connect(gain);
+      o.start(now + i * 0.12);
+      o.stop(now + 0.12 + i * 0.12 + 0.1);
+    }
+    setTimeout(() => void ctx.close().catch(() => {}), 600);
+  } catch {
+    // sound is a courtesy, never an error
+  }
+}
+
 const worker = new VoiceWorker({
   fetch: (...args) => fetch(...args),
   WebSocket,
@@ -100,15 +128,10 @@ const worker = new VoiceWorker({
   micFailed: async (name) => ((await browser.runtime.sendMessage({ kind: "voice:mic-failed", name } satisfies VoiceRequest)) as VoiceCode | undefined) ?? "mic-denied",
   micWorked: () => void browser.runtime.sendMessage({ kind: "voice:mic-worked" } satisfies VoiceRequest).catch(() => {}),
   listen,
-  speakLocally: async (text, onStart) => {
-    let started = false;
-    await speakWithBrowser(text, true, {
-      onStart: () => {
-        started = true;
-        onStart();
-      },
-    });
-    return started;
+  errorTone,
+  objectUrl: (blob) => URL.createObjectURL(blob),
+  debug: (line) => {
+    if (import.meta.env.DEV) console.debug(line);
   },
   emit: (e: VoiceEvent | SpeechEvent) => void browser.runtime.sendMessage(e).catch(() => {}),
   now: () => performance.now(),

@@ -10,10 +10,6 @@ export interface VoiceDiagnostics {
   browser: BrowserInfo;
   /** SpeechRecognition (or webkitSpeechRecognition) exists in this build. */
   recognition: boolean;
-  /** speechSynthesis exists. */
-  synthesis: boolean;
-  /** Installed speech voices; 0 means replies can only be shown, not spoken. */
-  voices: number;
   micPermission: MicPermission;
   /** An audio input device is present. null when it can't be known without permission. */
   micDevice: boolean | null;
@@ -33,18 +29,6 @@ export async function micPermission(): Promise<MicPermission> {
   }
 }
 
-/** Voices load asynchronously in Chrome; wait briefly for voiceschanged. */
-export function voiceCount(timeoutMs = 1_000): Promise<number> {
-  if (typeof speechSynthesis === "undefined") return Promise.resolve(0);
-  const now = speechSynthesis.getVoices().length;
-  if (now > 0) return Promise.resolve(now);
-  return new Promise((resolve) => {
-    const done = () => resolve(speechSynthesis.getVoices().length);
-    speechSynthesis.addEventListener("voiceschanged", done, { once: true });
-    setTimeout(done, timeoutMs);
-  });
-}
-
 export async function micDevicePresent(): Promise<boolean | null> {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -57,12 +41,10 @@ export async function micDevicePresent(): Promise<boolean | null> {
 }
 
 export async function diagnose(): Promise<VoiceDiagnostics> {
-  const [voices, permission, device] = await Promise.all([voiceCount(), micPermission(), micDevicePresent()]);
+  const [permission, device] = await Promise.all([micPermission(), micDevicePresent()]);
   return {
     browser: detectBrowser(navigator as unknown as Parameters<typeof detectBrowser>[0]),
     recognition: hasRecognition(),
-    synthesis: typeof speechSynthesis !== "undefined",
-    voices,
     micPermission: permission,
     micDevice: device,
   };

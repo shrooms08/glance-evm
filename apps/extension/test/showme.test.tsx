@@ -160,11 +160,11 @@ describe("what's read from the page", () => {
 function deps(over: Partial<ShowMeDeps> = {}, reply = { spoken: "Deliveries hit a record. Revenue grew too.", actions: [] as ShowAction[] }) {
   const calls: string[] = [];
   let progress: ((t: number, d: number | null) => void) | null = null;
-  let endSpeech: () => void = () => {};
-  const d: ShowMeDeps & { calls: string[]; progress(t: number, d: number | null): void; end(): void } = {
+  let endSpeech: (o: "ended" | "cut" | "unavailable") => void = () => {};
+  const d: ShowMeDeps & { calls: string[]; progress(t: number, d: number | null): void; end(o?: "ended" | "cut" | "unavailable"): void } = {
     calls,
     progress: (t, dur) => progress?.(t, dur),
-    end: () => endSpeech(),
+    end: (o = "ended") => endSpeech(o),
     readPage: () => readPage(document, { companies: ["TSLA"] }),
     surface: "page",
     capture: vi.fn(async () => "data:image/jpeg;base64,AAAA"),
@@ -172,11 +172,11 @@ function deps(over: Partial<ShowMeDeps> = {}, reply = { spoken: "Deliveries hit 
     ask: vi.fn(async () => ({ ok: true as const, data: { reply: reply.spoken, spoken: reply.spoken, actions: reply.actions, source: "claude" as const } })),
     speak: vi.fn(
       (_t, h) =>
-        new Promise<void>((resolve) => {
+        new Promise<"ended" | "cut" | "unavailable" | "off">((resolve) => {
           progress = h.onProgress;
-          endSpeech = () => {
+          endSpeech = (o) => {
             h.onEnd();
-            resolve();
+            resolve(o);
           };
           h.onStart();
         }),
@@ -260,6 +260,48 @@ describe("Show me, end to end (faked API and voice)", () => {
     d.end();
     await run.finished;
     expect(d.draw).not.toHaveBeenCalled();
+  });
+});
+
+describe("one voice: a reply that stops part way", () => {
+  it("the voice stopped mid-reply: drawings stay where the words got to, the whole answer stays written", async () => {
+    const spoken = "Deliveries hit a record. Later on, revenue grew a lot, see here.";
+    const d = deps({}, { spoken, actions: [{ kind: "UNDERLINE", quote: "record deliveries", at: spoken.indexOf("hit") }, { kind: "CIRCLE", quote: "Revenue grew 12%", at: spoken.indexOf("see") }] });
+    const run = runShowMe("what's this article saying?", d);
+    await flush();
+    expect(d.calls).toContain("UNDERLINE");
+    d.end("cut"); // the audio stalled before "see here"
+    await run.finished;
+    expect(d.draw).toHaveBeenCalledTimes(1); // the circle never came: its words weren't said
+    expect(d.say).toHaveBeenLastCalledWith(spoken, "idle", "The voice stopped there. The rest is written above.");
+  });
+
+  it("no voice at all: the answer is written, with a note; drawings still happen", async () => {
+    const spoken = "Deliveries hit a record. Revenue grew too, see.";
+    const d = deps({}, { spoken, actions: [{ kind: "CIRCLE", quote: "Revenue grew 12%", at: spoken.indexOf("see") }] });
+    const run = runShowMe("what's this article saying?", d);
+    await flush();
+    d.end("unavailable");
+    await run.finished;
+    expect(d.draw).toHaveBeenCalledTimes(1);
+    expect(d.say).toHaveBeenLastCalledWith(spoken, "idle", "No voice right now. The answer is written above.");
+  });
+
+  it("nothing in the extension uses the browser's voice (speechSynthesis)", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = join(import.meta.dirname, "..");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const f of readdirSync(dir)) {
+        const p = join(dir, f);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(f)) files.push(p);
+      }
+    };
+    for (const dir of ["lib", "components", "entrypoints"]) walk(join(root, dir));
+    const offenders = files.filter((f) => /speechSynthesis|SpeechSynthesisUtterance/.test(readFileSync(f, "utf8")));
+    expect(offenders).toEqual([]);
   });
 });
 

@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ListenHandlers } from "../lib/voice";
+import { FIXED_LINES, LINES } from "@glance/core/persona";
 import type { SpeechEvent, VoiceEvent } from "../lib/voiceMessages";
 import { toPcm16, VoiceWorker, wav, type WorkerDeps } from "../lib/voiceWorker";
 
@@ -70,7 +71,10 @@ class FakeCapture {
 class FakeAudio {
   static all: FakeAudio[] = [];
   src = "";
+  currentTime = 0;
+  duration = Number.NaN;
   onplaying: (() => void) | null = null;
+  ontimeupdate: (() => void) | null = null;
   onended: (() => void) | null = null;
   onpause: (() => void) | null = null;
   onerror: (() => void) | null = null;
@@ -95,6 +99,8 @@ interface Setup {
   blocker?: string | null;
   /** getUserMedia fails with this DOMException name. */
   mic?: string;
+  /** The configured voice the API reports. */
+  voice?: string;
   listen?: (h: ListenHandlers) => void;
 }
 
@@ -109,7 +115,7 @@ function setup(o: Setup = {}) {
     if (u.endsWith("/voice/warm")) return Response.json({ ok: true });
     if (u.endsWith("/voice/status")) {
       if (status === "unreachable") throw new TypeError("Failed to fetch");
-      return Response.json({ available: status });
+      return Response.json({ available: status, speechChain: [{ voice: o.voice ?? "flux-sienna-en" }] });
     }
     if (u.endsWith("/voice/command")) {
       if (o.command === "fail") throw new TypeError("Failed to fetch");
@@ -119,12 +125,13 @@ function setup(o: Setup = {}) {
       if (o.transcribe === "fail") throw new TypeError("Failed to fetch");
       return Response.json(o.transcribe ?? { text: "what's Tesla at", confidence: 0.9 });
     }
+    if (u.includes("/voice/speak?")) return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "audio/mpeg", "x-voice": o.voice ?? "flux-sienna-en", "x-voice-cache": "prerecorded" } });
     throw new Error(`unexpected ${u}`);
   });
-  const speakLocally = vi.fn(async (_t: string, onStart: () => void) => {
-    onStart();
-    return true;
-  });
+  // The browser's own voice: it must never be used for a reply.
+  const speechSynthesis = { speak: vi.fn(), cancel: vi.fn(), getVoices: vi.fn(() => []) };
+  vi.stubGlobal("speechSynthesis", speechSynthesis);
+  const errorTone = vi.fn();
   const listen = vi.fn((_lang: string, h: ListenHandlers) => {
     o.listen?.(h);
     return { stop: vi.fn(), abort: vi.fn() };
@@ -145,13 +152,15 @@ function setup(o: Setup = {}) {
     micFailed: vi.fn(async () => (o.blocker ?? "mic-denied") as never),
     micWorked: vi.fn(),
     listen: listen as never,
-    speakLocally,
+    errorTone,
+    objectUrl: vi.fn(() => "blob:clip"),
     emit: (e) => events.push(e),
     now: () => clock,
   };
   const worker = new VoiceWorker(deps);
   const types = () => events.filter((e): e is VoiceEvent => e.kind === "voice:event").map((e) => e.type);
-  return { worker, deps, events, requests, types, listen, speakLocally, advance: (ms: number) => (clock += ms) };
+  const speech = () => events.filter((e): e is SpeechEvent => e.kind === "voice:speech").map((e) => e.type);
+  return { worker, deps, events, requests, types, listen, errorTone, speechSynthesis, speech, advance: (ms: number) => (clock += ms) };
 }
 
 beforeEach(() => {
@@ -320,11 +329,113 @@ describe("voice worker: spoken replies", () => {
     expect(FakeAudio.all[1]!.paused).toBe(true);
   });
 
-  it("fall back to the browser's voice when the API has no speech provider", async () => {
-    const t = setup({ status: { transcription: true, speech: false, stream: true } });
-    await t.worker.speak("r3", "Tesla is at $380.", API);
-    expect(t.speakLocally).toHaveBeenCalledWith("Tesla is at $380.", expect.any(Function));
-    expect(t.events.filter((e) => e.kind === "voice:speech").map((e) => (e as SpeechEvent).type)).toEqual(["start", "end"]);
+  it("no voice (no speech provider, or the API down): the text stays shown, a soft tone, nothing said, never the browser's voice", async () => {
+    for (const status of [{ transcription: true, speech: false, stream: true }, "unreachable" as const]) {
+      const t = setup({ status });
+      await t.worker.speak("r3", "I can't tell you what to buy or sell. I can show you the price, why it moved, your position and your limits.", API);
+      expect(t.speech()).toEqual(["unavailable"]);
+      expect(t.errorTone).toHaveBeenCalledTimes(1);
+      expect(t.speechSynthesis.speak).not.toHaveBeenCalled();
+      expect(FakeAudio.all).toHaveLength(0);
+      FakeAudio.all = [];
+    }
+  });
+
+  it("the advice decline and every other common line play in Glance's voice, fetched once per session", async () => {
+    const t = setup();
+    for (const line of FIXED_LINES) {
+      const p = t.worker.speak(`r-${line.length}`, line, API);
+      await flush();
+      const a = FakeAudio.all.at(-1)!;
+      expect(a.src).toBe("blob:clip"); // the whole clip, from the API's pre-recorded line
+      a.onplaying!();
+      a.onended!();
+      await p;
+    }
+    const speakRequests = () => t.requests.filter((r) => r.url.includes("/voice/speak?")).length;
+    expect(speakRequests()).toBe(FIXED_LINES.length);
+    // Again this session: from memory, no request.
+    const again = t.worker.speak("again", LINES.noAdvice, API);
+    await flush();
+    FakeAudio.all.at(-1)!.onplaying!();
+    FakeAudio.all.at(-1)!.onended!();
+    await again;
+    expect(speakRequests()).toBe(FIXED_LINES.length);
+    expect(t.speechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it("a stall mid-reply stops it there (a 'cut'): no other voice, no restart", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      const p = t.worker.speak("r4", "Tesla is at $375.81, and the market's open. It rose after record deliveries.", API);
+      await vi.advanceTimersByTimeAsync(1);
+      const a = FakeAudio.all.at(-1)!;
+      a.onplaying!();
+      a.currentTime = 1.2;
+      for (let i = 0; i < 4; i++) {
+        t.advance(250);
+        await vi.advanceTimersByTimeAsync(250);
+      }
+      // No progress from here on (the stream stopped): after 2.5s, cut.
+      for (let i = 0; i < 12; i++) {
+        t.advance(250);
+        await vi.advanceTimersByTimeAsync(250);
+      }
+      await p;
+      expect(t.speech()).toEqual(["start", "cut"]);
+      expect(t.events.find((e) => e.kind === "voice:speech" && e.type === "cut")).toMatchObject({ t: 1.2 });
+      expect(a.paused).toBe(true);
+      expect(FakeAudio.all).toHaveLength(1); // not started again
+      expect(t.speechSynthesis.speak).not.toHaveBeenCalled();
+      expect(t.errorTone).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an audio error after it started is a cut too; before it started, it's 'no voice'", async () => {
+    const t = setup();
+    const p = t.worker.speak("r5", "Tesla is at $375.81.", API);
+    await flush();
+    FakeAudio.all[0]!.onplaying!();
+    FakeAudio.all[0]!.currentTime = 0.8;
+    FakeAudio.all[0]!.onerror!();
+    await p;
+    expect(t.speech()).toEqual(["start", "cut"]);
+    const u = setup();
+    const q = u.worker.speak("r6", "Tesla is at $375.81.", API);
+    await flush();
+    FakeAudio.all.at(-1)!.onerror!();
+    await q;
+    expect(u.speech()).toEqual(["unavailable"]);
+    expect(u.errorTone).toHaveBeenCalledTimes(1);
+    expect(u.speechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it("a new voice on the API: the session's common lines are fetched again in it", async () => {
+    const t = setup({ voice: "flux-sienna-en" });
+    const play = async (id: string) => {
+      const p = t.worker.speak(id, LINES.wontTrade, API);
+      await flush();
+      FakeAudio.all.at(-1)!.onplaying!();
+      FakeAudio.all.at(-1)!.onended!();
+      await p;
+    };
+    await play("a");
+    await play("b");
+    expect(t.requests.filter((r) => r.url.includes("/voice/speak?"))).toHaveLength(1);
+    // The API now reports another voice (the status is re-read after its time-to-live).
+    t.worker["status"] = null;
+    (t.worker as unknown as { status: unknown }).status = null;
+    const u = setup({ voice: "aura-2-harmonia-en" });
+    (u.worker as unknown as { fixed: Map<string, Blob> }).fixed = (t.worker as unknown as { fixed: Map<string, Blob> }).fixed;
+    const p = u.worker.speak("c", LINES.wontTrade, API);
+    await flush();
+    FakeAudio.all.at(-1)!.onplaying!();
+    FakeAudio.all.at(-1)!.onended!();
+    await p;
+    expect(u.requests.filter((r) => r.url.includes("/voice/speak?"))).toHaveLength(1);
   });
 });
 

@@ -22,6 +22,7 @@ import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, 
 import { useGlance } from "./context";
 import { spokenWhy } from "./Why";
 import { LINES } from "@glance/core/persona";
+import { CUT_NOTE, NO_VOICE_NOTE } from "../lib/showMe";
 
 /** The short label under the reason, so the kinds of failure are told apart at a glance. */
 const KIND_META: Record<VoiceFailureKind, string> = {
@@ -101,10 +102,13 @@ export function useAssistant(opts: AssistantOptions = {}) {
     async (line: string, meta = "") => {
       // Show the line at once; the orb moves only while the voice is actually speaking.
       g.setOrb({ state: "idle", line, meta });
-      await speak(line, g.voiceReplies, {
+      const outcome = await speak(line, g.voiceReplies, {
         onStart: () => g.setOrb({ state: "speaking", line, meta }),
         onEnd: () => g.setOrb({ state: "idle", line, meta }),
       });
+      // Never another voice: if Glance's stopped part way, or there's none right now, the line stays written.
+      if (outcome === "cut") g.setOrb({ state: "idle", line, meta: CUT_NOTE });
+      else if (outcome === "unavailable") g.setOrb({ state: "idle", line, meta: NO_VOICE_NOTE });
     },
     [g],
   );
@@ -271,6 +275,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
         },
         onReplyStart: () => g.setOrb({ state: "speaking" }),
         onReplyEnd: () => g.setOrb({ state: "idle" }),
+        // The reply's voice stopped part way: the reply stays written in the panel (never finished in another voice).
+        onReplyCut: () => g.setOrb({ state: "idle", meta: CUT_NOTE }),
         onTiming: (t) => {
           setTiming(t);
           if (import.meta.env.DEV) console.info(`[glance] voice latency from release: transcript ${t.transcript}ms, intent ${t.intent ?? "-"}ms, speaking ${t.speaking ?? "-"}ms (${t.via})`);

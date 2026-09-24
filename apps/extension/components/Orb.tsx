@@ -6,7 +6,7 @@
  *   listening  solid lime disc, pulsing ring, and a dotted waveform (thinking-orbs "listening", dark ink)
  *   thinking   lime arc orbiting a dotted cloud (thinking-orbs "working", lime ink); the eye steps aside
  *   speaking   lime ring and an undulating dotted sash (thinking-orbs "composing", lime ink). It is shown only while
- *              a speechSynthesis utterance is actually playing (lib/voice speak(): onStart / onEnd).
+ *              Glance's voice is actually playing (lib/voiceClient speak(): onStart / onEnd).
  *   success    lime disc with a check (held for 2s by the caller)
  *   blocked    amber ring and a shield: the vault said no
  *

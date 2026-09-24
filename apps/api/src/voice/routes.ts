@@ -216,16 +216,36 @@ export function registerVoice(
     });
   });
 
+  /** A common line with no values in it: pre-recorded in the configured voice (generated once, then from .cache). */
+  const prerecorded = async (text: string) => {
+    const p = ctx.prerecorded;
+    if (!p || !v.chain || !p.has(text)) return null;
+    const out = await p.audio(text, v.chain);
+    if (out.prerecorded) v.decisions.record({ at: new Date().toISOString(), voice: out.voice, provider: "deepgram", retry: false, fellThrough: [], firstByteMs: null, source: "prerecorded" });
+    return out;
+  };
+
   app.post("/voice/speak", async (c) => {
     if (!v.tts) unavailable("speech");
     const started = performance.now();
     const { text } = parse(speakBody, await jsonBody(c));
+    const pre = await prerecorded(text);
+    if (pre) {
+      return c.body(pre.audio as unknown as ArrayBuffer, 200, {
+        "content-type": "audio/mpeg",
+        "cache-control": "no-store",
+        "x-voice-cache": pre.prerecorded ? "prerecorded" : "generated",
+        "x-voice": pre.voice,
+        "x-voice-ms": String(Math.round(performance.now() - started)),
+      });
+    }
     const hitsBefore = v.tts.hits;
     const out = await v.tts.speak(text);
     return c.body(out.audio as unknown as ArrayBuffer, 200, {
       "content-type": out.mime,
       "cache-control": "no-store",
       "x-voice-cache": v.tts.hits > hitsBefore ? "hit" : "miss",
+      "x-voice": v.decisions.list().at(-1)?.voice ?? "",
       "x-voice-ms": String(Math.round(performance.now() - started)),
     });
   });
@@ -238,12 +258,16 @@ export function registerVoice(
     if (!v.tts) unavailable("speech");
     const { text } = parse(speakBody, { text: c.req.query("text") ?? "" });
     const headers = { "content-type": "audio/mpeg", "cache-control": "no-store" };
+    const pre = await prerecorded(text);
+    if (pre) return c.body(pre.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": pre.prerecorded ? "prerecorded" : "generated", "x-voice": pre.voice });
     const streamer = v.tts.stream;
     if (!streamer || v.tts.has(text)) {
       const out = await v.tts.speak(text);
       return c.body(out.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "hit" });
     }
-    return c.body(await streamer(text), 200, { ...headers, "x-voice-cache": "miss" });
+    const stream = await streamer(text);
+    // Which voice answered (the decision just recorded), for the extension's debug log. Never the text.
+    return c.body(stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": v.decisions.list().at(-1)?.voice ?? "" });
   });
 
   if (upgradeWebSocket) {

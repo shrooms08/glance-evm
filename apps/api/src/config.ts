@@ -72,8 +72,16 @@ const envSchema = z.object({
    * clear, professional, calm, warm. Aura-2 voices (aura-2-athena-en) go to /v1/speak.
    */
   DEEPGRAM_TTS_VOICE: z.string().default("flux-sienna-en"),
-  /** The voice tried when DEEPGRAM_TTS_VOICE fails (401/402/429, timeout, connection error); "" for none. */
-  DEEPGRAM_TTS_FALLBACK_VOICE: z.string().default("aura-2-athena-en"),
+  /**
+   * Tried when DEEPGRAM_TTS_VOICE fails twice (401/402/429, first-byte timeout, connection error); "" for none. Default:
+   * the Aura-2 voice closest to Sienna (aura-2-harmonia-en: American, female, empathetic, clear, calm).
+   */
+  DEEPGRAM_TTS_FALLBACK_VOICE: z.string().default("aura-2-harmonia-en"),
+  /** Fish after the Deepgram chain ("1"). Off by default: its voice is a different person. */
+  VOICE_TTS_FISH_FALLBACK: z
+    .string()
+    .optional()
+    .transform((v) => v === "1" || v?.toLowerCase() === "true"),
   /** Which speech provider is tried first; the others (if their keys are set) catch failures. */
   VOICE_TTS: z.enum(["deepgram", "fish"]).default("deepgram"),
   /** How long an unused warm Deepgram streaming connection stays open (ms). */

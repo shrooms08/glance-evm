@@ -111,7 +111,6 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   voiceContext.current = () => ({ host, companies: companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) });
 
   useEffect(() => underliner.onChange(setMentions), [underliner]);
-  useGreeting();
 
   // ---- Show me ---------------------------------------------------------------------------------------------------
   // Drawings live in an SVG inside our shadow root; the orb flies to what's being talked about, then home.
@@ -193,7 +192,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           if (docked) void requestCard({ kind: "portfolio" });
           else assistant.setCard({ kind: "portfolio", key: Date.now() });
         },
-        say: (line, state) => g.setOrb({ state, line, meta: onConsole ? "Show me · on the console" : "Show me" }),
+        say: (line, state, note) => g.setOrb({ state, line, meta: note ?? (onConsole ? "Show me · on the console" : "Show me") }),
         done: (cancelled) => (cancelled ? drawings.current?.clear() : drawings.current?.fadeLater()),
       });
     },
@@ -320,6 +319,9 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     const t = setInterval(warmVoice, 45_000);
     return () => clearInterval(t);
   }, [panelOpen]);
+
+  // The first time the panel opens (ever, in this browser): the greeting, shown and said.
+  useGreeting(panelOpen);
 
   // A voice buy or price question opens the panel to show its card.
   useEffect(() => {

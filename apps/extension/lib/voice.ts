@@ -1,5 +1,6 @@
 /**
- * The speech engine, using the browser's own APIs only: SpeechRecognition for input and speechSynthesis for replies.
+ * The browser's speech recognition, the fallback for input only (when the Glance API can't transcribe). Glance never
+ * speaks with the browser's voice: every reply is Glance's own voice from the API (lib/voiceWorker.ts).
  *
  * listen() must run in an extension page (the offscreen document or the side panel), never in a website: sites can
  * block the microphone with Permissions-Policy, and the permission there would belong to the site, not to Glance.
@@ -108,56 +109,4 @@ export function listen(lang: string, h: ListenHandlers): Listener | null {
       r.abort();
     },
   };
-}
-
-export interface SpeakHandlers {
-  /** The voice has actually started: show the speaking orb from here. */
-  onStart?(): void;
-  /** The voice has finished (or failed): stop the speaking orb here. */
-  onEnd?(): void;
-}
-
-/** Longest a reply may take before we stop waiting for Chrome's onend (it is occasionally never fired). */
-const MAX_UTTERANCE_MS = 30_000;
-/** If no voice has started by then, speech isn't going to happen (no voices, or synthesis blocked). */
-const START_TIMEOUT_MS = 2_500;
-
-/**
- * Speaks a reply. The orb's speaking state follows the utterance's own start and end events, not a timer: onStart
- * fires when the voice actually begins, onEnd when it stops. If speech is off or unavailable, neither fires and the
- * promise resolves at once, so callers never show "speaking" when nothing is being said.
- */
-export function speak(text: string, enabled: boolean, h: SpeakHandlers = {}): Promise<void> {
-  if (!enabled || !text || typeof speechSynthesis === "undefined") return Promise.resolve();
-  return new Promise((resolve) => {
-    let started = false;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(startTimer);
-      clearTimeout(maxTimer);
-      if (started) h.onEnd?.();
-      resolve();
-    };
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = navigator.language || "en-US";
-    u.rate = 1.05;
-    u.onstart = () => {
-      if (finished) return;
-      started = true;
-      clearTimeout(startTimer);
-      h.onStart?.();
-    };
-    u.onend = finish;
-    u.onerror = finish;
-    const startTimer = setTimeout(() => !started && finish(), START_TIMEOUT_MS);
-    const maxTimer = setTimeout(finish, MAX_UTTERANCE_MS);
-    speechSynthesis.speak(u);
-  });
-}
-
-export function stopSpeaking() {
-  if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
 }

@@ -17,6 +17,8 @@ export interface VoiceHandlers {
   /** Only from the browser fallback; the server path has no interim text. */
   onInterim?(text: string): void;
   onFinal(text: string): void;
+  /** The reply's audio stopped mid-way (a stall or an error): the rest is shown, never said in another voice. */
+  onReplyCut?(): void;
   /** What the API understood, and the reply it is speaking. Absent in the browser fallback. */
   onIntent?(intent: VoiceIntent): void;
   /** The browser's own speech recognition is being used instead of the Glance API. */
@@ -126,6 +128,7 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
     // The reply to this session is spoken under its id: follow its playback even after the session has ended.
     if (msg?.kind === "voice:speech" && msg.id === session) {
       if (msg.type === "progress") return undefined;
+      if (msg.type === "cut") h.onReplyCut?.();
       if (msg.type === "start") h.onReplyStart?.();
       else h.onReplyEnd?.();
       if (msg.type !== "start") safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
@@ -212,16 +215,27 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
  * onEnd come from the audio's real playback, so the speaking orb moves exactly while the voice is heard. Resolves when
  * it has finished (or when it's clear nothing will play). With `enabled` false, nothing is spoken.
  */
-export function speak(text: string, enabled: boolean, h: { onStart?(): void; onEnd?(): void; onProgress?(t: number, d: number | null): void } = {}): Promise<void> {
-  if (!enabled || !text.trim()) return Promise.resolve();
+/** How a spoken reply went: played to the end, stopped mid-reply (the rest is shown), or no voice at all (shown). */
+export type SpeakOutcome = "ended" | "cut" | "unavailable" | "off";
+
+/**
+ * Speaks `text` in Glance's voice (the offscreen document plays the API's /voice/speak; never the browser's voice).
+ * Resolves with how it went. onCut gets where it stopped (seconds, and the audio's length if known).
+ */
+export function speak(
+  text: string,
+  enabled: boolean,
+  h: { onStart?(): void; onEnd?(): void; onProgress?(t: number, d: number | null): void; onCut?(t: number, d: number | null): void } = {},
+): Promise<SpeakOutcome> {
+  if (!enabled || !text.trim()) return Promise.resolve("off");
   const id = newId();
-  return new Promise<void>((resolve) => {
+  return new Promise<SpeakOutcome>((resolve) => {
     let started = false;
-    const finish = () => {
+    const finish = (outcome: SpeakOutcome) => {
       safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
       clearTimeout(timer);
       if (started) h.onEnd?.();
-      resolve();
+      resolve(outcome);
     };
     const onMessage = (msg: SpeechEvent) => {
       if (msg?.kind !== "voice:speech" || msg.id !== id) return undefined;
@@ -231,17 +245,20 @@ export function speak(text: string, enabled: boolean, h: { onStart?(): void; onE
       } else if (msg.type === "progress") {
         // Still playing: push the safety timeout back (a long Show me answer can run past 30 seconds).
         clearTimeout(timer);
-        timer = setTimeout(finish, 30_000);
+        timer = setTimeout(() => finish("cut"), 30_000);
         h.onProgress?.(msg.t, msg.d);
-      } else finish();
+      } else if (msg.type === "cut") {
+        h.onCut?.(msg.t, msg.d);
+        finish("cut");
+      } else finish(msg.type === "unavailable" ? "unavailable" : "ended");
       return undefined;
     };
     // Nothing should take this long; never leave the orb speaking.
-    let timer = setTimeout(finish, 30_000);
+    let timer = setTimeout(() => finish(started ? "cut" : "unavailable"), 30_000);
     safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
     sendSafe({ kind: "voice:speak", id, text } satisfies VoiceRequest).then(
-      (ok) => ok === false && finish(),
-      () => finish(),
+      (ok) => ok === false && finish("unavailable"),
+      () => finish("unavailable"),
     );
   });
 }

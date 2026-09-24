@@ -4,7 +4,6 @@ import { browser } from "wxt/browser";
 import { fakeBrowser } from "wxt/testing/fake-browser";
 
 import { ORB_MOTION } from "../components/Orb";
-import { speak } from "../lib/voice";
 import { startVoice, STOP_TIMEOUT_MS } from "../lib/voiceClient";
 import type { VoiceEvent } from "../lib/voiceMessages";
 import { detectBrowser, reasonFor, type BrowserInfo } from "../lib/voiceReasons";
@@ -63,68 +62,6 @@ describe("orb motion", () => {
   it("every state is visually distinct", () => {
     const motions = Object.values(ORB_MOTION);
     expect(new Set(motions).size).toBe(motions.length);
-  });
-});
-
-/** A controllable speechSynthesis: the test decides when the voice starts and ends. */
-class FakeUtterance {
-  lang = "";
-  rate = 1;
-  onstart: (() => void) | null = null;
-  onend: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor(public text: string) {}
-}
-
-describe("speak", () => {
-  let spoken: FakeUtterance[];
-  beforeEach(() => {
-    vi.useFakeTimers();
-    spoken = [];
-    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
-    vi.stubGlobal("speechSynthesis", { speak: (u: FakeUtterance) => spoken.push(u), cancel: vi.fn(), getVoices: () => [] });
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it("starts the speaking state when the voice starts and stops it when the voice ends", async () => {
-    const events: string[] = [];
-    const done = speak("Confirm?", true, { onStart: () => events.push("start"), onEnd: () => events.push("end") });
-    expect(events).toEqual([]); // queued, not yet audible: no speaking orb
-    vi.advanceTimersByTime(800);
-    spoken[0]!.onstart!();
-    expect(events).toEqual(["start"]);
-    vi.advanceTimersByTime(5_000); // a long sentence: no fixed timer ends it early
-    expect(events).toEqual(["start"]);
-    spoken[0]!.onend!();
-    await done;
-    expect(events).toEqual(["start", "end"]);
-  });
-
-  it("never shows speaking if the voice never starts", async () => {
-    const events: string[] = [];
-    const done = speak("Confirm?", true, { onStart: () => events.push("start"), onEnd: () => events.push("end") });
-    vi.advanceTimersByTime(3_000);
-    await done;
-    expect(events).toEqual([]);
-  });
-
-  it("stops the speaking state on an error too", async () => {
-    const events: string[] = [];
-    const done = speak("Confirm?", true, { onStart: () => events.push("start"), onEnd: () => events.push("end") });
-    spoken[0]!.onstart!();
-    spoken[0]!.onerror!();
-    await done;
-    expect(events).toEqual(["start", "end"]);
-  });
-
-  it("does nothing when replies are off", async () => {
-    const onStart = vi.fn();
-    await speak("Confirm?", false, { onStart });
-    expect(spoken).toEqual([]);
-    expect(onStart).not.toHaveBeenCalled();
   });
 });
 

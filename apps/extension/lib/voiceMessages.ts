@@ -46,7 +46,9 @@ export type VoiceEvent = { kind: "voice:event"; session: string; seq: number } &
 export type SpeechEvent =
   | { kind: "voice:speech"; id: string; type: "start" | "end" | "unavailable" }
   /** While it plays (about 4 a second): where playback is, and the audio's length once the player knows it. */
-  | { kind: "voice:speech"; id: string; type: "progress"; t: number; d: number | null };
+  | { kind: "voice:speech"; id: string; type: "progress"; t: number; d: number | null }
+  /** The audio stopped mid-reply (a stall or an error), at `t` seconds: the rest is shown, never said in another voice. */
+  | { kind: "voice:speech"; id: string; type: "cut"; t: number; d: number | null };
 
 /** What the page (or side panel) knows that helps the API understand a command. */
 export interface VoiceCommandContext {

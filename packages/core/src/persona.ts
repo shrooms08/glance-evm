@@ -3,7 +3,7 @@
  * with PERSONA, and every canned line lives in LINES. The guard sentences (errors.ts) keep their exact meaning; tone.ts
  * keeps the advice guard that every generated answer passes through.
  */
-import { TONE_RULES } from "./tone.ts";
+import { EMPTY_PORTFOLIO, NEWS_UNAVAILABLE, NO_CLEAR_NEWS, NO_RECENT_NEWS, TONE_RULES } from "./tone.ts";
 
 /** Who Glance is, for every prompt. */
 export const PERSONA = [
@@ -64,3 +64,19 @@ export const LINES = {
   /** Show me with nothing readable on the page. */
   nothingToRead: "I can't find much to read on this page. Select the part you mean and ask again.",
 } as const;
+
+/** The greeting as spoken (the key names said out loud): pre-recorded for the default keys. */
+export const SPOKEN_GREETING = (glanceLetter = "G", voiceLetter = "V") => GREETING(`Option ${glanceLetter}`, `Option ${voiceLetter}`);
+
+/**
+ * Lines with no values in them (no prices, amounts or names): pre-recorded once in the configured voice, so they play
+ * instantly and always in the same voice. Anything with a value in it is spoken live.
+ */
+export const FIXED_LINES: readonly string[] = [
+  SPOKEN_GREETING(),
+  ...(Object.values(LINES) as unknown[]).filter((v): v is string => typeof v === "string" && !v.endsWith(" ")),
+  EMPTY_PORTFOLIO,
+  NEWS_UNAVAILABLE,
+  NO_RECENT_NEWS,
+  NO_CLEAR_NEWS,
+];

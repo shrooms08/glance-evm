@@ -936,12 +936,15 @@ export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmMode
  * The speaking voice for /health: the one in use (the first of the chain), its endpoint, the fallbacks in order, and
  * which one served the last reply (null before the first). Names and URLs only: never a key.
  */
-export function voiceHealth(ctx: Pick<AppContext, "voice">) {
+export function voiceHealth(ctx: Pick<AppContext, "voice"> & { prerecorded?: AppContext["prerecorded"] }) {
   const [inUse, ...fallbacks] = ctx.voice.speech.chain;
   return {
     speech: inUse ? { provider: inUse.provider, voice: inUse.voice, endpoint: inUse.endpoint } : null,
     fallbacks: fallbacks.map((f) => ({ provider: f.provider, voice: f.voice, endpoint: f.endpoint })),
     lastServedBy: ctx.voice.speech.lastServedBy()?.voice ?? null,
+    /** The last 20 replies: the voice that spoke, what was passed over and why, time to first byte. Never the text. */
+    decisions: ctx.voice.decisions.list(),
+    prerecordedLines: ctx.prerecorded?.size ?? 0,
   };
 }
 

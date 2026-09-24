@@ -12,6 +12,8 @@ import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deploy
 import type { ChartDeps } from "./chart.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
 import { createShowMe, type ShowMe } from "./showme.js";
+import { PrerecordedLines } from "./voice/prerecorded.js";
+import { FIXED_LINES } from "@glance/core/persona";
 import { chooseModel, LlmBudget, NameCache, type BudgetLimits, type Log } from "./llmBudget.js";
 import { TtlCache } from "./ttlCache.js";
 import { createFinnhub, createWhySummarizer, NEWS_TTL_MS, SUMMARY_TTL_MS, type NewsClient, type Summarizer, type WhyAnswer } from "./why.js";
@@ -41,6 +43,8 @@ export interface AppContext {
   /** Every Claude call's budget: the daily limit, the pause after a budget error, and the models in use. */
   llmBudget: LlmBudget;
   llmModels: { resolver: string; intent: string; why: string; other: string };
+  /** The common lines pre-recorded in the configured voice (src/voice/prerecorded.ts), when there's a speech provider. */
+  prerecorded: PrerecordedLines | null;
   /** "Show me", teach and guide (POST /showme), when ANTHROPIC_API_KEY is set. */
   showMe: ShowMe | null;
   /** "Why it moved": Finnhub news (15-minute cache), the budgeted summarizer, and the 3-hour answer cache. */
@@ -75,6 +79,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
   const cacheDir = files.cache ? dirname(files.cache) : null;
   const anthropicKey = looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? undefined : config.ANTHROPIC_API_KEY;
   const budget = new LlmBudget(budgetLimits(config), files.usage, log);
+  const voice = selectVoiceProviders({ ...config, INTENT_MODEL: models.intent });
   return {
     config,
     deployment,
@@ -94,7 +99,8 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     desks: desksOf(deployment),
     defaultVault: config.DEFAULT_VAULT ? getAddress(config.DEFAULT_VAULT) : primaryVault(deployment).address,
     // The status line names the model actually used (after the Opus guard), not the one configured.
-    voice: selectVoiceProviders({ ...config, INTENT_MODEL: models.intent }),
+    voice,
+    prerecorded: voice.chain && voice.speech.chain[0] ? new PrerecordedLines(voice.speech.chain[0].voice, FIXED_LINES, cacheDir ? join(cacheDir, "voice") : null) : null,
     refusals: new RefusalLog(refusalLogFile(config)),
     intentModel: looksLikePlaceholder(config.ANTHROPIC_API_KEY)
       ? null

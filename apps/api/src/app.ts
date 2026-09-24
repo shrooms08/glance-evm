@@ -109,7 +109,7 @@ export function createServerApp(ctx: AppContext) {
       },
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type"],
-      exposeHeaders: ["x-voice-cache", "x-voice-ms"],
+      exposeHeaders: ["x-voice-cache", "x-voice-ms", "x-voice"],
       maxAge: 600,
     }),
   );

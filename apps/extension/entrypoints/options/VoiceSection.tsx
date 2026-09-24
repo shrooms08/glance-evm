@@ -92,8 +92,9 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
     hush();
     const text = "Tesla is at $250. Confirm?";
     setLine(`Saying “${text}”`);
-    void speak(text, true, { onStart: () => setOrb("speaking"), onEnd: () => setOrb("idle") }).then(() => {
-      setLine((l) => (l.startsWith("Saying") && diag?.voices === 0 ? "No speech voices are installed, so replies are shown, not spoken." : l));
+    void speak(text, true, { onStart: () => setOrb("speaking"), onEnd: () => setOrb("idle") }).then((outcome) => {
+      if (outcome === "unavailable") setLine("Glance's voice isn't available right now, so replies are shown, not spoken.");
+      else if (outcome === "cut") setLine("Glance's voice stopped part way. The reply stays written.");
     });
   };
 
@@ -146,8 +147,6 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
             <dd>{server?.intent ?? "…"}</dd>
             <dt>Browser speech recognition</dt>
             <dd>{diag.recognition ? "available (fallback only)" : "missing in this build (not needed: transcription is server-side)"}</dd>
-            <dt>Browser voices</dt>
-            <dd>{diag.voices > 0 ? diag.voices : "none (replies are shown, not spoken)"}</dd>
             <dt>Microphone permission</dt>
             <dd>{{ granted: "granted to Glance", prompt: "not asked yet", denied: "blocked", unknown: "unknown" }[diag.micPermission]}</dd>
             <dt>Microphone device</dt>
@@ -157,7 +156,7 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
             <button className="g-btn" onClick={testListen} disabled={!granted}>
               {orb === "listening" ? "Stop" : "Test listening"}
             </button>
-            <button className="g-btn" onClick={testSpeak} disabled={!diag.synthesis}>
+            <button className="g-btn" onClick={testSpeak} disabled={!server?.reachable}>
               Test speaking
             </button>
             <button className="g-btn g-btn-ghost" onClick={() => void refresh()}>

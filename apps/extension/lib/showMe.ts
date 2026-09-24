@@ -12,6 +12,10 @@ import { wantsScreenshot, type PageRead } from "./pageRead";
 import { ShowScheduler } from "./showScheduler";
 
 export const SCREENSHOT_MAX_WIDTH = 1_280;
+/** Under the answer when the voice stopped part way. */
+export const CUT_NOTE = "The voice stopped there. The rest is written above.";
+/** Under the answer when there's no voice right now. */
+export const NO_VOICE_NOTE = "No voice right now. The answer is written above.";
 
 export interface ShowMeDeps {
   readPage(): PageRead;
@@ -21,8 +25,11 @@ export interface ShowMeDeps {
   /** Downscales a data URL to at most SCREENSHOT_MAX_WIDTH wide, as base64 JPEG (no prefix). */
   downscale(dataUrl: string): Promise<string | null>;
   ask(body: ShowMeRequest): Promise<{ ok: true; data: ShowMeReply } | { ok: false; message: string }>;
-  /** Speaks the text as one call; progress reports playback time and (once known) duration. */
-  speak(text: string, h: { onStart(): void; onProgress(t: number, d: number | null): void; onEnd(): void }): Promise<void>;
+  /**
+   * Speaks the text as one call in Glance's voice; progress reports playback time and (once known) duration. Resolves
+   * with how it went: "cut" means the voice stopped mid-reply (never continued in another voice).
+   */
+  speak(text: string, h: { onStart(): void; onProgress(t: number, d: number | null): void; onEnd(): void }): Promise<"ended" | "cut" | "unavailable" | "off">;
   hush(): void;
   findQuote(quote: string): Range | null;
   reveal(range: Range): void;
@@ -31,8 +38,8 @@ export interface ShowMeDeps {
   point(range: Range | null): void;
   chart(symbol: string): void;
   portfolio(): void;
-  /** What Glance is saying, for the panel's line. */
-  say(line: string, state: "thinking" | "speaking" | "idle"): void;
+  /** What Glance is saying, for the panel's line (and a note under it). */
+  say(line: string, state: "thinking" | "speaking" | "idle", note?: string): void;
   /** The reply ended (or was cancelled): fade the drawings (or clear them). */
   done(cancelled: boolean): void;
   lastGuard?: () => { code: string; message: string } | null;
@@ -89,7 +96,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
     scheduler = new ShowScheduler(actions, spoken, act);
     const s = scheduler;
     d.say(spoken, "thinking");
-    await d.speak(spoken, {
+    const outcome = await d.speak(spoken, {
       onStart: () => {
         d.say(spoken, "speaking");
         s.start();
@@ -98,8 +105,14 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       onEnd: () => {},
     });
     if (cancelled) return;
-    s.finish(); // voice off, or it ended early: anything left still happens
-    d.say(spoken, "idle");
+    if (outcome === "cut") {
+      // The voice stopped mid-reply: the drawings stay where the words got to, and the whole answer is on screen.
+      s.cancel();
+      d.say(spoken, "idle", CUT_NOTE);
+    } else {
+      s.finish(); // spoken replies off, or no voice: anything left still happens with the text on screen
+      d.say(spoken, "idle", outcome === "unavailable" ? NO_VOICE_NOTE : undefined);
+    }
     d.point(null);
     d.done(false);
   })();
