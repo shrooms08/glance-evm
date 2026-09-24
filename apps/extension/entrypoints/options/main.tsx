@@ -258,10 +258,14 @@ function HealthView({ health }: { health: Health }) {
           <dd>
             {health.chainId} {health.chainId === health.expectedChainId ? "· Robinhood Chain testnet" : `· expected ${health.expectedChainId}`}
           </dd>
-          <dt>Agent</dt>
-          <dd>{health.agent.address.slice(0, 6)}…{health.agent.address.slice(-4)} · key {health.agent.keyLoaded ? "loaded" : "not loaded (trades disabled)"}</dd>
-          <dt>Agent ETH balance</dt>
-          <dd>{Number(health.agent.ethBalance).toFixed(5)} ETH</dd>
+          {health.agent && (
+            <>
+              <dt>Agent</dt>
+              <dd>{health.agent.address.slice(0, 6)}…{health.agent.address.slice(-4)} · key {health.agent.keyLoaded ? "loaded" : "not loaded (trades disabled)"}</dd>
+              <dt>Agent ETH balance</dt>
+              <dd>{Number(health.agent.ethBalance).toFixed(5)} ETH</dd>
+            </>
+          )}
         </dl>
       </div>
       {health.feeds && (

@@ -40,9 +40,9 @@ export function parseSse(buffer: string): { events: Array<{ event: string; data:
 }
 
 /** The background's side: fetches the stream and relays its events over the port. */
-export async function relayShowMe(base: string, body: ShowMeRequest, post: (m: StreamMessage) => void, signal: AbortSignal): Promise<void> {
+export async function relayShowMe(base: string, body: ShowMeRequest, post: (m: StreamMessage) => void, signal: AbortSignal, headers: Record<string, string> = {}): Promise<void> {
   try {
-    const res = await fetch(`${base}/showme/stream`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
+    const res = await fetch(`${base}/showme/stream`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
     if (!res.ok || !res.body) {
       const err = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
       return post({ event: "error", data: { message: err?.error?.message ?? `The Glance API answered ${res.status}.` } });

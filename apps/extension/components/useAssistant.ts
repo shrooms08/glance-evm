@@ -22,7 +22,8 @@ import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, 
 import { useGlance } from "./context";
 import { spokenWhy } from "./Why";
 import { LINES } from "@glance/core/persona";
-import { CUT_NOTE, NO_VOICE_NOTE } from "../lib/showMe";
+import { VOICE_RESTING } from "@glance/core/session";
+import { CUT_NOTE, noVoiceNote } from "../lib/showMe";
 
 /** The short label under the reason, so the kinds of failure are told apart at a glance. */
 const KIND_META: Record<VoiceFailureKind, string> = {
@@ -48,6 +49,7 @@ if (import.meta.env.DEV) console.info(`[glance] voice: running in ${browserInfo.
 /** The sentence for a voice failure, specific to this browser. Typing always still works. */
 export function voiceReason(code: VoiceCode): string {
   if (code === "transcription-failed") return "The voice server couldn't transcribe that. Try again, or type instead.";
+  if (code === "voice-resting") return VOICE_RESTING;
   return reasonFor(code, browserInfo);
 }
 
@@ -112,7 +114,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
       });
       // Never another voice: if Glance's stopped part way, or there's none right now, the line stays written.
       if (outcome === "cut") g.setOrb({ state: "idle", line, meta: CUT_NOTE });
-      else if (outcome === "unavailable") g.setOrb({ state: "idle", line, meta: NO_VOICE_NOTE });
+      else if (outcome === "unavailable" || outcome === "resting") g.setOrb({ state: "idle", line, meta: noVoiceNote(outcome) });
     },
     [g],
   );

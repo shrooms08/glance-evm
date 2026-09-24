@@ -7,6 +7,7 @@
  */
 import type { ChartRange } from "@glance/core/chart";
 import type { ChartAnnotation, ShowAction } from "@glance/core/showme";
+import { VOICE_RESTING } from "@glance/core/session";
 
 import type { ShowMeReply, ShowMeRequest } from "./api";
 import type { StreamSentence } from "./showStream";
@@ -14,11 +15,40 @@ import type { PartsHandlers } from "./voiceClient";
 import { wantsScreenshot, type PageRead } from "./pageRead";
 import { ShowScheduler } from "./showScheduler";
 
-export const SCREENSHOT_MAX_WIDTH = 1_280;
+export const SCREENSHOT_MAX_WIDTH = 960;
+/** A screenshot's base64 at most (the API takes 64 KB of JSON in all, page text included). */
+export const SCREENSHOT_MAX_CHARS = 36_000;
+/** The whole Show me request at most, in bytes: under the API's 64 KB limit, with room to spare. */
+export const SHOW_ME_MAX_BODY_BYTES = 60_000;
+
+const byteLength = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).byteLength;
+
+/**
+ * Fits a Show me request under the API's size limit: the screenshot goes if it's too big, then the page text is
+ * shortened from the end (the opening, which says what the page is, is kept).
+ */
+export function fitShowMeBody(body: ShowMeRequest, max = SHOW_ME_MAX_BODY_BYTES): ShowMeRequest {
+  let out = body;
+  if (out.screenshot && out.screenshot.length > SCREENSHOT_MAX_CHARS) out = { ...out, screenshot: undefined };
+  if (byteLength(out) <= max || !out.page) return out;
+  let text = out.page.text;
+  while (text.length > 0 && byteLength({ ...out, page: { ...out.page, text } }) > max) {
+    const over = byteLength({ ...out, page: { ...out.page, text } }) - max;
+    text = text.slice(0, Math.max(0, text.length - Math.max(256, over)));
+  }
+  out = { ...out, page: { ...out.page, text } };
+  if (byteLength(out) > max && out.screenshot) out = { ...out, screenshot: undefined };
+  return out;
+}
 /** Under the answer when the voice stopped part way. */
 export const CUT_NOTE = "The voice stopped there. The rest is written above.";
 /** Under the answer when there's no voice right now. */
 export const NO_VOICE_NOTE = "No voice right now. The answer is written above.";
+
+/** The note under a reply that wasn't spoken: no voice right now, or today's voice is used up. */
+export function noVoiceNote(outcome: string): string | undefined {
+  return outcome === "resting" ? VOICE_RESTING : outcome === "unavailable" ? NO_VOICE_NOTE : undefined;
+}
 
 export interface ShowMeDeps {
   readPage(): PageRead;
@@ -32,7 +62,7 @@ export interface ShowMeDeps {
    * Speaks the text as one call in Glance's voice; progress reports playback time and (once known) duration. Resolves
    * with how it went: "cut" means the voice stopped mid-reply (never continued in another voice).
    */
-  speak(text: string, h: { onStart(): void; onProgress(t: number, d: number | null): void; onEnd(): void }): Promise<"ended" | "cut" | "unavailable" | "off">;
+  speak(text: string, h: { onStart(): void; onProgress(t: number, d: number | null): void; onEnd(): void }): Promise<"ended" | "cut" | "unavailable" | "resting" | "off">;
   hush(): void;
   findQuote(quote: string): Range | null;
   reveal(range: Range): void;
@@ -59,7 +89,7 @@ export interface ShowMeDeps {
    * one part of the reply while the next is still being written.
    */
   askStream?(body: ShowMeRequest, onSentence: (s: StreamSentence) => void): Promise<{ ok: true; source: string } | { ok: false; message: string }>;
-  speakParts?(h: PartsHandlers): { push(text: string): number | null; end(): void; result: Promise<"ended" | "cut" | "unavailable" | "off"> };
+  speakParts?(h: PartsHandlers): { push(text: string): number | null; end(): void; result: Promise<"ended" | "cut" | "unavailable" | "resting" | "off"> };
 }
 
 export interface ShowMeRun {
@@ -118,7 +148,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       screenshot = (shot ? await d.downscale(shot).catch(() => null) : null) ?? undefined;
     }
     if (cancelled) return;
-    const res = await d.ask({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null });
+    const res = await d.ask(fitShowMeBody({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null }));
     if (cancelled) return;
     if (!res.ok) {
       d.say(res.message, "idle");
@@ -144,7 +174,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       d.say(spoken, "idle", CUT_NOTE);
     } else {
       s.finish(); // spoken replies off, or no voice: anything left still happens with the text on screen
-      d.say(spoken, "idle", outcome === "unavailable" ? NO_VOICE_NOTE : undefined);
+      d.say(spoken, "idle", noVoiceNote(outcome));
     }
     d.point(null);
     d.done(false);
@@ -173,7 +203,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       onPartEnd: (i) => perPart[i]?.finish(),
       onCut: (i) => (cutAt = i),
     });
-    const res = await d.askStream!({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null }, (sentence) => {
+    const res = await d.askStream!(fitShowMeBody({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null }), (sentence) => {
       if (cancelled) return;
       if (sentence.chart) chartRange = sentence.chart.range;
       const sched = new ShowScheduler(sentence.actions, sentence.spoken, act);
@@ -198,7 +228,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       d.say(full, "idle", CUT_NOTE);
     } else {
       for (const sched of everyScheduler) sched.finish();
-      d.say(full, "idle", outcome === "unavailable" ? NO_VOICE_NOTE : undefined);
+      d.say(full, "idle", noVoiceNote(outcome));
     }
     d.point(null);
     d.done(false);
@@ -227,15 +257,23 @@ export async function downscaleJpeg(dataUrl: string, maxWidth = SCREENSHOT_MAX_W
   for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
   const blob = new Blob([buf], { type: "image/jpeg" });
   const bitmap = await createImageBitmap(blob);
-  const scale = Math.min(1, maxWidth / bitmap.width);
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
-  const canvas = new OffscreenCanvas(w, h);
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
-  const out = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.72 });
-  const bytes = new Uint8Array(await out.arrayBuffer());
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(bin);
+  // Smaller until it fits the request's size limit (a chart stays readable at 540px); too big even then: none.
+  try {
+    for (const width of [maxWidth, 720, 540]) {
+      const scale = Math.min(1, width / bitmap.width);
+      const w = Math.round(bitmap.width * scale);
+      const h = Math.round(bitmap.height * scale);
+      const canvas = new OffscreenCanvas(w, h);
+      canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
+      const out = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.6 });
+      const bytes = new Uint8Array(await out.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const b64 = btoa(bin);
+      if (b64.length <= SCREENSHOT_MAX_CHARS) return b64;
+    }
+    return null;
+  } finally {
+    bitmap.close();
+  }
 }

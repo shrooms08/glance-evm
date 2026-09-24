@@ -132,8 +132,9 @@ export interface HealthView {
   ok: boolean;
   chainId: number;
   blockNumber: string;
-  agent: { address: Address | null; keyLoaded: boolean };
-  keeper: { pausedLocally: boolean; lastWriteAt: number | null };
+  /** Development only (or with the admin token): a production API shows the public view without it. */
+  agent?: { address: Address | null; keyLoaded: boolean };
+  keeper: { pausedLocally?: boolean; lastWriteAt: number | null };
   feeds: FeedStatus[];
 }
 

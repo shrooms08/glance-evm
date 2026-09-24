@@ -23,6 +23,7 @@
  * The speech chain (default flux-sienna-en, then aura-2-athena-en, then Fish): a speaker that answers 401, 402 or 429,
  * times out before its first byte, or can't be reached hands the request to the next, with one log line each time.
  */
+import { VoiceRestingError, type DailyMeter, type VoiceMeters } from "./dailyCaps.js";
 import { Agent, fetch as undiciFetch } from "undici";
 
 import { fakeSpeaker, fakeTranscriber } from "./fake.js";
@@ -805,6 +806,27 @@ export function fish(opts: FishOptions): Speaker {
 export type CachedSpeaker = Speaker & { readonly cached: number; hits: number; has(text: string): boolean };
 
 
+/**
+ * Counts characters sent to a live speech provider against the daily cap, and refuses (VoiceRestingError) once it's
+ * used up. Placed inside the phrase cache, so phrases served from memory never count (nor do pre-recorded lines, which
+ * never reach this chain).
+ */
+export function withTtsCap<S extends Speaker>(speaker: S, meter: DailyMeter | null | undefined): S {
+  if (!meter) return speaker;
+  const charge = (text: string) => {
+    if (meter.resting) throw new VoiceRestingError();
+    meter.add(text.length);
+  };
+  const capped = Object.create(speaker) as S & Record<string, unknown>;
+  Object.assign(capped, {
+    speak: async (text: string) => (charge(text), speaker.speak(text)),
+    ...(speaker.stream ? { stream: async (text: string) => (charge(text), speaker.stream!(text)) } : {}),
+    ...(speaker.speakDetailed ? { speakDetailed: async (text: string) => (charge(text), speaker.speakDetailed!(text)) } : {}),
+    ...(speaker.streamDetailed ? { streamDetailed: async (text: string) => (charge(text), speaker.streamDetailed!(text)) } : {}),
+  });
+  return capped;
+}
+
 export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200, configuredVoice: string = speaker.voice): CachedSpeaker {
   // Each entry remembers the voice that spoke it. Only the configured voice's audio is kept, and only it is served: a
   // phrase that once fell through to another voice is never replayed in that voice.
@@ -950,13 +972,15 @@ export interface VoiceProviders {
   speech: { chain: SpeechLink[]; lastServedBy(): SpeechLink | null };
   /** Opens the speech provider's HTTPS connection ahead of time (kept alive), so the reply skips the TLS handshake. */
   prewarmSpeech(): void;
+  /** The daily caps (speech-to-text seconds, speech characters), when set. */
+  meters: VoiceMeters | null;
   /** Human-readable, key-free lines for the startup log and /health. */
   status: { transcription: string; speech: string; speechFallbacks: string; intent: string; warnings: string[] };
 }
 
 export function selectVoiceProviders(
   c: VoiceConfig,
-  deps: { fetch?: typeof fetch; WebSocket?: WebSocketCtor; log?: (line: string) => void } = {},
+  deps: { fetch?: typeof fetch; WebSocket?: WebSocketCtor; log?: (line: string) => void; meters?: VoiceMeters } = {},
 ): VoiceProviders {
   const warnings: string[] = [];
   const log = deps.log ?? ((l: string) => console.log(l));
@@ -966,10 +990,11 @@ export function selectVoiceProviders(
     const said = c.VOICE_FAKE_TRANSCRIPT ?? "what's Tesla at";
     return {
       stt: fakeTranscriber(said, delay),
-      tts: withPhraseCache(fakeSpeaker(delay)),
+      tts: withPhraseCache(withTtsCap(fakeSpeaker(delay), deps.meters?.tts)),
       chain: null,
       decisions: new VoiceDecisions(),
       pinned: () => null,
+      meters: deps.meters ?? null,
       speech: { chain: [], lastServedBy: () => null },
       prewarmSpeech() {},
       status: {
@@ -1027,7 +1052,7 @@ export function selectVoiceProviders(
   let lastServed: Speaker | null = null;
   const decisions = new VoiceDecisions();
   const chain = order.length ? withFallThrough(order, log, (s) => (lastServed = s), decisions) : null;
-  const tts = chain ? withPhraseCache(withSpeechTiming(chain, log, () => speakerLabel(lastServed ?? order[0]!)), 64, 200, order[0]!.voice) : null;
+  const tts = chain ? withPhraseCache(withTtsCap(withSpeechTiming(chain, log, () => speakerLabel(lastServed ?? order[0]!)), deps.meters?.tts), 64, 200, order[0]!.voice) : null;
   const claude = usable("ANTHROPIC_API_KEY", c.ANTHROPIC_API_KEY);
   const origin = order[0] ? (order[0].name === "deepgram" ? "https://api.deepgram.com/" : "https://api.fish.audio/") : null;
   const doFetch = deps.fetch ?? providerFetch;
@@ -1038,11 +1063,12 @@ export function selectVoiceProviders(
     tts,
     chain,
     decisions,
+    meters: deps.meters ?? null,
     pinned(wanted) {
       const same = order.filter((s) => s.voice === wanted);
       if (same.length === 0) return null;
       let p = pinnedChains.get(wanted);
-      if (!p) pinnedChains.set(wanted, (p = withFallThrough(same, log, (s) => (lastServed = s), decisions)));
+      if (!p) pinnedChains.set(wanted, (p = withTtsCap(withFallThrough(same, log, (s) => (lastServed = s), decisions), deps.meters?.tts)));
       return p;
     },
     speech: { chain: order.map(link), lastServedBy: () => (lastServed ? link(lastServed) : null) },

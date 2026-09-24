@@ -9,7 +9,8 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
-import { signTrade, type TradeBody } from "../lib/session";
+import { sessionAddress, signTrade, type TradeBody } from "../lib/session";
+import { SESSION_HEADERS } from "@glance/core/session";
 import { relayShowMe, SHOWME_PORT } from "../lib/showStream";
 import type { ShowMeRequest } from "../lib/api";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
@@ -51,9 +52,11 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
   try {
     // A trade is signed with this browser's session key (lib/session.ts): the API checks it before the agent signs.
     const signed = req.method === "POST" && req.path === "/trade" ? await signTrade(req.body as TradeBody) : null;
+    // Every request names this browser's session (its address only), so the API can limit per browser as well as per IP.
+    const session = { [SESSION_HEADERS.session]: await sessionAddress() };
     res = await fetch(`${base}${req.path}`, {
       method: req.method,
-      headers: req.body === undefined ? undefined : { "content-type": "application/json", ...signed?.headers },
+      headers: req.body === undefined ? session : { "content-type": "application/json", ...session, ...signed?.headers },
       body: req.body === undefined ? undefined : (signed?.raw ?? JSON.stringify(req.body)),
       signal: AbortSignal.timeout(timeout),
     });
@@ -197,7 +200,7 @@ export default defineBackground(() => {
       port.onMessage.addListener((body: ShowMeRequest) => {
         void (async () => {
           const base = (await apiBaseUrl.getValue()).replace(/\/+$/, "");
-          await relayShowMe(base, body, (m) => safePost(port, m), abort.signal);
+          await relayShowMe(base, body, (m) => safePost(port, m), abort.signal, { [SESSION_HEADERS.session]: await sessionAddress() });
           safePost(port, { event: "done", data: { source: "end" } });
         })();
       });

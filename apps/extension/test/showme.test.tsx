@@ -14,7 +14,7 @@ import { takeGreeting } from "../components/useGreeting";
 import { findQuote, revealRange } from "../lib/anchor";
 import { parseCommand } from "../lib/commands";
 import { readPage, readableText, SHOW_ME_MAX_CHARS, wantsScreenshot } from "../lib/pageRead";
-import { CUT_NOTE, runShowMe, type ShowMeDeps } from "../lib/showMe";
+import { CUT_NOTE, fitShowMeBody, runShowMe, SCREENSHOT_MAX_CHARS, SHOW_ME_MAX_BODY_BYTES, type ShowMeDeps } from "../lib/showMe";
 import { parseSse, type StreamSentence } from "../lib/showStream";
 import type { PartsHandlers } from "../lib/voiceClient";
 import { ShowScheduler } from "../lib/showScheduler";
@@ -465,5 +465,24 @@ describe("personality touches", () => {
     expect(circlePath(box, 7)).toBe(circlePath(box, 7));
     expect(circlePath(box, 7)).not.toBe(circlePath(box, 8));
     expect(underlinePath(box, 3)).toMatch(/^M7\.0,/);
+  });
+});
+
+describe("Show me requests fit the API's 64 KB limit", () => {
+  const size = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).byteLength;
+
+  it("a long page is shortened from the end (its opening kept); a small one is untouched", () => {
+    const text = `Opening line. ${"é".repeat(40_000)}`; // two bytes each: 80 KB of text
+    const body = fitShowMeBody({ question: "what's this?", surface: "page", page: { title: "t", host: "h", text, companies: [] } });
+    expect(size(body)).toBeLessThanOrEqual(SHOW_ME_MAX_BODY_BYTES);
+    expect(body.page!.text.startsWith("Opening line.")).toBe(true);
+    const small = { question: "hi", surface: "page" as const, page: { title: "t", host: "h", text: "short", companies: [] } };
+    expect(fitShowMeBody(small)).toEqual(small);
+  });
+
+  it("a screenshot too big for the request is left out; one that fits stays", () => {
+    const page = { title: "t", host: "h", text: "chart page", companies: [] };
+    expect(fitShowMeBody({ question: "explain this chart", surface: "page", page, screenshot: "A".repeat(SCREENSHOT_MAX_CHARS + 1) }).screenshot).toBeUndefined();
+    expect(fitShowMeBody({ question: "explain this chart", surface: "page", page, screenshot: "A".repeat(20_000) }).screenshot).toHaveLength(20_000);
   });
 });

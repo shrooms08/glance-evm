@@ -22,9 +22,23 @@ import { ApiError, portfolioView, priceView, vaultView, whyView } from "../servi
 import { spokenSummary } from "../why.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
 import { warmAnthropic } from "../anthropicHttp.js";
+import { VOICE_RESTING } from "@glance/core/session";
+import { VoiceRestingError } from "./dailyCaps.js";
 
-const MAX_AUDIO_BYTES = 2_000_000; // ~60s of opus: far more than a command
-const MAX_STREAM_MS = 60_000;
+/** A command is at most 30 seconds of audio: the stream finishes there, and a longer upload is refused (413). */
+export const MAX_AUDIO_SECONDS = 30;
+/** 16 kHz, 16-bit, mono PCM: 32,000 bytes a second. */
+const PCM_BYTES_PER_SECOND = 32_000;
+const MAX_STREAM_MS = MAX_AUDIO_SECONDS * 1_000;
+/** An uploaded recording (WAV, 44-byte header): 30 seconds at most. */
+const MAX_AUDIO_BYTES = MAX_AUDIO_SECONDS * PCM_BYTES_PER_SECOND + 44;
+const MAX_STREAM_BYTES = MAX_AUDIO_SECONDS * PCM_BYTES_PER_SECOND;
+
+/** A capped speaker refused: the day's speech is used up. Anything else is rethrown as it was. */
+const restingOr = (err: unknown): never => {
+  if (err instanceof VoiceRestingError) resting();
+  throw err;
+};
 /**
  * Spoken facts may be this old. Quotes and trades always read fresh; this only lets a spoken price be ready the moment
  * the transcript is (the feeds move every few minutes at most: the keeper mirrors mainnet every 5).
@@ -146,10 +160,20 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
 }
 
 async function readAudio(c: Context): Promise<Uint8Array> {
+  const declared = Number(c.req.header("content-length") ?? "0");
+  if (declared > MAX_AUDIO_BYTES) throw new ApiError(413, "AUDIO_TOO_LONG", "That recording is longer than 30 seconds.");
   const buf = new Uint8Array(await c.req.arrayBuffer());
   if (buf.byteLength === 0) throw new ApiError(400, "INVALID_INPUT", "No audio in the request body.");
-  if (buf.byteLength > MAX_AUDIO_BYTES) throw new ApiError(400, "INVALID_INPUT", "That recording is too long for a command.");
+  if (buf.byteLength > MAX_AUDIO_BYTES) throw new ApiError(413, "AUDIO_TOO_LONG", "That recording is longer than 30 seconds.");
   return buf;
+}
+
+/** Seconds of speech in an upload (16 kHz 16-bit mono WAV; anything else is counted as if it were). */
+const secondsOf = (bytes: number) => Math.max(0, bytes - 44) / PCM_BYTES_PER_SECOND;
+
+/** 503 VOICE_RESTING: the day's cap for this direction is used up (text only from here: "You can still type."). */
+function resting(): never {
+  throw new ApiError(503, "VOICE_RESTING", VOICE_RESTING);
 }
 
 /** Allowed WebSocket origins: our extension (any chrome-extension:// in development), and CORS_ORIGINS. */
@@ -177,6 +201,8 @@ export function registerVoice(
       speechFallbacks: v.status.speechFallbacks,
       intent: v.status.intent,
       available: { transcription: v.stt !== null, speech: v.tts !== null, stream: v.stt !== null && Boolean(upgradeWebSocket) },
+      // A daily cap used up: that direction rests until midnight UTC (the extension says so, in text).
+      resting: { transcription: v.meters?.stt.resting ?? false, speech: v.meters?.tts.resting ?? false },
       warnings: v.status.warnings,
     }),
   );
@@ -195,8 +221,10 @@ export function registerVoice(
 
   app.post("/voice/transcribe", async (c) => {
     if (!v.stt) unavailable("transcription");
+    if (v.meters?.stt.resting) resting();
     const started = performance.now();
     const audio = await readAudio(c);
+    v.meters?.stt.add(secondsOf(audio.byteLength));
     const t = await v.stt.transcribe(audio, c.req.header("content-type") ?? "application/octet-stream", keyterms(ctx));
     console.log(`[voice] transcription (upload): ${t.timing?.releaseToFinalMs ?? "?"}ms at the provider, ${Math.round(performance.now() - started)}ms here`);
     return send(c, { text: t.text, confidence: t.confidence, provider: v.stt.name, ms: Math.round(performance.now() - started) });
@@ -243,7 +271,7 @@ export function registerVoice(
       });
     }
     const hitsBefore = v.tts.hits;
-    const out = await v.tts.speak(text);
+    const out = await v.tts.speak(text).catch(restingOr);
     return c.body(out.audio as unknown as ArrayBuffer, 200, {
       "content-type": out.mime,
       "cache-control": "no-store",
@@ -272,7 +300,8 @@ export function registerVoice(
       try {
         const out = await pinned!.streamDetailed(text);
         return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
-      } catch {
+      } catch (err) {
+        if (err instanceof VoiceRestingError) return c.json({ error: { code: "VOICE_RESTING", message: VOICE_RESTING } }, 503);
         return c.json({ error: { code: "VOICE_UNAVAILABLE", message: "That voice isn't answering right now." } }, 503);
       }
     }
@@ -280,11 +309,11 @@ export function registerVoice(
     if (pre) return c.body(pre.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": pre.prerecorded ? "prerecorded" : "generated", "x-voice": pre.voice });
     const streamer = v.tts.stream;
     if (!streamer || v.tts.has(text)) {
-      const out = await v.tts.speak(text);
+      const out = await v.tts.speak(text).catch(restingOr);
       return c.body(out.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "hit", "x-voice": v.tts.voice });
     }
     // Which voice answered: the rest of a reply is pinned to it, and the extension's debug log names it. Never the text.
-    const out = v.tts.streamDetailed ? await v.tts.streamDetailed(text) : { stream: await streamer(text), voice: v.tts.voice };
+    const out = await (v.tts.streamDetailed ? v.tts.streamDetailed(text) : streamer(text).then((stream) => ({ stream, voice: v.tts!.voice }))).catch(restingOr);
     return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
   });
 
@@ -306,12 +335,17 @@ export function registerVoice(
               ws.send(JSON.stringify({ type: "error", code: "VOICE_UNAVAILABLE", message: "No transcription provider is configured." }));
               return ws.close(1000);
             }
+            if (v.meters?.stt.resting) {
+              ws.send(JSON.stringify({ type: "error", code: "VOICE_RESTING", message: VOICE_RESTING }));
+              return ws.close(1000);
+            }
             live = v.stt.stream(keyterms(ctx));
             // The reply will need the speech provider soon: open its connection while the user is still speaking, and
             // keep it open through a long hold (the provider's edge drops idle connections after about 5s).
             v.prewarmSpeech();
             rewarm = setInterval(() => v.prewarmSpeech(), 3_000);
-            timer = setTimeout(() => ws.close(1000, "too long"), MAX_STREAM_MS);
+            // 30 seconds at most: then it's finished as if the key were released (the words so far are kept).
+            timer = setTimeout(() => void finish(ws), MAX_STREAM_MS);
           },
           async onMessage(e, ws) {
             if (!live) return;
@@ -323,26 +357,12 @@ export function registerVoice(
                 return;
               }
               if (msg.type !== "stop") return;
-              clearInterval(rewarm);
-              const stoppedAt = performance.now();
-              try {
-                const t = await live.finish();
-                const ms = Math.round(performance.now() - stoppedAt);
-                const tm = t.timing;
-                // Where the time went (timings only: the words stay out of the logs).
-                console.log(
-                  `[voice] transcription: connect ${tm?.warm ? "0ms (warm connection reused)" : `${tm?.connectMs ?? "?"}ms (new connection, during speech)`}, release to final ${tm?.releaseToFinalMs ?? ms}ms, ${t.text.length} chars`,
-                );
-                ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms, timing: tm }));
-              } catch (err) {
-                ws.send(JSON.stringify({ type: "error", code: "TRANSCRIPTION_FAILED", message: (err as Error).message }));
-              }
-              live = null;
-              return ws.close(1000);
+              return finish(ws);
             }
             const chunk = e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : new Uint8Array(e.data as unknown as ArrayBufferLike);
+            // Past 30 seconds of audio: the rest is dropped (the timer finishes the transcript).
+            if (bytes + chunk.byteLength > MAX_STREAM_BYTES) return;
             bytes += chunk.byteLength;
-            if (bytes > MAX_AUDIO_BYTES) return ws.close(1009, "too much audio");
             live.send(chunk);
           },
           onClose() {
@@ -352,6 +372,29 @@ export function registerVoice(
             live = null;
           },
         };
+        async function finish(ws: { send(data: string): void; close(code?: number, reason?: string): void }) {
+          const stream = live;
+          if (!stream) return;
+          live = null; // once only: the key's release and the 30-second timer may both get here
+          clearTimeout(timer);
+          clearInterval(rewarm);
+          // The seconds actually sent to the provider count against today's cap.
+          v.meters?.stt.add(bytes / PCM_BYTES_PER_SECOND);
+          const stoppedAt = performance.now();
+          try {
+            const t = await stream.finish();
+            const ms = Math.round(performance.now() - stoppedAt);
+            const tm = t.timing;
+            // Where the time went (timings only: the words stay out of the logs).
+            console.log(
+              `[voice] transcription: connect ${tm?.warm ? "0ms (warm connection reused)" : `${tm?.connectMs ?? "?"}ms (new connection, during speech)`}, release to final ${tm?.releaseToFinalMs ?? ms}ms, ${t.text.length} chars`,
+            );
+            ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms, timing: tm }));
+          } catch (err) {
+            ws.send(JSON.stringify({ type: "error", code: "TRANSCRIPTION_FAILED", message: (err as Error).message }));
+          }
+          ws.close(1000);
+        }
       }),
     );
   }

@@ -25,6 +25,7 @@ import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
 import { glanceVaultAbi } from "./abi.generated.js";
 import { createSessions, JsonSessionStore, type Sessions } from "./sessions.js";
 import { createTradeAuth, type TradeAuth } from "./tradeAuth.js";
+import { voiceMeters } from "./voice/dailyCaps.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
 export interface AppContext {
@@ -86,7 +87,12 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
   const cacheDir = files.cache ? dirname(files.cache) : null;
   const anthropicKey = looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? undefined : config.ANTHROPIC_API_KEY;
   const budget = new LlmBudget(budgetLimits(config), files.usage, log);
-  const voice = selectVoiceProviders({ ...config, INTENT_MODEL: models.intent });
+  const meters = voiceMeters({
+    sttSecondsPerDay: config.VOICE_STT_SECONDS_PER_DAY,
+    ttsCharsPerDay: config.VOICE_TTS_CHARS_PER_DAY,
+    file: cacheDir ? join(cacheDir, "voice-usage.json") : null,
+  });
+  const voice = selectVoiceProviders({ ...config, INTENT_MODEL: models.intent }, { meters });
   const client = createChainClient(chain, rpcUrls(config));
   const sessions = createSessions({
     store: new JsonSessionStore(sessionStoreFile(config, cacheDir)),

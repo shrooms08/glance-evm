@@ -3,6 +3,9 @@
  */
 import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono, type Context } from "hono";
+import { createHash, timingSafeEqual } from "node:crypto";
+
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { getAddress, isAddress } from "viem";
@@ -13,7 +16,7 @@ import type { GuardError } from "./errors.js";
 import { z } from "zod";
 
 import type { AppContext } from "./context.js";
-import { clientIp, rateLimit } from "./rateLimit.js";
+import { clientIp, rateLimit, sessionOf } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
 import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
@@ -23,6 +26,9 @@ import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
 import { SESSION_HEADERS } from "@glance/core/session";
 import { linkBody, revokeBody } from "./sessions.js";
+
+/** Largest JSON body accepted (Show me's page context included). */
+export const MAX_JSON_BODY_BYTES = 64 * 1024;
 
 const MAX_RESOLVE_CHARS = 20_000;
 
@@ -68,8 +74,8 @@ const showMeBody = z
       })
       .optional(),
     openChart: z.object({ symbol, range: z.enum(CHART_RANGES) }).nullable().optional(),
-    // A downscaled JPEG, base64 (at most 1280px wide): about 1.5 MB at most.
-    screenshot: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/).optional(),
+    // A downscaled JPEG, base64: the whole request is 64 KB at most, so the extension keeps this under 36 KB.
+    screenshot: z.string().max(MAX_JSON_BODY_BYTES).regex(/^[A-Za-z0-9+/=]+$/).optional(),
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
   })
   .strict();
@@ -79,6 +85,42 @@ const chartQuery = z.object({ range: z.enum(CHART_RANGES).default("1D"), vault: 
 /** "GET /voice/speak?text=Hello 200" -> "GET /voice/speak?… 200": query strings never reach the log. */
 export function redactQuery(line: string): string {
   return line.replace(/\?\S*/g, "?…");
+}
+
+const jsonLimit = bodyLimit({
+  maxSize: MAX_JSON_BODY_BYTES,
+  onError: (c) => c.json({ error: { code: "TOO_LARGE", message: "That request is too large (64 KB at most)." } }, 413),
+});
+
+/** A constant-time comparison of the admin token (never logged: query strings are redacted from the log). */
+export function isAdmin(token: string | undefined, given: string | undefined): boolean {
+  if (!token || !given) return false;
+  const a = createHash("sha256").update(token).digest();
+  const b = createHash("sha256").update(given).digest();
+  return timingSafeEqual(a, b);
+}
+
+const API_VERSION = "0.1.0";
+
+/** /health for everyone in production: ok, chain, block, versions, and the feeds' ages (public, on-chain facts). */
+export function publicHealth(h: Awaited<ReturnType<typeof healthView>>, commit?: string) {
+  return {
+    ok: h.ok,
+    chainId: h.chainId,
+    expectedChainId: h.expectedChainId,
+    blockNumber: h.blockNumber,
+    versions: { api: API_VERSION, commit: commit ?? null },
+    keeper: { lastWriteAt: h.keeper.lastWriteAt },
+    feeds: h.feeds.map((f) => ({
+      symbol: f.symbol,
+      price: f.price,
+      updatedAt: f.updatedAt,
+      ageSeconds: f.ageSeconds,
+      age: f.age,
+      marketState: f.marketState,
+      lastWrite: f.lastWrite ? { at: f.lastWrite.at, agoSeconds: f.lastWrite.agoSeconds, txHash: f.lastWrite.txHash } : null,
+    })),
+  };
 }
 
 /** JSON with bigints as decimal strings. */
@@ -122,31 +164,51 @@ export function createServerApp(ctx: AppContext) {
   app.use(
     "*",
     cors({
-      origin: (origin) => {
-        if (!origin) return null;
-        if (config.corsOrigins.includes(origin)) return origin;
-        if (config.NODE_ENV !== "production" && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
-        return null;
-      },
+      // Only the extension and the console (CORS_ORIGINS). CORS isn't authentication: trades are signed as well.
+      origin: (origin) => (origin && config.corsOrigins.includes(origin) ? origin : null),
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type", ...Object.values(SESSION_HEADERS)],
       exposeHeaders: ["x-voice-cache", "x-voice-ms", "x-voice"],
       maxAge: 600,
     }),
   );
+  // JSON bodies are at most 64 KB (Show me's page context included): larger is 413. A recorded command (the voice
+  // upload fallback) is audio, with its own cap in the voice routes.
+  app.use("*", async (c, next) => (c.req.path === "/voice/transcribe" ? next() : jsonLimit(c, next)));
+
   app.use("*", rateLimit({ limit: config.RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "all" }));
   app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
+  /**
+   * The paid endpoints (Claude, Deepgram) and the heavier reads: a limit per IP, and the same limit per browser session
+   * when the request names one (so one browser can't use a whole office's allowance, nor many IPs one browser's).
+   */
+  const paid: Array<[string[], number, string]> = [
+    // "/x/*" also matches "/x" itself: one pattern each, so a request is counted once.
+    [["/resolve/*"], config.RESOLVE_RATE_LIMIT_PER_MINUTE, "resolve"],
+    [["/why/*"], config.WHY_RATE_LIMIT_PER_MINUTE, "why"],
+    // One limit for both Show me routes (the whole answer, and the streamed one).
+    [["/showme/*"], config.SHOWME_RATE_LIMIT_PER_MINUTE, "showme"],
+    [["/chart/*"], config.CHART_RATE_LIMIT_PER_MINUTE, "chart"],
+    [["/portfolio/*"], config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, "portfolio"],
+    [["/voice/*"], config.VOICE_RATE_LIMIT_PER_MINUTE, "voice"],
+  ];
+  for (const [paths, limit, name] of paid) {
+    const perIp = rateLimit({ limit, trustProxy: config.TRUST_PROXY, name });
+    const perSession = rateLimit({ limit, trustProxy: config.TRUST_PROXY, name: `${name}-session`, keyBy: sessionOf });
+    for (const path of paths) {
+      app.use(path, perIp);
+      app.use(path, perSession);
+    }
+  }
   app.use("/resolve/names", rateLimit({ limit: 20, trustProxy: config.TRUST_PROXY, name: "names" }));
-  app.use("/why/*", rateLimit({ limit: config.WHY_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "why" }));
-  // One limit for both Show me routes (the whole answer, and the streamed one).
-  app.use("/showme/*", rateLimit({ limit: config.SHOWME_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "showme" }));
-  app.use("/showme", rateLimit({ limit: config.SHOWME_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "showme" }));
-  app.use("/chart/*", rateLimit({ limit: config.CHART_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "chart" }));
-  app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
 
   app.use("/session/*", rateLimit({ limit: config.SESSION_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "session" }));
 
-  app.get("/health", async (c) => send(c, await healthView(ctx)));
+  // In production, the public view only (no agent balance, voice decisions or budgets) unless ?admin=<ADMIN_TOKEN>.
+  app.get("/health", async (c) => {
+    const full = await healthView(ctx);
+    return send(c, config.NODE_ENV === "production" && !isAdmin(config.ADMIN_TOKEN, c.req.query("admin")) ? publicHealth(full, config.GIT_COMMIT) : full);
+  });
 
   // Browser sessions, linked and unlinked by the vault owner's signature (src/sessions.ts).
   app.post("/session/link", async (c) => {

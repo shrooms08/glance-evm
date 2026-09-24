@@ -54,11 +54,13 @@ export interface Health {
   chainId: number;
   expectedChainId: number;
   blockNumber: string;
-  agent: { address: string; keyLoaded: boolean; matchesDemoVault: boolean; ethBalance: string };
-  llmFallback: boolean;
-  keeper?: { pausedLocally: boolean; lastWriteAt: number | null };
+  /** Development only (or with the admin token): a production API shows the public view without these. */
+  agent?: { address: string; keyLoaded: boolean; matchesDemoVault: boolean; ethBalance: string };
+  llmFallback?: boolean;
+  versions?: { api: string; commit: string | null };
+  keeper?: { pausedLocally?: boolean; lastWriteAt: number | null };
   feeds?: FeedStatus[];
-  demoVaults: {
+  demoVaults?: {
     testUSDG: string;
     paxosUSDG: string | null;
     /** Present on APIs from after the move to real Paxos USDG. */

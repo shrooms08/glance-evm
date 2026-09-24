@@ -82,6 +82,8 @@ interface Status {
   stream: boolean;
   /** The configured voice (the pre-recorded lines are kept per voice). */
   voice: string | null;
+  /** Today's cap on that direction is used up: "Voice is resting for today. You can still type." */
+  resting?: { transcription: boolean; speech: boolean };
 }
 
 interface Session {
@@ -98,6 +100,8 @@ interface Session {
   capturing: boolean;
   chunks: Uint8Array[];
   ws?: WebSocket;
+  /** The API said today's listening is used up. */
+  resting?: boolean;
   wsOpen?: Promise<boolean>;
   transcript?: Promise<string | null>;
   listener?: Listener | null;
@@ -161,13 +165,18 @@ export class VoiceWorker {
     let value: Status;
     try {
       const res = await this.d.fetch(`${api}/voice/status`, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
-      const body = (await res.json()) as { available?: { transcription?: boolean; speech?: boolean; stream?: boolean }; speechChain?: Array<{ voice?: string }> };
+      const body = (await res.json()) as {
+        available?: { transcription?: boolean; speech?: boolean; stream?: boolean };
+        speechChain?: Array<{ voice?: string }>;
+        resting?: { transcription?: boolean; speech?: boolean };
+      };
       value = {
         reachable: res.ok,
         transcription: Boolean(body.available?.transcription),
         speech: Boolean(body.available?.speech),
         stream: Boolean(body.available?.stream),
         voice: body.speechChain?.[0]?.voice ?? null,
+        resting: { transcription: Boolean(body.resting?.transcription), speech: Boolean(body.resting?.speech) },
       };
     } catch {
       value = { reachable: false, transcription: false, speech: false, stream: false, voice: null };
@@ -206,6 +215,12 @@ export class VoiceWorker {
       mic.stream!.getTracks().forEach((t) => t.stop());
       return this.emit(s, { type: "end" });
     }
+    if (status.resting?.transcription) {
+      // Today's listening is used up: say so in text, and typing still works.
+      mic.stream!.getTracks().forEach((t) => t.stop());
+      this.emit(s, { type: "error", code: "voice-resting" });
+      return this.emit(s, { type: "end" });
+    }
     if (!status.reachable || !status.transcription) {
       mic.stream!.getTracks().forEach((t) => t.stop()); // the browser's recognition opens its own
       return this.startBrowser(s, status.reachable ? "no-provider" : "api-unreachable");
@@ -228,7 +243,10 @@ export class VoiceWorker {
           try {
             const msg = JSON.parse(String(m.data)) as { type?: string; text?: string };
             if (msg.type === "transcript") resolve(msg.text ?? "");
-            else if (msg.type === "error") resolve(null);
+            else if (msg.type === "error") {
+              if ((msg as { code?: string }).code === "VOICE_RESTING") s.resting = true;
+              resolve(null);
+            }
           } catch {
             // ignore
           }
@@ -331,7 +349,7 @@ export class VoiceWorker {
     }
     const timing: VoiceTiming = { transcript: this.d.now() - s.released, via };
     if (text === null) {
-      this.emit(s, { type: "error", code: "transcription-failed" });
+      this.emit(s, { type: "error", code: s.resting ? "voice-resting" : "transcription-failed" });
       return this.emit(s, { type: "end" });
     }
     this.emit(s, { type: "final", text });
@@ -420,11 +438,13 @@ export class VoiceWorker {
       started = true;
       onStarted?.();
     };
-    // No voice: the text is already on screen; a soft tone says there's no voice, and nothing is spoken.
+    // No voice: the text is already on screen; a soft tone says there's no voice, and nothing is spoken. The status is
+    // read again next time (the voice may be back, or today's cap may have just been reached).
     const unavailable = () => {
       markStarted();
       this.d.errorTone();
-      this.d.emit({ kind: "voice:speech", id, type: "unavailable" });
+      this.status = null;
+      this.d.emit({ kind: "voice:speech", id, type: "unavailable", ...(status.resting?.speech ? { resting: true } : {}) });
     };
     let status = await this.apiStatus(api);
     if (!status.speech) {
@@ -572,7 +592,11 @@ export class VoiceWorker {
     const status = await this.apiStatus(r.api);
     const done = (type: "end" | "unavailable") => {
       this.replies.delete(id);
-      if (type === "unavailable") this.d.errorTone();
+      if (type === "unavailable") {
+        this.d.errorTone();
+        this.status = null;
+        return this.d.emit({ kind: "voice:speech", id, type, ...(status.resting?.speech ? { resting: true } : {}) });
+      }
       this.d.emit({ kind: "voice:speech", id, type });
     };
     if (!status.speech) return done("unavailable");

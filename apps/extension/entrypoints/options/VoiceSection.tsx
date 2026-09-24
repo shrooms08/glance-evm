@@ -4,6 +4,7 @@
  * command through the same path the pages use (recorded here, transcribed and answered by the API), and speaking with
  * the orb following the real playback.
  */
+import { VOICE_RESTING } from "@glance/core/session";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { browser } from "wxt/browser";
 
@@ -93,7 +94,8 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
     const text = "Tesla is at $250. Confirm?";
     setLine(`Saying “${text}”`);
     void speak(text, true, { onStart: () => setOrb("speaking"), onEnd: () => setOrb("idle") }).then((outcome) => {
-      if (outcome === "unavailable") setLine("Glance's voice isn't available right now, so replies are shown, not spoken.");
+      if (outcome === "resting") setLine(VOICE_RESTING);
+      else if (outcome === "unavailable") setLine("Glance's voice isn't available right now, so replies are shown, not spoken.");
       else if (outcome === "cut") setLine("Glance's voice stopped part way. The reply stays written.");
     });
   };

@@ -115,7 +115,15 @@ const envSchema = z.object({
   VOICE_FAKE_TRANSCRIPT: z.string().optional(),
   VOICE_FAKE_DELAY_MS: z.coerce.number().int().min(0).max(10_000).optional(),
   /** Comma separated. Chrome extension origins look like chrome-extension://<id>. */
-  CORS_ORIGINS: z.string().default(""),
+  /**
+   * The only browser origins allowed to call the API (comma separated): the extension (its fixed ID) and the console.
+   * CORS is not authentication (anything outside a browser ignores it): that's why trades are signed.
+   */
+  CORS_ORIGINS: z
+    .string()
+    .optional()
+    // Empty (as in a copied .env.example) means the default, not "no origins".
+    .transform((v) => (v?.trim() ? v : "chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj,http://localhost:3000")),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
   TRADE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
   /** Trust X-Forwarded-For for the client IP. Only enable behind a proxy you control. */
@@ -143,6 +151,23 @@ const envSchema = z.object({
     .default("0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113")
     .refine((v) => v.split(",").map((a) => a.trim()).filter(Boolean).every((a) => /^0x[0-9a-fA-F]{40}$/.test(a)), "OPEN_DEMO_VAULTS must be comma-separated 0x addresses"),
   DEMO_TRADES_PER_HOUR: z.coerce.number().int().min(0).default(10),
+  /** Per-IP limits for voice (every /voice route and the audio stream) and for /resolve. */
+  VOICE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),
+  RESOLVE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),
+  /**
+   * Daily caps on paid voice, per UTC day: Deepgram speech-to-text seconds, and speech characters (pre-recorded lines
+   * and phrases served from memory don't count). When one is used up: "Voice is resting for today. You can still type."
+   */
+  VOICE_STT_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1_800),
+  VOICE_TTS_CHARS_PER_DAY: z.coerce.number().int().min(0).default(60_000),
+  /** /health?admin=<ADMIN_TOKEN> shows the full view in production (agent balance, voice, budgets). Unset: never. */
+  ADMIN_TOKEN: z
+    .string()
+    .min(16, "ADMIN_TOKEN must be at least 16 characters")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  /** Shown by /health as versions.commit (set by the host, e.g. the deploy's git SHA). */
+  GIT_COMMIT: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema> & { corsOrigins: string[]; openDemoVaults: `0x${string}`[] };

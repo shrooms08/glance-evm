@@ -216,7 +216,8 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
  * it has finished (or when it's clear nothing will play). With `enabled` false, nothing is spoken.
  */
 /** How a spoken reply went: played to the end, stopped mid-reply (the rest is shown), or no voice at all (shown). */
-export type SpeakOutcome = "ended" | "cut" | "unavailable" | "off";
+/** "resting": no voice because today's speech cap is used up ("Voice is resting for today. You can still type."). */
+export type SpeakOutcome = "ended" | "cut" | "unavailable" | "resting" | "off";
 
 /**
  * Speaks `text` in Glance's voice (the offscreen document plays the API's /voice/speak; never the browser's voice).
@@ -250,7 +251,7 @@ export function speak(
       } else if (msg.type === "cut") {
         h.onCut?.(msg.t, msg.d);
         finish("cut");
-      } else finish(msg.type === "unavailable" ? "unavailable" : "ended");
+      } else finish(msg.type === "unavailable" ? (msg.resting ? "resting" : "unavailable") : "ended");
       return undefined;
     };
     // Nothing should take this long; never leave the orb speaking.
@@ -304,7 +305,7 @@ export function speakParts(enabled: boolean, h: PartsHandlers = {}): { push(text
     else if (msg.type === "cut") {
       h.onCut?.(msg.part ?? 0);
       finish("cut");
-    } else if (msg.type === "unavailable") finish("unavailable");
+    } else if (msg.type === "unavailable") finish(msg.resting ? "resting" : "unavailable");
     else if (msg.type === "end") finish("ended");
     return undefined;
   };

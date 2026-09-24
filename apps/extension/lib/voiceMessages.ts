@@ -44,7 +44,9 @@ export type VoiceEvent = { kind: "voice:event"; session: string; seq: number } &
 
 /** Playback of a spoken reply, from the audio element's own events. */
 export type SpeechEvent =
-  | { kind: "voice:speech"; id: string; type: "start" | "end" | "unavailable" }
+  | { kind: "voice:speech"; id: string; type: "start" | "end" }
+  /** No voice for this reply; `resting`: today's speech cap is used up ("Voice is resting for today."). */
+  | { kind: "voice:speech"; id: string; type: "unavailable"; resting?: boolean }
   /** While it plays (about 4 a second): where playback is, and the audio's length once the player knows it. */
   | { kind: "voice:speech"; id: string; type: "progress"; t: number; d: number | null }
   /** The audio stopped mid-reply (a stall or an error), at `t` seconds: the rest is shown, never said in another voice. */
