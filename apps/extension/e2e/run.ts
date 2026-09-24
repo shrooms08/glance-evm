@@ -1,5 +1,5 @@
 /**
- * One command for the judge-journey check:  pnpm --filter extension e2e
+ * One command for the gated setup journey:  pnpm --filter extension e2e
  *
  * Builds the extension into .output-e2e (with the e2e console's origin allowed) and the console into .next-e2e (both
  * separate from your own builds, so nothing you have loaded or running is touched), starts that console on port 3999,

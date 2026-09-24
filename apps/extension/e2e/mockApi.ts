@@ -1,5 +1,5 @@
 /**
- * A stand-in Glance API for the judge-journey check: the same routes and response shapes the extension reads, with the
+ * A stand-in Glance API for the setup-journey check: the same routes and response shapes the extension reads, with the
  * chain mocked. Nothing here touches a chain or sends a transaction: the trade response is canned. It also serves the
  * fixture news article the check opens.
  */
@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
 
-export const DEMO_VAULT = "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113";
+/** The user's own vault in this check (the chain is mocked: nothing is on chain). */
+export const USER_VAULT = "0x00000000000000000000000000000000000e2e01";
 export const FAKE_TX = `0x${"e2e0".repeat(16)}`;
 const NOW = () => Math.floor(Date.now() / 1000);
 const amount = (value: string, decimals = 6) => ({ raw: String(Math.round(Number(value) * 10 ** decimals)), value, formatted: `$${Number(value).toFixed(2)}` });
@@ -20,7 +21,7 @@ const stocks = [
 
 const window24h = { used: amount("0"), limit: amount("500"), remaining: amount("500"), nextReleaseInSeconds: null, clearsInSeconds: null };
 const vault = {
-  address: DEMO_VAULT,
+  address: USER_VAULT,
   agentActive: true,
   agentExpiresInSeconds: 20 * 86_400,
   paused: false,
@@ -35,6 +36,8 @@ const vault = {
 export interface MockApi {
   url: string;
   trades: unknown[];
+  /** What GET /session/status answers for the check's vault: flipped to linked once the owner "signs". */
+  setLinked(linked: boolean): void;
   close(): Promise<void>;
 }
 
@@ -46,6 +49,7 @@ async function body(req: IncomingMessage): Promise<string> {
 
 export async function startMockApi(port = 8797): Promise<MockApi> {
   const trades: unknown[] = [];
+  let linked = false;
   const article = readFileSync(resolve(import.meta.dirname, "fixtures/article.html"), "utf8");
   const json = (res: ServerResponse, status: number, data: unknown) => {
     res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "*" });
@@ -109,10 +113,10 @@ export async function startMockApi(port = 8797): Promise<MockApi> {
     if (path === "/voice/warm") return json(res, 200, { ok: true });
     if (path.startsWith("/chart/")) return json(res, 404, { error: { code: "NOT_FOUND", message: "No chart in this check." } });
     if (path.startsWith("/why/")) return json(res, 404, { error: { code: "NOT_FOUND", message: "No news in this check." } });
-    if (path.startsWith("/session/status")) return json(res, 200, { linked: false, reason: "unknown" });
-    if (path === "/faucet") return json(res, 200, { enabled: false, amountEth: null });
+    if (path.startsWith("/session/status")) return json(res, 200, linked ? { linked: true, expiresAt: NOW() + 30 * 86_400, linkedAt: NOW() } : { linked: false, reason: "unknown" });
+    if (path === "/faucet") return json(res, 200, { enabled: false, amountEth: null, usdg: { enabled: false, amount: null }, stocked: { gas: false, usdg: false } });
     return json(res, 404, { error: { code: "NOT_FOUND", message: "No such endpoint." } });
   });
   await new Promise<void>((r) => server.listen(port, "127.0.0.1", r));
-  return { url: `http://localhost:${port}`, trades, close: () => new Promise((r) => server.close(() => r())) };
+  return { url: `http://localhost:${port}`, trades, setLinked: (v) => void (linked = v), close: () => new Promise((r) => server.close(() => r())) };
 }

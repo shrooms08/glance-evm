@@ -61,4 +61,4 @@ export interface Shortcuts {
   talk: string;
 }
 
-export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | SessionMessage | CommandMessage | { kind: "commands:get" } | { kind: "open:settings" };
+export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | SessionMessage | CommandMessage | { kind: "commands:get" } | { kind: "tab:active" } | { kind: "open:settings" };

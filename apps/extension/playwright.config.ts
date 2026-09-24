@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-/** The judge journey, end to end, with the built extension in Chromium (run it with `pnpm --filter extension e2e`). */
+/** The gated setup journey, end to end, with the built extension in Chromium (run it with `pnpm --filter extension e2e`). */
 export default defineConfig({
   testDir: "e2e",
   testMatch: /.*\.spec\.ts$/,

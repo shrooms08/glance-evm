@@ -308,6 +308,9 @@ export default defineBackground(() => {
         return forgetSession().then(() => true);
       case "commands:get":
         return currentShortcuts();
+      case "tab:active":
+        // Whether the asking page is its window's active tab (the welcome shows in the tab the user is looking at).
+        return Promise.resolve(Boolean(sender.tab?.active));
       case "open:console":
         return openConsole(message.page, message.vault).then(() => true);
       case "open:settings":

@@ -142,8 +142,9 @@ underlines them without touching the page, shows live prices on hover, and buys 
 refuses a trade it shows why, as protection rather than an error. See [apps/extension/README.md](apps/extension/README.md)
 for step-by-step installation, or open the console's Get Glance page (`/install`).
 
-The judge journey (install, welcome, hover a company, a $10 demo buy, the receipt) is checked end to end, with the
-built extension in Chromium against a mock API (no real transactions):
+The setup journey (install, the gated setup card, setup completing through the console's handshake, the welcome, a
+hover card's $10 buy and its receipt) is checked end to end, with the built extension in Chromium against a mock API
+(no real transactions):
 
 ```sh
 pnpm --filter extension e2e    # builds into .output-e2e and .next-e2e; your own builds are left alone

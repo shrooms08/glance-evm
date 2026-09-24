@@ -443,23 +443,45 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const [onboard, setOnboard] = useState<{ phase: "welcome"; line: string } | { phase: "tour"; step: number } | null>(null);
   const reducedMotion = prefersReducedMotion();
   useEffect(() => {
-    // The welcome and the tour wait until Glance is set up (the gate has opened), then run once each.
+    // The welcome and the tour wait until Glance is set up (the gate has opened), then run once each, in the tab the
+    // user is looking at (its window's active tab): with Glance on every open page, a background tab mustn't claim it.
     if (g.gated !== false) return;
-    void safely(async () => {
-      const [wasGreeted, toured] = await Promise.all([greeted.getValue(), tourDone.getValue()]);
-      const show = firstRun(wasGreeted, toured);
-      if (show === "welcome") {
-        await greeted.setValue(true);
-        const line = GREETING(keyLabel(g.glanceKey), keyLabel(g.voiceKey));
-        setOnboard({ phase: "welcome", line });
-        g.setOrb({ state: "idle", line, meta: "Hello" });
-        // Glance's own voice, pre-recorded for the default keys (only when voice replies are on).
-        void speak(SPOKEN_GREETING(g.glanceKey.toUpperCase(), g.voiceKey.toUpperCase()), g.voiceReplies, {
-          onStart: () => g.setOrb({ state: "speaking", line, meta: "Hello" }),
-          onEnd: () => g.setOrb({ state: "idle", line, meta: "Hello" }),
-        });
-      } else if (show === "tour") setOnboard({ phase: "tour", step: 0 });
-    }, Promise.resolve());
+    let started = false;
+    let checking = false;
+    const start = async () => {
+      if (started || checking || document.visibilityState !== "visible") return;
+      checking = true;
+      const active = await send<boolean>({ kind: "tab:active" }).catch(() => false);
+      checking = false;
+      if (!active || started) return;
+      started = true;
+      window.removeEventListener("focus", start);
+      document.removeEventListener("visibilitychange", start);
+      void safely(async () => {
+        const [wasGreeted, toured] = await Promise.all([greeted.getValue(), tourDone.getValue()]);
+        const show = firstRun(wasGreeted, toured);
+        if (show === "welcome") {
+          await greeted.setValue(true);
+          const line = GREETING(keyLabel(g.glanceKey), keyLabel(g.voiceKey));
+          // Setup just finished (its card may still be open): make way for the welcome by the orb.
+          setPanelOpen(false);
+          setOnboard({ phase: "welcome", line });
+          g.setOrb({ state: "idle", line, meta: "Hello" });
+          // Glance's own voice, pre-recorded for the default keys (only when voice replies are on).
+          void speak(SPOKEN_GREETING(g.glanceKey.toUpperCase(), g.voiceKey.toUpperCase()), g.voiceReplies, {
+            onStart: () => g.setOrb({ state: "speaking", line, meta: "Hello" }),
+            onEnd: () => g.setOrb({ state: "idle", line, meta: "Hello" }),
+          });
+        } else if (show === "tour") setOnboard({ phase: "tour", step: 0 });
+      }, Promise.resolve());
+    };
+    void start();
+    window.addEventListener("focus", start);
+    document.addEventListener("visibilitychange", start);
+    return () => {
+      window.removeEventListener("focus", start);
+      document.removeEventListener("visibilitychange", start);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.gated]);
 
@@ -612,6 +634,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       return;
     }
     if (assistant.listening) assistant.stopListening();
+    // Not set up yet: the orb opens its setup card right here (docking comes once Glance is ready).
+    if (g.gated !== false) {
+      setPanelOpen((open) => !open);
+      return;
+    }
     switchToDocked();
   };
   /** Keyboard users: Enter or Space glances (opens the panel with what was found); the panel has the dock button. */
