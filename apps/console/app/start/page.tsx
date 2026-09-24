@@ -7,13 +7,15 @@ import { useAccount } from "wagmi";
 
 import { Notice } from "@/components/Notice";
 import { TxStatus } from "@/components/TxStatus";
-import { useGate } from "@/components/useGate";
+import { useGate, useReconnect } from "@/components/useGate";
 import { VaultStep } from "@/components/VaultStep";
 import { CHAIN_ID, demoVaults, primaryVault, type DemoVault } from "@/lib/deployment";
 import { formatUsd, parseDecimal } from "@/lib/format";
 import { SingleFlight } from "@/lib/singleFlight";
 import { addMorePlan, setupPlan } from "@/lib/setup";
-import { STATUS_LABELS, stepStatuses, summarize, vaultProgress, type Activity, type StepStatus, type StatusInputs } from "@/lib/setupStatus";
+import { reportError } from "@/lib/report";
+import { runSetupSteps } from "@/lib/setupRunner";
+import { activityFor, STATUS_LABELS, stepStatuses, summarize, vaultProgress, type StepStatus, type StatusInputs } from "@/lib/setupStatus";
 import { describeTxError } from "@/lib/txMessages";
 import { useOwnerTx } from "@/lib/useOwnerTx";
 import { readStartState, useStartState } from "@/lib/useSetupSnapshot";
@@ -34,6 +36,7 @@ function parseAmount(value: string, decimals: number): { raw: bigint; error: str
 export default function StartPage() {
   const { address, isConnected, chainId } = useAccount();
   const gate = useGate(address);
+  const reconnect = useReconnect();
   const [flavourKey, setFlavourKey] = useState<DemoVault["key"]>(primaryVault.key);
   const flavour = demoVaults.find((d) => d.key === flavourKey)!;
   const q = useStartState(address, flavour);
@@ -64,12 +67,8 @@ export default function StartPage() {
   const plan = s ? setupPlan(s.snapshot, effective, decimals, first.raw, depositConfirmed) : null;
   const morePlan = s && more.raw > 0n ? addMorePlan(s.snapshot, effective, decimals, more.raw) : null;
 
-  // What's in flight, and for which step. An "Add more" deposit is its own action: it never moves step 4's status.
-  const inFlight = tx.state.status === "checking" || tx.state.status === "wallet" ? "wallet" : tx.state.status === "pending" ? "confirming" : null;
-  let activity: Activity = { step: null, phase: "idle" };
-  if (gate.switching) activity = { step: "network", phase: "wallet" };
-  else if (running === "setup") activity = { step: "vault", phase: inFlight ?? "confirming" };
-  else if (tx.state.status === "failed" && lastMode === "setup") activity = { step: "vault", phase: "failed" };
+  // What's in flight, and for which step: "Confirming" only once a transaction hash exists (see activityFor).
+  const activity = activityFor({ switching: gate.switching, running, lastMode, tx: tx.state, runError });
 
   const inputs: StatusInputs = {
     connected: isConnected,
@@ -97,48 +96,36 @@ export default function StartPage() {
     setLastMode(mode);
     setRunning(mode);
     setRunError(null);
-    const confirmed = new Set<string>();
-    let deposited = depositConfirmed;
     try {
-      for (let guard = 0; guard < 25; guard++) {
-        let fresh = await readStartState(owner, flavour);
-        // Just created: give the RPC a moment to show the new vault before planning its configuration.
-        const created = confirmed.has("create") || confirmed.has("create-configured");
-        if (created) {
-          for (let wait = 0; !fresh.snapshot.vault && wait < 5; wait++) {
-            await new Promise((r) => setTimeout(r, 1_000));
-            fresh = await readStartState(owner, flavour);
-          }
-        }
-        // Created in this run but the RPC still can't see it: stop rather than plan a second vault. The page
-        // refreshes on its own; the factory would refuse a second vault anyway (VaultAlreadyExists).
-        if (created && !fresh.snapshot.vault) break;
-        const f = fresh.vaultFlavour ?? flavour;
-        const dec = fresh.usdgDecimals[f.key];
-        const next = mode === "setup" ? setupPlan(fresh.snapshot, f, dec, amount, deposited) : addMorePlan(fresh.snapshot, f, dec, amount);
-        if (next.blocked) {
-          setRunError(next.blocked);
-          break;
-        }
-        const step = next.steps.find((st) => !confirmed.has(st.id));
-        if (!step) break;
-        const target = step.call.address ?? fresh.snapshot.vault;
-        if (!target || (!fresh.snapshot.vault && step.id !== "create")) break;
-        const args = step.id === "allow" ? [fresh.snapshot.vault, step.call.args[1]] : step.call.args;
-        const hash = await tx.send({ label: step.label, address: target, abi: step.call.abi, functionName: step.call.functionName, args });
-        if (!hash) break; // failed or cancelled: TxStatus says why; nothing else is sent
-        confirmed.add(step.id);
-        if (step.id === "deposit" || (step.id === "create-configured" && amount > 0n)) {
-          deposited = true;
+      const outcome = await runSetupSteps({
+        mode,
+        createDeposits: amount > 0n,
+        read: async () => {
+          const fresh = await readStartState(owner, flavour);
+          const f = fresh.vaultFlavour ?? flavour;
+          const dec = fresh.usdgDecimals[f.key];
+          return {
+            snapshot: fresh.snapshot,
+            plan: (deposited) =>
+              mode === "setup"
+                ? setupPlan(fresh.snapshot, f, dec, amount, deposited || depositConfirmed)
+                : addMorePlan(fresh.snapshot, f, dec, amount),
+          };
+        },
+        send: (step, target, args) => tx.send({ label: step.label, address: target, abi: step.call.abi, functionName: step.call.functionName, args }),
+        onDeposited: (hash) => {
           setConfirmedDeposit({ owner, hash });
-          if (mode === "add-more") {
-            setAddMore("");
-            break; // one deposit per click, never more
-          }
-        }
+          if (mode === "add-more") setAddMore("");
+        },
+      });
+      // Every ending but "done" is shown; a failed transaction already shows its own reason in TxStatus.
+      if (outcome.kind === "blocked" || outcome.kind === "stopped") {
+        reportError(`Get started (${mode}): ${outcome.kind}`, new Error(outcome.reason));
+        setRunError(outcome.reason);
       }
     } catch (err) {
-      setRunError(isRpcTrouble(err) ? RPC_TROUBLE_MESSAGE : describeTxError(err, { usdgDecimals: decimals }));
+      reportError(`Get started (${mode})`, err);
+      setRunError(isRpcTrouble(err) ? RPC_TROUBLE_MESSAGE : describeTxError(err, { usdgDecimals: decimals, account: owner }));
     } finally {
       setRunning(null);
       await queryClient.invalidateQueries();
@@ -182,6 +169,7 @@ export default function StartPage() {
               {gate.switching ? "Check your wallet…" : "Add and switch"}
             </button>
           )}
+          {isConnected && !onChain && gate.switchError && <p className="meta text-fail">{gate.switchError}</p>}
         </Step>
 
         <Step n={3} title="Get test ETH and USDG" status={statuses.funds}>
@@ -232,7 +220,7 @@ export default function StartPage() {
             onFinish={() => run("setup", first.raw)}
             runError={runError}
           />
-          <TxStatus state={tx.state} />
+          <TxStatus state={tx.state} onReconnect={() => void reconnect()} />
         </Step>
 
         <Step n={5} title="Install the Glance extension" status={statuses.extension}>

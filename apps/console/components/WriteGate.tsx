@@ -27,6 +27,7 @@ export function GateNotice({
   onConnect,
   onSwitchNetwork,
   switching,
+  switchError,
 }: {
   reason: GateReason;
   owner?: Address;
@@ -34,6 +35,8 @@ export function GateNotice({
   onConnect?(): void;
   onSwitchNetwork?(): void;
   switching?: boolean;
+  /** Why the last network switch failed, if it did. */
+  switchError?: string | null;
 }) {
   if (reason === "no-wallet") {
     return (
@@ -60,7 +63,8 @@ export function GateNotice({
         }
       >
         This vault lives on Robinhood Chain testnet (chain 46630). One click switches, and adds the network to your wallet if
-        it isn't there yet.
+        it isn&apos;t there yet.
+        {switchError && <span className="text-fail"> {switchError}</span>}
       </Notice>
     );
   }

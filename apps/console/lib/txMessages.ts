@@ -9,7 +9,9 @@
  */
 import { decodeRevert, explainRevert, revertDataFromError } from "@glance/core/errors";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
-import { ContractFunctionRevertedError, InsufficientFundsError, UserRejectedRequestError } from "viem";
+import { ContractFunctionRevertedError, InsufficientFundsError, UnauthorizedProviderError, UserRejectedRequestError } from "viem";
+
+import { shortAddress } from "./format";
 
 export const TX_MESSAGES = {
   rejected: "You cancelled in your wallet, so nothing changed.",
@@ -36,13 +38,34 @@ export function isUserRejection(err: unknown): boolean {
   return chain(err).some((e) => e instanceof UserRejectedRequestError || (e as { code?: unknown }).code === 4001);
 }
 
+/**
+ * The wallet hasn't authorised the account wagmi is using for this site: EIP-1193 4100 ("unauthorized"), wagmi's
+ * ConnectorAccountNotFoundError (the connector's accounts don't include it), or a wallet saying the transaction's
+ * "from" doesn't match. Typical after adding a new account in MetaMask: the extension shows it, the site doesn't have it.
+ */
+export function isUnauthorizedAccount(err: unknown): boolean {
+  return chain(err).some((e) => {
+    const x = e as { code?: unknown; name?: unknown; message?: unknown };
+    if (e instanceof UnauthorizedProviderError || x.code === 4100) return true;
+    if (x.name === "ConnectorAccountNotFoundError") return true;
+    const m = String(x.message ?? "");
+    return /has not been authori[sz]ed by the user/i.test(m) || /from[^.]*(does not match|mismatch)/i.test(m);
+  });
+}
+
+export const unauthorizedMessage = (account?: string) =>
+  `Your wallet hasn't connected this account to Glance. Open your wallet, connect ${account ? shortAddress(account) : "this account"} to this site, then try again.`;
+
 export interface TxErrorContext {
   usdgDecimals: number;
   now?: number;
+  /** The account the console tried to send from (named in the "not connected to this site" message). */
+  account?: string;
 }
 
 export function describeTxError(err: unknown, ctx: TxErrorContext): string {
   if (isUserRejection(err)) return TX_MESSAGES.rejected;
+  if (isUnauthorizedAccount(err)) return unauthorizedMessage(ctx.account);
   const now = ctx.now ?? Math.floor(Date.now() / 1000);
   const raw = revertDataFromError(err);
   if (raw) {

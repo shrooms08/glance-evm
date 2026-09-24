@@ -6,7 +6,7 @@ import { isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
 import { TxStatus } from "@/components/TxStatus";
-import { useGate } from "@/components/useGate";
+import { useGate, useReconnect } from "@/components/useGate";
 import { GateNotice, WriteGate } from "@/components/WriteGate";
 import { safeAgentExpiry } from "@/lib/agentExpiry";
 import { effectiveCap } from "@/lib/caps";
@@ -24,6 +24,7 @@ export default function LimitsPage() {
   const vault = useSelectedVault();
   const chain = useVaultChain(vault);
   const gate = useGate(chain.data?.owner);
+  const reconnect = useReconnect();
   const tx = useOwnerTx(chain.data?.usdgDecimals ?? 6);
   const send = (req: Omit<TxRequest, "address" | "abi">) => tx.send({ ...req, address: vault, abi: vaultAbi }).then((hash) => {
       if (hash) void chain.refetch();
@@ -47,8 +48,8 @@ export default function LimitsPage() {
       </div>
 
       {chain.problem && <ProblemNotice error={chain.problem} what="this vault" />}
-      {!chain.problem && <GateNotice reason={gate.reason} owner={chain.data?.owner} account={gate.account} onConnect={gate.onConnect} onSwitchNetwork={gate.onSwitchNetwork} switching={gate.switching} />}
-      <TxStatus state={tx.state} onDismiss={tx.reset} />
+      {!chain.problem && <GateNotice reason={gate.reason} owner={chain.data?.owner} account={gate.account} onConnect={gate.onConnect} onSwitchNetwork={gate.onSwitchNetwork} switching={gate.switching} switchError={gate.switchError} />}
+      <TxStatus state={tx.state} onDismiss={tx.reset} onReconnect={() => void reconnect()} />
 
       {chain.isLoading && !chain.data && <div className="card"><Skeleton lines={5} /></div>}
       {chain.data && (
@@ -56,7 +57,7 @@ export default function LimitsPage() {
           <div className="grid grid-2">
             <Controls v={chain.data} send={send} />
             {/* Keyed so a new agent or a changed gate starts the revoke confirmation over. */}
-            <AgentControls key={`${chain.data.agent}-${gate.reason}`} v={chain.data} vault={vault} send={send} />
+            <AgentControls key={`${chain.data.agent}-${gate.reason}`} v={chain.data} vault={vault} send={send} onError={tx.fail} />
           </div>
           {/* Keyed by the vault's limits, so the form starts from the new values after a change is mined. */}
           <LimitsEditor
@@ -95,7 +96,7 @@ function Controls({ v, send }: { v: VaultChainState; send: Send }) {
   );
 }
 
-function AgentControls({ v, vault, send }: { v: VaultChainState; vault: Address; send: Send }) {
+function AgentControls({ v, vault, send, onError }: { v: VaultChainState; vault: Address; send: Send; onError(label: string, err: unknown): void }) {
   const [confirming, setConfirming] = useState(false);
   const now = useNow();
   const hasAgent = !isAddressEqual(v.agent, zeroAddress);
@@ -104,9 +105,17 @@ function AgentControls({ v, vault, send }: { v: VaultChainState; vault: Address;
   const agentToAuthorise = hasAgent ? v.agent : (demo?.agent ?? demoVaults[0]!.agent);
 
   const renew = async () => {
-    const block = await publicClient.getBlock();
-    const expiry = safeAgentExpiry(Number(block.timestamp), VAULT_SETUP.agentTtlSeconds);
-    await send({ label: hasAgent ? "Renew the agent for 29 days" : "Authorise the Glance agent for 29 days", functionName: "setAgent", args: [agentToAuthorise, expiry] });
+    const label = hasAgent ? "Renew the agent for 29 days" : "Authorise the Glance agent for 29 days";
+    let expiry: bigint;
+    try {
+      // The expiry counts from chain time, never the device clock (and stays 10 minutes under the 30-day cap).
+      const block = await publicClient.getBlock();
+      expiry = safeAgentExpiry(Number(block.timestamp), VAULT_SETUP.agentTtlSeconds);
+    } catch (err) {
+      onError(label, err); // shown and logged, never an unhandled rejection
+      return;
+    }
+    await send({ label, functionName: "setAgent", args: [agentToAuthorise, expiry] });
   };
 
   return (

@@ -4,7 +4,7 @@ import { TX_MESSAGES } from "@/lib/txMessages";
 import type { TxState } from "@/lib/useOwnerTx";
 
 /** Where an owner's transaction is: checking, in the wallet, pending with its hash, confirmed, or failed and why. */
-export function TxStatus({ state, onDismiss }: { state: TxState; onDismiss?(): void }) {
+export function TxStatus({ state, onDismiss, onReconnect }: { state: TxState; onDismiss?(): void; onReconnect?(): void }) {
   if (state.status === "idle") return null;
   const hash = "hash" in state ? state.hash : undefined;
   const text =
@@ -29,6 +29,11 @@ export function TxStatus({ state, onDismiss }: { state: TxState; onDismiss?(): v
           </a>
         )}
       </div>
+      {state.status === "failed" && state.reconnect && onReconnect && (
+        <button className="btn btn-primary btn-small" onClick={onReconnect}>
+          Reconnect
+        </button>
+      )}
       {onDismiss && (state.status === "confirmed" || state.status === "failed") && (
         <button className="btn btn-ghost btn-small" onClick={onDismiss}>
           Dismiss

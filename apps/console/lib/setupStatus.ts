@@ -113,3 +113,22 @@ export function summarize(statuses: Record<StepKey, StepStatus>): Summary {
   const text = status === "not-started" ? `Next: ${STEP_TITLES[first]}` : `${STEP_TITLES[first]}: ${STATUS_LABELS[status]}`;
   return { complete: false, text, step: first, status, done };
 }
+
+/**
+ * What step 4 is doing right now, from real state only. "Confirming" needs a transaction hash (the wallet sent it and
+ * the chain has yet to include it). Before that, including the pre-send simulation and the chain reads between steps,
+ * it's "Waiting for wallet". A failed transaction, or a run that stopped with a reason, is "Failed" until the next run:
+ * never silently back to "Not started". An "Add more" deposit is its own action and never moves step 4's status.
+ */
+export function activityFor(p: {
+  switching: boolean;
+  running: "setup" | "add-more" | null;
+  lastMode: "setup" | "add-more" | null;
+  tx: { status: string };
+  runError: string | null;
+}): Activity {
+  if (p.switching) return { step: "network", phase: "wallet" };
+  if (p.running === "setup") return { step: "vault", phase: p.tx.status === "pending" ? "confirming" : "wallet" };
+  if (p.running === null && p.lastMode === "setup" && (p.tx.status === "failed" || p.runError)) return { step: "vault", phase: "failed" };
+  return { step: null, phase: "idle" };
+}

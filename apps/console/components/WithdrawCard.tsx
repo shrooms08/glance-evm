@@ -15,7 +15,7 @@ import { useOwnerTx, type TxState } from "@/lib/useOwnerTx";
 import { parseWithdraw } from "@/lib/withdraw";
 
 import { TxStatus } from "./TxStatus";
-import { useGate } from "./useGate";
+import { useGate, useReconnect } from "./useGate";
 import type { GateReason } from "./WriteGate";
 
 export const NOT_OWNER_WITHDRAW = "Only the vault owner can withdraw";
@@ -40,10 +40,14 @@ export interface WithdrawFormProps {
   onWithdraw(amount: bigint): void;
   onSwitchNetwork?(): void;
   onConnect?(): void;
+  /** Shown when the wallet hasn't authorised this account for the site. */
+  onReconnect?(): void;
+  /** Why the last network switch failed, if it did. */
+  switchError?: string | null;
 }
 
 /** The card itself, without any wallet wiring (so its states can be tested directly). */
-export function WithdrawForm({ reason, balance, decimals, usdgLabel, owner, walletUsdg, tx, busy, onWithdraw, onSwitchNetwork, onConnect }: WithdrawFormProps) {
+export function WithdrawForm({ reason, balance, decimals, usdgLabel, owner, walletUsdg, tx, busy, onWithdraw, onSwitchNetwork, onConnect, onReconnect, switchError }: WithdrawFormProps) {
   const [input, setInput] = useState("");
   const parsed = parseWithdraw(input, balance, decimals);
   const locked = reason !== null;
@@ -72,6 +76,7 @@ export function WithdrawForm({ reason, balance, decimals, usdgLabel, owner, wall
               Switch network
             </button>
           )}
+          {reason === "wrong-network" && switchError && <p className="meta text-fail">{switchError}</p>}
           {reason === "no-wallet" && onConnect && (
             <button className="btn btn-small" onClick={onConnect}>
               Connect wallet
@@ -121,7 +126,7 @@ export function WithdrawForm({ reason, balance, decimals, usdgLabel, owner, wall
           {busy ? "Withdrawing…" : "Withdraw"}
         </button>
       </form>
-      <TxStatus state={tx} />
+      <TxStatus state={tx} onReconnect={onReconnect} />
     </section>
   );
 }
@@ -129,6 +134,7 @@ export function WithdrawForm({ reason, balance, decimals, usdgLabel, owner, wall
 /** The card wired to the owner's wallet. */
 export function WithdrawCard({ vault, owner, usdg, decimals, balance, usdgLabel }: { vault: Address; owner: Address; usdg: Address; decimals: number; balance: bigint; usdgLabel: string }) {
   const gate = useGate(owner);
+  const reconnect = useReconnect();
   const tx = useOwnerTx(decimals);
   const wallet = useReadContract({
     address: usdg,
@@ -152,6 +158,8 @@ export function WithdrawCard({ vault, owner, usdg, decimals, balance, usdgLabel 
       busy={tx.busy}
       onConnect={gate.onConnect}
       onSwitchNetwork={gate.onSwitchNetwork}
+      onReconnect={() => void reconnect()}
+      switchError={gate.switchError}
       onWithdraw={(amount) =>
         void tx.send({
           label: `Withdraw ${formatUsd(amount, decimals)} ${usdgLabel}`,
