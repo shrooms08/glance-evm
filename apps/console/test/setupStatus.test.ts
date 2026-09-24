@@ -172,7 +172,7 @@ describe("one-transaction setup (GlanceVaultFactoryV2 deployed)", () => {
     expect(config).toEqual({
       usdg: paxos.usdg,
       agent: paxos.agent,
-      agentExpiry: BigInt(NOW + 30 * 86_400),
+      agentDuration: 2_592_000n, // 30 days, counted by the vault from its own block time
       tokens: stocks.map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: 72_000, closedMaxAge: 345_600 })),
       routers: [paxos.desk],
       perBuyCap: 100_000_000n,

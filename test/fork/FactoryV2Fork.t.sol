@@ -32,7 +32,7 @@ contract FactoryV2ForkTest is Test, VaultSetup {
     function _consoleConfig(Setup memory s) internal view returns (VaultConfig memory c) {
         c.usdg = s.usdg;
         c.agent = s.agent;
-        c.agentExpiry = uint64(block.timestamp + 30 days);
+        c.agentDuration = 30 days;
         c.tokens = new TokenInit[](s.tokens.length);
         for (uint256 i; i < s.tokens.length; ++i) {
             c.tokens[i] = TokenInit(s.tokens[i], s.feeds[i], OPEN_MAX_AGE, CLOSED_MAX_AGE);

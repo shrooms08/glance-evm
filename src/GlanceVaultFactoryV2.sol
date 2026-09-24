@@ -28,6 +28,8 @@ contract GlanceVaultFactoryV2 is ReentrancyGuard {
     error VaultAlreadyExists(address vault);
     /// @notice USDG address was zero.
     error ZeroAddress();
+    /// @notice The owner's transfer delivered less USDG than the deposit (a fee-on-transfer or otherwise short token).
+    error DepositShortfall(uint256 received, uint256 expected);
 
     /// @notice Deploys a vault owned by the caller, configured with `config` and funded with `depositAmount`.
     /// @param config Every setting, validated exactly as the vault's owner setters validate them.
@@ -46,7 +48,15 @@ contract GlanceVaultFactoryV2 is ReentrancyGuard {
         address predicted = _predict(msg.sender, config, depositAmount, salt);
         _vaultOf[msg.sender] = predicted;
 
-        if (depositAmount != 0) IERC20(config.usdg).safeTransferFrom(msg.sender, predicted, depositAmount);
+        if (depositAmount != 0) {
+            // Measure what the owner's transfer delivered, not what the address holds: a donation made before this
+            // transaction can neither break creation nor hide a short delivery.
+            IERC20 usdg = IERC20(config.usdg);
+            uint256 before = usdg.balanceOf(predicted);
+            usdg.safeTransferFrom(msg.sender, predicted, depositAmount);
+            uint256 received = usdg.balanceOf(predicted) - before;
+            if (received < depositAmount) revert DepositShortfall(received, depositAmount);
+        }
 
         vault = address(new ConfiguredGlanceVault{salt: salt}(msg.sender, config, depositAmount));
         // Unreachable unless the compiler's CREATE2 disagrees with the formula: never leave funds at a wrong address.

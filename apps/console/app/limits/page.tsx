@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/Skeleton";
 import { TxStatus } from "@/components/TxStatus";
 import { useGate } from "@/components/useGate";
 import { GateNotice, WriteGate } from "@/components/WriteGate";
+import { safeAgentExpiry } from "@/lib/agentExpiry";
 import { effectiveCap } from "@/lib/caps";
 import { addressUrl, publicClient } from "@/lib/chain";
 import { demoVaults, VAULT_SETUP } from "@/lib/deployment";
@@ -104,7 +105,7 @@ function AgentControls({ v, vault, send }: { v: VaultChainState; vault: Address;
 
   const renew = async () => {
     const block = await publicClient.getBlock();
-    const expiry = BigInt(Number(block.timestamp) + VAULT_SETUP.agentTtlSeconds);
+    const expiry = safeAgentExpiry(Number(block.timestamp), VAULT_SETUP.agentTtlSeconds);
     await send({ label: hasAgent ? "Renew the agent for 29 days" : "Authorise the Glance agent for 29 days", functionName: "setAgent", args: [agentToAuthorise, expiry] });
   };
 

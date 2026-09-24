@@ -90,8 +90,11 @@ export const VAULT_SETUP = {
   /** A new agent permission lasts 29 days; one with under 7 days left is renewed. */
   agentTtlSeconds: 29 * 86_400,
   agentMinLeftSeconds: 7 * 86_400,
-  /** A new vault's agent permission (one-transaction setup): 30 days from the latest block, the vault's maximum. */
-  newAgentTtlSeconds: 30 * 86_400,
+  /**
+   * A new vault's agent permission (one-transaction setup), as a duration: the vault adds it to its own block time,
+   * so the full 30-day maximum is safe from clock skew.
+   */
+  newAgentDurationSeconds: 30 * 86_400,
   /** Default limits, as whole USDG and basis points: the vault's own defaults. */
   perTradeWhole: 100n,
   dailyWhole: 500n,

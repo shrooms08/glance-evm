@@ -15,6 +15,7 @@ import { glanceVaultAbi, glanceVaultFactoryAbi, glanceVaultFactoryV2Abi, testUsd
 import { formatUsd } from "@glance/core/format";
 import { erc20Abi, isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
 
+import { safeAgentExpiry } from "./agentExpiry";
 import { factory, factoryV2 as deployedFactoryV2, sequencerUptimeFeed, stocks, VAULT_SETUP, type DemoVault } from "./deployment";
 
 export interface TokenState {
@@ -81,7 +82,8 @@ export interface SetupPlan {
 export interface VaultConfigArg {
   usdg: Address;
   agent: Address;
-  agentExpiry: bigint;
+  /** Seconds from the block the vault is created in (GlanceVaultFactoryV2 computes the expiry on chain). */
+  agentDuration: bigint;
   tokens: Array<{ token: Address; priceFeed: Address; openMaxAge: number; closedMaxAge: number }>;
   routers: Address[];
   perBuyCap: bigint;
@@ -93,16 +95,16 @@ export interface VaultConfigArg {
 }
 
 /**
- * The same vault the step-by-step setup leaves, as one config: the deployment's agent for 30 days from `now` (the
- * latest block), the five stocks with 20h/96h freshness, the desk for this USDG, $100 / $500 / $500, 1% slippage, 25%
+ * The same vault the step-by-step setup leaves, as one config: the deployment's agent for 30 days from the block the
+ * vault is created in, the five stocks with 20h/96h freshness, the desk for this USDG, $100 / $500 / $500, 1% slippage, 25%
  * while the market's closed, and the chain's sequencer feed (none on Robinhood Chain testnet).
  */
-export function consoleVaultConfig(flavour: DemoVault, now: number, usdgDecimals: number): VaultConfigArg {
+export function consoleVaultConfig(flavour: DemoVault, usdgDecimals: number): VaultConfigArg {
   const unit = 10n ** BigInt(usdgDecimals);
   return {
     usdg: flavour.usdg,
     agent: flavour.agent,
-    agentExpiry: BigInt(now + VAULT_SETUP.newAgentTtlSeconds),
+    agentDuration: BigInt(VAULT_SETUP.newAgentDurationSeconds),
     tokens: stocks.map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: VAULT_SETUP.openMaxAge, closedMaxAge: VAULT_SETUP.closedMaxAge })),
     routers: [flavour.desk],
     perBuyCap: VAULT_SETUP.perTradeWhole * unit,
@@ -156,7 +158,7 @@ export function planOneTx(s: SetupSnapshot, t: SetupTarget, factoryV2: Address):
       address: factoryV2,
       abi: glanceVaultFactoryV2Abi as Abi,
       functionName: "createVaultWithConfig",
-      args: [consoleVaultConfig(f, s.now, t.usdgDecimals), t.deposit],
+      args: [consoleVaultConfig(f, t.usdgDecimals), t.deposit],
     },
   });
   return { steps, blocked: null, mode: "one-tx", approveCovered };
@@ -225,7 +227,7 @@ export function planSetup(s: SetupSnapshot, t: SetupTarget): SetupPlan {
     steps.push({
       id: "agent",
       label: "Authorise the Glance agent for 29 days",
-      call: { address: vault, abi: glanceVaultAbi as Abi, functionName: "setAgent", args: [f.agent, BigInt(s.now + VAULT_SETUP.agentTtlSeconds)] },
+      call: { address: vault, abi: glanceVaultAbi as Abi, functionName: "setAgent", args: [f.agent, safeAgentExpiry(s.now, VAULT_SETUP.agentTtlSeconds)] },
     });
   }
 

@@ -6,7 +6,10 @@ import {GlanceVault} from "./GlanceVault.sol";
 /// @notice Everything an owner would otherwise set one transaction at a time after creating a vault.
 /// @param usdg The USDG token the vault holds.
 /// @param agent The agent to authorise, or address(0) for none.
-/// @param agentExpiry When the agent's permission ends (the same bounds as setAgent). Ignored without an agent.
+/// @param agentDuration How long the agent's permission lasts, in seconds from the block the vault is created in. The
+///        expiry is block.timestamp + agentDuration, checked exactly as setAgent checks it (above now, at most
+///        MAX_AGENT_TTL ahead), so a caller's clock being ahead of the chain can't push it past the limit. Ignored
+///        without an agent.
 /// @param tokens Stock tokens to approve, each with its price feed and freshness.
 /// @param routers Routers (trading desks) to approve.
 /// @param perBuyCap Per-trade cap (raw USDG), as setLimits.
@@ -18,7 +21,7 @@ import {GlanceVault} from "./GlanceVault.sol";
 struct VaultConfig {
     address usdg;
     address agent;
-    uint64 agentExpiry;
+    uint64 agentDuration;
     TokenInit[] tokens;
     address[] routers;
     uint256 perBuyCap;
@@ -45,7 +48,12 @@ struct TokenInit {
 ///         constructed it is a GlanceVault, owned by `owner_` alone.
 /// @dev Deployed by GlanceVaultFactoryV2 with CREATE2. The factory moves `initialDeposit` USDG from the owner to this
 ///      contract's precomputed address before deploying it, so the factory itself never holds USDG, never holds an
-///      allowance and never has any role on the vault. The constructor checks the USDG actually arrived.
+///      allowance and never has any role on the vault. The factory checks the owner's transfer delivered the full
+///      amount (balance after minus balance before, so fee-on-transfer shortfalls revert even if someone donated to
+///      the address first); the constructor re-checks the vault holds at least that much.
+///      Anything sent to the address before creation (USDG, stock tokens) belongs to the vault, and so to its owner,
+///      who can withdraw it; it never makes creation revert. Deposited records the owner's deposit only, not
+///      donations. ETH sent there stays inert: the vault has no ETH functions.
 contract ConfiguredGlanceVault is GlanceVault {
     constructor(address owner_, VaultConfig memory config, uint256 initialDeposit) GlanceVault(owner_, config.usdg) {
         _setLimits(config.perBuyCap, config.dailyCap, config.dailySellCap, config.maxSlippageBps, config.weekendCapBps);
@@ -62,9 +70,15 @@ contract ConfiguredGlanceVault is GlanceVault {
 
         if (config.sequencerUptimeFeed != address(0)) _setSequencerUptimeFeed(config.sequencerUptimeFeed);
 
-        if (config.agent != address(0)) _setAgent(config.agent, config.agentExpiry);
+        if (config.agent != address(0)) {
+            // Computed on chain from this block's time, then checked exactly as setAgent checks an expiry.
+            uint256 expiry = block.timestamp + config.agentDuration;
+            if (expiry > type(uint64).max) revert InvalidAgentExpiry(type(uint64).max);
+            _setAgent(config.agent, uint64(expiry));
+        }
 
         if (initialDeposit != 0) {
+            // At least (never exactly): a donation to this address before creation only adds to it.
             uint256 held = usdg.balanceOf(address(this));
             if (held < initialDeposit) revert InsufficientBalance(held, initialDeposit);
             emit Deposited(initialDeposit);

@@ -1391,7 +1391,7 @@ export const glanceVaultFactoryV2Abi = [
             "internalType": "address"
           },
           {
-            "name": "agentExpiry",
+            "name": "agentDuration",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -1499,7 +1499,7 @@ export const glanceVaultFactoryV2Abi = [
             "internalType": "address"
           },
           {
-            "name": "agentExpiry",
+            "name": "agentDuration",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -1625,6 +1625,22 @@ export const glanceVaultFactoryV2Abi = [
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "DepositShortfall",
+    "inputs": [
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

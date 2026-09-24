@@ -102,7 +102,7 @@ contract GlanceVaultFactoryV2Test is Test {
     function _config() internal view returns (VaultConfig memory c) {
         c.usdg = address(usdg);
         c.agent = agent;
-        c.agentExpiry = uint64(block.timestamp + 30 days);
+        c.agentDuration = 30 days; // the maximum
         c.tokens = new TokenInit[](2);
         c.tokens[0] = TokenInit(address(stockA), address(feedA), 72_000, 345_600);
         c.tokens[1] = TokenInit(address(stockB), address(feedB), 0, 0); // keeps setTokenApproval's defaults
@@ -138,7 +138,7 @@ contract GlanceVaultFactoryV2Test is Test {
             vault.setRouterApproval(c.routers[i], true);
         }
         if (c.sequencerUptimeFeed != address(0)) vault.setSequencerUptimeFeed(c.sequencerUptimeFeed);
-        if (c.agent != address(0)) vault.setAgent(c.agent, c.agentExpiry);
+        if (c.agent != address(0)) vault.setAgent(c.agent, uint64(block.timestamp + c.agentDuration));
         if (amount != 0) {
             usdg.approve(address(vault), amount);
             vault.deposit(amount);
@@ -306,7 +306,7 @@ contract GlanceVaultFactoryV2Test is Test {
     function test_oneTx_noAgentAndNoSequencerFeedLeaveThemUnset() public {
         VaultConfig memory c = _config();
         c.agent = address(0);
-        c.agentExpiry = 0;
+        c.agentDuration = 0;
         c.sequencerUptimeFeed = address(0);
         GlanceVault vault = _oneTx(alice, c, 0);
         assertEq(vault.agent(), address(0));
@@ -379,20 +379,36 @@ contract GlanceVaultFactoryV2Test is Test {
         );
     }
 
-    function test_invalid_agentExpiry() public {
+    function test_agentDuration_theMaximumSucceedsFromTheChainsOwnClock() public {
+        // Created a while after the config was built: the expiry still counts from the block it lands in.
         VaultConfig memory c = _config();
-        c.agentExpiry = uint64(block.timestamp + 30 days + 1);
+        vm.warp(START + 3 days);
+        GlanceVault vault = _oneTx(alice, c, 0);
+        assertEq(vault.agentExpiry(), START + 3 days + 30 days);
+        assertTrue(vault.isActiveAgent(agent));
+    }
+
+    function test_invalid_agentDuration() public {
+        VaultConfig memory c = _config();
+        // One second over the maximum: setAgent's own error, for the same expiry.
+        c.agentDuration = 30 days + 1;
+        uint64 over = uint64(block.timestamp + 30 days + 1);
         _expectSameRevert(
             c,
-            abi.encodeWithSelector(GlanceVault.InvalidAgentExpiry.selector, c.agentExpiry),
-            abi.encodeCall(GlanceVault.setAgent, (agent, c.agentExpiry))
+            abi.encodeWithSelector(GlanceVault.InvalidAgentExpiry.selector, over),
+            abi.encodeCall(GlanceVault.setAgent, (agent, over))
         );
-        c.agentExpiry = uint64(block.timestamp);
+        // Zero: an expiry of now, which setAgent refuses too.
+        c.agentDuration = 0;
+        uint64 nowTs = uint64(block.timestamp);
         _expectSameRevert(
             c,
-            abi.encodeWithSelector(GlanceVault.InvalidAgentExpiry.selector, c.agentExpiry),
-            abi.encodeCall(GlanceVault.setAgent, (agent, c.agentExpiry))
+            abi.encodeWithSelector(GlanceVault.InvalidAgentExpiry.selector, nowTs),
+            abi.encodeCall(GlanceVault.setAgent, (agent, nowTs))
         );
+        // A duration that would overflow uint64 is refused, never wrapped around into the valid window.
+        c.agentDuration = type(uint64).max;
+        _expectSameRevert(c, abi.encodeWithSelector(GlanceVault.InvalidAgentExpiry.selector, type(uint64).max), "");
     }
 
     function test_invalid_tokens() public {
@@ -487,17 +503,35 @@ contract GlanceVaultFactoryV2Test is Test {
         assertEq(v2.vaultOf(alice), address(0));
     }
 
-    function test_transfer_shortDeliveryIsCaughtByTheVault() public {
+    function test_transfer_shortDeliveryReverts() public {
         FeeToken fee = new FeeToken();
         fee.mint(alice, 100 * ONE);
         VaultConfig memory c = _config();
         c.usdg = address(fee);
         vm.startPrank(alice);
         fee.approve(address(v2), 100 * ONE);
-        vm.expectRevert(abi.encodeWithSelector(GlanceVault.InsufficientBalance.selector, 99 * ONE, 100 * ONE));
+        vm.expectRevert(abi.encodeWithSelector(GlanceVaultFactoryV2.DepositShortfall.selector, 99 * ONE, 100 * ONE));
         v2.createVaultWithConfig(c, 100 * ONE);
         vm.stopPrank();
         assertEq(fee.balanceOf(alice), 100 * ONE);
+        assertEq(v2.vaultOf(alice), address(0));
+    }
+
+    /// @dev The case a balance-only check misses: a donation covers the shortfall. The delta still catches it.
+    function test_transfer_shortDeliveryRevertsEvenAfterADonation() public {
+        FeeToken fee = new FeeToken();
+        fee.mint(alice, 100 * ONE);
+        fee.mint(bob, 5 * ONE);
+        VaultConfig memory c = _config();
+        c.usdg = address(fee);
+        address predicted = v2.predictVault(alice, c, 100 * ONE);
+        vm.prank(bob);
+        fee.transfer(predicted, 5 * ONE); // 5 there + 99 delivered = 104 >= 100, but only 99 came from the owner
+        vm.startPrank(alice);
+        fee.approve(address(v2), 100 * ONE);
+        vm.expectRevert(abi.encodeWithSelector(GlanceVaultFactoryV2.DepositShortfall.selector, 99 * ONE, 100 * ONE));
+        v2.createVaultWithConfig(c, 100 * ONE);
+        vm.stopPrank();
         assertEq(v2.vaultOf(alice), address(0));
     }
 
@@ -517,16 +551,66 @@ contract GlanceVaultFactoryV2Test is Test {
         assertEq(re.balanceOf(alice), 100 * ONE);
     }
 
-    /// @dev Someone sending USDG to a predicted address first doesn't change who owns the vault or break creation.
-    function test_donationToThePredictedAddressIsHarmless() public {
+    // ---------------------------------------------------------------------
+    // Donations to the predicted address can't grief creation
+    // ---------------------------------------------------------------------
+
+    function test_donation_oneUnitOfUsdgCantBreakCreationAndBelongsToTheOwner() public {
         VaultConfig memory c = _config();
         address predicted = v2.predictVault(alice, c, 40 * ONE);
         vm.prank(bob);
-        usdg.transfer(predicted, 5 * ONE);
+        usdg.transfer(predicted, 1); // dust
+        vm.recordLogs();
         GlanceVault vault = _oneTx(alice, c, 40 * ONE);
         assertEq(address(vault), predicted);
         assertEq(vault.owner(), alice);
-        assertEq(usdg.balanceOf(address(vault)), 45 * ONE);
+        assertEq(usdg.balanceOf(address(vault)), 40 * ONE + 1);
+        // Deposited records the owner's deposit, not the donation.
+        bytes[] memory logs = _vaultLogs(vm.getRecordedLogs(), address(vault));
+        assertEq(logs[logs.length - 1], abi.encode(_topics(GlanceVault.Deposited.selector), abi.encode(40 * ONE)));
+        // The owner can take all of it, donation included.
+        vm.prank(alice);
+        vault.withdraw(address(usdg), 40 * ONE + 1);
+        assertEq(usdg.balanceOf(alice), 1_000 * ONE + 1);
+    }
+
+    function test_donation_ofAStockTokenCantBreakCreationAndBelongsToTheOwner() public {
+        VaultConfig memory c = _config();
+        address predicted = v2.predictVault(alice, c, 40 * ONE);
+        stockA.mint(bob, 1e18);
+        vm.prank(bob);
+        stockA.transfer(predicted, 1e18);
+        GlanceVault vault = _oneTx(alice, c, 40 * ONE);
+        assertEq(address(vault), predicted);
+        assertEq(stockA.balanceOf(address(vault)), 1e18);
+        vm.prank(alice);
+        vault.withdraw(address(stockA), 1e18);
+        assertEq(stockA.balanceOf(alice), 1e18);
+    }
+
+    function test_donation_ofEthCantBreakCreation() public {
+        VaultConfig memory c = _config();
+        address predicted = v2.predictVault(alice, c, 40 * ONE);
+        vm.deal(predicted, 1 ether);
+        GlanceVault vault = _oneTx(alice, c, 40 * ONE);
+        assertEq(address(vault), predicted);
+        assertEq(vault.owner(), alice);
+        assertEq(usdg.balanceOf(address(vault)), 40 * ONE);
+    }
+
+    function test_donation_withAZeroDeposit() public {
+        VaultConfig memory c = _config();
+        address predicted = v2.predictVault(alice, c, 0);
+        vm.prank(bob);
+        usdg.transfer(predicted, 1);
+        vm.prank(alice);
+        GlanceVault vault = GlanceVault(v2.createVaultWithConfig(c, 0));
+        assertEq(usdg.balanceOf(address(vault)), 1);
+    }
+
+    function _topics(bytes32 sig) internal pure returns (bytes32[] memory t) {
+        t = new bytes32[](1);
+        t[0] = sig;
     }
 
     function test_configuredVaultIsAGlanceVault() public {
