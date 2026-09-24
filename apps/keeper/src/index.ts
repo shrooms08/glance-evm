@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import {
   createPublicClient,
   createWalletClient,
+  fallback,
   http,
   isAddressEqual,
   parseAbi,
@@ -20,8 +21,9 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 import { loadEnv, paths } from "./config.js";
-import { runOnce, type KeeperSymbol } from "./keeper.js";
+import { exitCodeFor, runOnce, type KeeperSymbol } from "./keeper.js";
 import { pauseState } from "./pause.js";
+import { NonceSender, type ChainIO } from "./sender.js";
 import { fetchYahooQuote } from "./quote.js";
 import { loadPriceSources, loadTestnetFeeds } from "./sources.js";
 
@@ -59,8 +61,21 @@ async function main() {
 
   // The public mainnet RPC rate-limits and rejects large batches: no batching, gentle retries.
   const mainnet = createPublicClient({ transport: http(env.MAINNET_RPC_URL, { retryCount: 4, retryDelay: 1_500, timeout: 15_000 }) });
-  const testnet = createPublicClient({ transport: http(env.TESTNET_RPC_URL, { retryCount: 3, timeout: 20_000 }) });
-  const wallet = createWalletClient({ account, transport: http(env.TESTNET_RPC_URL, { timeout: 30_000 }) });
+  // Reads may use either testnet RPC. Nonces, sends and receipts stay on one RPC per run (src/sender.ts).
+  const rpcs = [env.TESTNET_RPC_URL, ...(env.TESTNET_FALLBACK_RPC_URL !== env.TESTNET_RPC_URL ? [env.TESTNET_FALLBACK_RPC_URL] : [])];
+  const testnet = createPublicClient({ transport: fallback(rpcs.map((url) => http(url, { retryCount: 3, timeout: 20_000 }))) });
+  const chainIO = (url: string, name: string): ChainIO => {
+    const reader = createPublicClient({ transport: http(url, { retryCount: 1, timeout: 20_000 }) });
+    const wallet = createWalletClient({ account, transport: http(url, { retryCount: 0, timeout: 30_000 }) });
+    return {
+      name,
+      pendingNonce: () => reader.getTransactionCount({ address: account.address, blockTag: "pending" }),
+      send: (feed, round, nonce) =>
+        wallet.writeContract({ chain: null, address: feed, abi: testFeedAbi, functionName: "setRoundData", args: [round.answer, round.updatedAt], nonce }),
+      receipt: async (hash) => (await reader.waitForTransactionReceipt({ hash, timeout: 60_000 })).status,
+    };
+  };
+  const sender = new NonceSender(chainIO(env.TESTNET_RPC_URL, "the primary RPC"), rpcs[1] ? chainIO(rpcs[1], "the fallback RPC") : null, { log });
 
   const [testnetChainId, mainnetChainId] = await Promise.all([testnet.getChainId(), mainnet.getChainId()]);
   if (testnetChainId !== chainId) throw new Error(`TESTNET_RPC_URL is chain ${testnetChainId}, deployment is ${chainId}`);
@@ -109,23 +124,13 @@ async function main() {
       return { answer, updatedAt };
     },
     testnetNow: async () => (await testnet.getBlock({ blockTag: "latest" })).timestamp,
-    write: async (feed: Address, round: { answer: bigint; updatedAt: bigint }) => {
-      const hash = await wallet.writeContract({
-        chain: null,
-        address: feed,
-        abi: testFeedAbi,
-        functionName: "setRoundData",
-        args: [round.answer, round.updatedAt],
-      });
-      const receipt = await testnet.waitForTransactionReceipt({ hash, timeout: 60_000 });
-      if (receipt.status !== "success") throw new Error(`setRoundData reverted in ${hash}`);
-      return hash;
-    },
+    startRun: () => sender.startRun(),
+    write: (feed: Address, round: { answer: bigint; updatedAt: bigint }) => sender.write(feed, round),
   };
 
   if (!watch) {
-    const results = await runOnce(deps);
-    if (results.some((r) => r.plan === "error")) process.exitCode = 1;
+    // Exit 1 only when a feed still failed after its retries; the others were written regardless.
+    process.exitCode = exitCodeFor(await runOnce(deps));
     return;
   }
 

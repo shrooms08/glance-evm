@@ -19,6 +19,8 @@ export interface KeeperDeps {
   readTestnet(feed: Address): Promise<Round>;
   testnetNow(): Promise<bigint>;
   write(feed: Address, round: Round): Promise<Hex>;
+  /** Called once at the start of every pass, before any write (fetches the pending nonce). */
+  startRun?(): Promise<void>;
   log(line: string): void;
   /** Feed decimals, for display only. */
   decimals?: number;
@@ -43,6 +45,12 @@ export async function runOnce(deps: KeeperDeps): Promise<PassResult[]> {
   const decimals = deps.decimals ?? 8;
   const now = await deps.testnetNow();
   const results: PassResult[] = [];
+  try {
+    await deps.startRun?.();
+  } catch (err) {
+    // Not fatal: feeds that need no write still get checked, and a write reads the nonce again itself.
+    deps.log(`could not read the keeper's pending nonce (${(err as Error).message.split("\n")[0]}); each write will try again`);
+  }
 
   for (const { symbol, testnetFeed, source } of deps.symbols) {
     const label = source.kind === "mainnet-mirror" ? "mainnet-mirror" : `public-quote (${source.provider})`;
@@ -82,5 +90,20 @@ export async function runOnce(deps: KeeperDeps): Promise<PassResult[]> {
       results.push({ symbol, plan: "error" });
     }
   }
+  deps.log(summaryLine(results));
   return results;
+}
+
+/** One line for the end of a pass: which symbols were written, left unchanged (or held) and failed. */
+export function summaryLine(results: readonly PassResult[]): string {
+  const group = (label: string, plans: ReadonlyArray<PassResult["plan"]>) => {
+    const symbols = results.filter((r) => plans.includes(r.plan)).map((r) => r.symbol);
+    return `${symbols.length} ${label}${symbols.length ? ` (${symbols.join(", ")})` : ""}`;
+  };
+  return `summary: ${group("written", ["write"])}, ${group("unchanged", ["skip", "hold"])}, ${group("failed", ["error"])}`;
+}
+
+/** Non-zero only when a feed still failed after its retries. */
+export function exitCodeFor(results: readonly PassResult[]): 0 | 1 {
+  return results.some((r) => r.plan === "error") ? 1 : 0;
 }

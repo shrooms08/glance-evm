@@ -1,36 +1,41 @@
-# Feed keeper: every 5 minutes, mirror the live Chainlink feeds on Robinhood Chain MAINNET (price AND their own
-# updatedAt) onto Glance's TestPriceFeed stand-ins on Robinhood Chain TESTNET. Copying updatedAt, never "now", is what
-# makes the stand-ins fresh during market hours and frozen at weekends, exactly like the real feeds.
+# Feed keeper: mirror the live Chainlink feeds on Robinhood Chain MAINNET (price AND their own updatedAt) onto Glance's
+# TestPriceFeed stand-ins on Robinhood Chain TESTNET. Copying updatedAt, never "now", is what makes the stand-ins fresh
+# during market hours and frozen at weekends, exactly like the real feeds.
+#
+# Schedule (UTC): every 15 minutes Monday to Friday, hourly on Saturday and Sunday (the feeds barely move then).
+# Runs never overlap (concurrency below): two runs sending from the same key at once would fight over nonces.
 #
 # Required repository secrets (Settings > Secrets and variables > Actions):
 #   KEEPER_PRIVATE_KEY          owner of the testnet feeds. A DISPOSABLE TESTNET KEY: never put a key that holds real
 #                               value here. It can set testnet prices; it can never move real funds.
-#   ROBINHOOD_TESTNET_RPC_URL   e.g. https://rpc.testnet.chain.robinhood.com
+#   ROBINHOOD_TESTNET_RPC_URL   the primary testnet RPC, used for the whole run (nonces, sends, receipts); if it can't
+#                               be reached, the keeper moves to the public https://rpc.testnet.chain.robinhood.com
 #   ROBINHOOD_MAINNET_RPC_URL   e.g. https://rpc.mainnet.chain.robinhood.com (read only)
 #
 # Pause: commit and push a file named keeper.paused at the repo root (make keeper-pause creates it locally). While it
 # exists this workflow does nothing, so a feed frozen on purpose for the weekend demo is not overwritten.
-# GitHub may delay or skip scheduled runs under load; five minutes is the shortest schedule it offers.
+# GitHub may delay or skip scheduled runs under load.
 name: Feed keeper
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * 1-5" # Monday to Friday, every 15 minutes
+    - cron: "0 * * * 0,6" # Saturday and Sunday, hourly
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: feed-keeper
+  group: keeper
   cancel-in-progress: false
 
 jobs:
   mirror:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10 # room for nonce retries and receipt waits (60s each)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the pause switch
         id: pause
@@ -42,10 +47,10 @@ jobs:
             echo "paused=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         if: steps.pause.outputs.paused == 'false'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.pause.outputs.paused == 'false'
         with:
           node-version: 22
@@ -57,7 +62,8 @@ jobs:
 
       - name: Mirror feeds once
         if: steps.pause.outputs.paused == 'false'
-        run: pnpm --filter keeper once
+        # The env comes from secrets here: no .env file to look for (so no ".env not found" lines).
+        run: pnpm --filter keeper once:ci
         env:
           KEEPER_PRIVATE_KEY: ${{ secrets.KEEPER_PRIVATE_KEY }}
           TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}

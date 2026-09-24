@@ -13,9 +13,14 @@ export const paths = {
   pauseFile: process.env.KEEPER_PAUSE_FILE ?? resolve(REPO_ROOT, "keeper.paused"),
 };
 
+/** Robinhood Chain testnet's public RPC: the fallback when the primary is unreachable. */
+export const PUBLIC_TESTNET_RPC = "https://rpc.testnet.chain.robinhood.com";
+
 const envSchema = z.object({
   KEEPER_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be 0x followed by 64 hex characters"),
   TESTNET_RPC_URL: z.url(),
+  /** Used only when TESTNET_RPC_URL can't be reached, then for the rest of that run. */
+  TESTNET_FALLBACK_RPC_URL: z.url().default(PUBLIC_TESTNET_RPC),
   MAINNET_RPC_URL: z.url(),
   KEEPER_INTERVAL_SECONDS: z.coerce.number().int().min(15).default(120),
 });

@@ -23,9 +23,16 @@ make feeds           # every feed's price, age, market state and source, via the
   decimals match mainnet, and that both RPCs are on the expected chains.
 - **What it writes:** it skips unchanged feeds and holds any reading it cannot mirror safely (non-positive, or
   timestamped ahead of the testnet clock).
+- **Sending:** it reads the key's pending nonce once per run and numbers its transactions itself, one at a time, each
+  waiting for its receipt. A nonce error re-reads the nonce and retries that feed (at most twice). Everything goes
+  through `TESTNET_RPC_URL`; only if it can't be reached does the run move to `TESTNET_FALLBACK_RPC_URL` (default: the
+  public testnet RPC) and stay there.
+- **Failures:** a feed that still fails is logged and the others carry on. The run ends with one summary line
+  (written / unchanged / failed) and exits 1 only if a feed failed.
 - **Logging:** it never logs the key.
 
-The schedule is `.github/workflows/keeper.yml`, every 5 minutes. It needs the repository secrets
+The schedule is `.github/workflows/keeper.yml` (UTC): every 15 minutes Monday to Friday, hourly on Saturday and
+Sunday, and never two runs at once. It needs the repository secrets
 `KEEPER_PRIVATE_KEY`, `ROBINHOOD_TESTNET_RPC_URL` and `ROBINHOOD_MAINNET_RPC_URL`.
 
 Addresses come from `deployments/46630.json` (testnet feeds) and `config/price-sources.json` (mainnet feeds). The API
