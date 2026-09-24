@@ -6,15 +6,17 @@
  */
 import { storage } from "wxt/utils/storage";
 
+import type { ChartRange } from "@glance/core/chart";
+
 import { send } from "./lifecycle";
 
 /** A request older than this is stale: the panel opening later shouldn't jump to an old chart. */
 export const PENDING_CHART_MS = 60_000;
 
 /** A card waiting for the side panel: a stock's chart, or the portfolio (from Show me's [PORTFOLIO]). */
-export type PendingCard = { kind: "chart"; symbol: string } | { kind: "portfolio" };
+export type PendingCard = { kind: "chart"; symbol: string; range?: ChartRange } | { kind: "portfolio" };
 
-export const pendingChart = storage.defineItem<{ symbol: string; at: number; kind?: "chart" | "portfolio" } | null>("local:pendingChart", { fallback: null });
+export const pendingChart = storage.defineItem<{ symbol: string; at: number; kind?: "chart" | "portfolio"; range?: ChartRange } | null>("local:pendingChart", { fallback: null });
 
 /** Leaves the request for the side panel and tries to open it. Resolves true if the panel opened. */
 /** Leaves a card for the side panel (a chart or the portfolio) and tries to open it. */
@@ -22,7 +24,7 @@ export async function requestCard(card: PendingCard, now = Date.now()): Promise<
   // Ask first, before any await: the panel only opens inside the tap's user gesture. The panel watches the request,
   // so it doesn't matter that it's written a moment later.
   const opened = send<boolean>({ kind: "panel:open" }).then(Boolean, () => false);
-  await pendingChart.setValue({ symbol: card.kind === "chart" ? card.symbol : "", kind: card.kind, at: now }).catch(() => {});
+  await pendingChart.setValue({ symbol: card.kind === "chart" ? card.symbol : "", kind: card.kind, at: now, ...(card.kind === "chart" && card.range ? { range: card.range } : {}) }).catch(() => {});
   return opened;
 }
 
@@ -32,5 +34,5 @@ export async function takePendingCard(now = Date.now()): Promise<PendingCard | n
   if (!p) return null;
   await pendingChart.setValue(null).catch(() => {});
   if (now - p.at > PENDING_CHART_MS) return null;
-  return p.kind === "portfolio" ? { kind: "portfolio" } : { kind: "chart", symbol: p.symbol };
+  return p.kind === "portfolio" ? { kind: "portfolio" } : { kind: "chart", symbol: p.symbol, ...(p.range ? { range: p.range } : {}) };
 }

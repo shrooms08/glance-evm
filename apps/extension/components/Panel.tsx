@@ -39,7 +39,7 @@ interface Props {
    * The full price chart (the chart library is loaded on first use: lib/chartLoader.ts). In the tall side panel it also
    * sits above a company's card.
    */
-  renderChart?(symbol: string, onClose?: () => void): ReactNode;
+  renderChart?(symbol: string, onClose?: () => void, range?: import("@glance/core/chart").ChartRange): ReactNode;
 }
 
 export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext, renderChart }: Props) {
@@ -125,7 +125,7 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
 
         {assistant.card?.kind === "chart" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
-            {renderChart?.(assistant.card.symbol, () => assistant.setCard(null))}
+            {renderChart?.(assistant.card.symbol, () => assistant.setCard(null), assistant.card.range)}
           </div>
         )}
 

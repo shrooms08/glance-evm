@@ -57,7 +57,7 @@ export const color = {
   limeMark: "#5E9100",
   markHaloOnLight: "rgba(18,24,6,.16)",
   markHaloOnDark: "rgba(0,0,0,.55)",
-  highlightOnLight: "rgba(94,145,0,.22)",
+  highlightOnLight: "rgba(94,145,0,.28)",
   highlightOnDark: "rgba(196,241,53,.30)",
   // Price charts: the lime (or lime ink) fill fading to transparent, a barely-there grid, the market-closed band.
   chartFillLime: "rgba(196,241,53,.28)",
@@ -67,6 +67,9 @@ export const color = {
   chartGridInk: "rgba(0,0,0,.035)",
   chartClosed: "rgba(255,255,255,.05)",
   chartClosedInk: "rgba(0,0,0,.045)",
+  // Show me's shaded band on a chart (CHART_RANGE).
+  chartBand: "rgba(196,241,53,.14)",
+  chartBandInk: "rgba(79,122,0,.12)",
 } as const;
 
 /**

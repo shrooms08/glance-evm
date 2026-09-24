@@ -9,6 +9,7 @@ import type { ChartHandle } from "@glance/core/chart-mount";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
+import { chartAnnotations } from "../lib/chartAnnotations";
 import type { Mount } from "../lib/chartLoader";
 import { isAddress } from "../lib/settings";
 import { useGlance } from "./context";
@@ -17,15 +18,29 @@ type Load = { state: "loading" } | { state: "done"; data: ChartData } | { state:
 
 export interface StockChartProps {
   symbol: string;
+  /** The range to open on (Show me picks the one that fits the question). */
+  initialRange?: ChartRange;
   onClose?(): void;
   /** How the chart library is loaded: lazily, differently on the page and in the side panel (lib/chartLoader.ts). */
   mount: Mount;
 }
 
-export default function StockChart({ symbol, onClose, mount }: StockChartProps) {
+export default function StockChart({ symbol, onClose, mount, initialRange = "1D" }: StockChartProps) {
   const g = useGlance();
   const stock = g.catalog.find((s) => s.symbol === symbol);
-  const [range, setRange] = useState<ChartRange>("1D");
+  const [range, setRange] = useState<ChartRange>(initialRange);
+  // Show me asks which chart is open; a new range clears its drawings (they were drawn for the old one).
+  useEffect(() => {
+    chartAnnotations.showing = { symbol, range };
+    return () => {
+      if (chartAnnotations.showing?.symbol === symbol) chartAnnotations.showing = null;
+    };
+  }, [symbol, range]);
+  const firstRange = useRef(range);
+  useEffect(() => {
+    if (range !== firstRange.current) chartAnnotations.clear(symbol);
+    firstRange.current = range;
+  }, [range, symbol]);
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const vault = isAddress(g.vaultAddress) ? g.vaultAddress : undefined;
 
@@ -80,7 +95,7 @@ export default function StockChart({ symbol, onClose, mount }: StockChartProps) 
           <span className="g-skeleton" style={{ height: "100%", width: "100%" }} />
         </div>
       ) : data ? (
-        <ChartCanvas data={data} mount={mount} />
+        <ChartCanvas data={data} mount={mount} symbol={symbol} />
       ) : (
         <div className="g-chart-box g-chart-empty" role="status">
           <span className="g-meta">{NO_CHART_DATA}</span>
@@ -101,10 +116,20 @@ export default function StockChart({ symbol, onClose, mount }: StockChartProps) 
 }
 
 /** The canvas: mounted once, then updated in place when the data changes (range switches keep the same chart). */
-function ChartCanvas({ data, mount }: { data: ChartData; mount: Mount }) {
+function ChartCanvas({ data, mount, symbol }: { data: ChartData; mount: Mount; symbol: string }) {
   const box = useRef<HTMLDivElement>(null);
   const handle = useRef<ChartHandle | null>(null);
   const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  // Show me's drawings for this stock: applied once the chart is drawn (waiting ones too), cleared on request.
+  useEffect(() => {
+    if (!ready) return;
+    return chartAnnotations.subscribe(symbol, (change) => {
+      if ("clear" in change) handle.current?.clearAnnotations();
+      else handle.current?.annotate(change.add);
+    });
+  }, [ready, symbol]);
 
   useEffect(() => {
     if (handle.current) {
@@ -115,7 +140,10 @@ function ChartCanvas({ data, mount }: { data: ChartData; mount: Mount }) {
     void mount(box.current!, data, { theme: "dark" }).then(
       (h) => {
         if (cancelled) h.destroy();
-        else handle.current = h;
+        else {
+          handle.current = h;
+          setReady(true);
+        }
       },
       () => setFailed(true),
     );

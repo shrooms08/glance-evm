@@ -18,6 +18,7 @@ import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
 import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
+import { chartContextFor } from "./showmeChart.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
 
@@ -46,8 +47,23 @@ const showMeBody = z
         // Cut to about 6k tokens by the handler; a little slack here for the extension's own cap.
         text: z.string().max(60_000).optional(),
         companies: z.array(z.string().max(8)).max(20).optional(),
+        figures: z
+          .array(
+            z.object({
+              n: z.number().int().min(1).max(50),
+              kind: z.string().max(16),
+              alt: z.string().max(300).optional(),
+              caption: z.string().max(400).optional(),
+              heading: z.string().max(300).optional(),
+              width: z.number().min(0).max(20_000),
+              height: z.number().min(0).max(20_000),
+            }),
+          )
+          .max(20)
+          .optional(),
       })
       .optional(),
+    openChart: z.object({ symbol, range: z.enum(CHART_RANGES) }).nullable().optional(),
     // A downscaled JPEG, base64 (at most 1280px wide): about 1.5 MB at most.
     screenshot: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/).optional(),
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
@@ -160,7 +176,9 @@ export function createServerApp(ctx: AppContext) {
   app.post("/showme", async (c) => {
     const input = parse(showMeBody, await jsonBody(c));
     if (!ctx.showMe) return send(c, { reply: LINES.cantThink, spoken: LINES.cantThink, actions: [], source: "unavailable" });
-    return send(c, await ctx.showMe.answer(input));
+    // A question about a stock's move (or with its chart open) gets the chart's summary, to draw on (cached reads only).
+    const charts = await chartContextFor(ctx, input);
+    return send(c, await ctx.showMe.answer({ ...input, charts }));
   });
 
   app.get("/chart/:symbol", async (c) => {

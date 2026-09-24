@@ -6,6 +6,10 @@
 import { font } from "@glance/design";
 
 import { chartColors, localTime, MARKET_CLOSED_LABEL, placeMarkers, toLineData, type ChartData, type ChartMarker } from "./chart.ts";
+import type { ChartAnnotation } from "./showme.ts";
+
+/** How long a drawing takes to draw in. */
+export const ANNOTATION_MS = 550;
 import type { ThemeName } from "@glance/design";
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -14,6 +18,9 @@ import type { ThemeName } from "@glance/design";
 
 export interface ChartHandle {
   update(data: ChartData): void;
+  /** Show me's drawings on this chart (drawn in, each with a short animation). */
+  annotate(annotations: readonly ChartAnnotation[]): void;
+  clearAnnotations(): void;
   destroy(): void;
 }
 
@@ -167,10 +174,115 @@ export async function mountChart(el: HTMLElement, data: ChartData, opts: MountOp
   chart.timeScale().subscribeVisibleTimeRangeChange(placeBand);
   chart.timeScale().subscribeSizeChange(placeBand);
 
+  // ---- Show me's drawings: levels as the library's own dashed price lines; points, bands and trend lines through one
+  // series primitive (drawn in media coordinates, animated in).
+  let levels: Array<ReturnType<typeof series.createPriceLine>> = [];
+  const shapes: Array<{ a: ChartAnnotation; born: number }> = [];
+  let requestUpdate: (() => void) | null = null;
+  let anim = 0;
+  const priceAt = (t: number) => {
+    const line = toLineData(current.points, current.asOf);
+    let best = line[0];
+    for (const p of line) if (best && Math.abs(p.time - t) < Math.abs(best.time - t)) best = p;
+    return best?.value ?? null;
+  };
+  const now = () => (doc.defaultView?.performance ?? performance).now();
+  const tick = () => {
+    requestUpdate?.();
+    if (shapes.some((s) => now() - s.born < ANNOTATION_MS)) anim = (doc.defaultView ?? window).requestAnimationFrame(tick);
+    else anim = 0;
+  };
+  const primitive = {
+    attached(p: { requestUpdate: () => void }) {
+      requestUpdate = p.requestUpdate;
+    },
+    detached() {
+      requestUpdate = null;
+    },
+    updateAllViews() {},
+    paneViews() {
+      return [
+        {
+          zOrder: () => "top" as const,
+          renderer: () => ({
+            draw(target: { useMediaCoordinateSpace<T>(f: (s: { context: CanvasRenderingContext2D; mediaSize: { width: number; height: number } }) => T): T }) {
+              target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+                const ts = chart.timeScale();
+                for (const { a, born } of shapes) {
+                  const k = Math.min(1, (now() - born) / ANNOTATION_MS);
+                  const ease = 1 - (1 - k) ** 3;
+                  ctx.save();
+                  if (a.kind === "CHART_RANGE") {
+                    const x1 = ts.timeToCoordinate(a.t1 as never);
+                    const x2 = ts.timeToCoordinate(a.t2 as never);
+                    if (x1 !== null && x2 !== null) {
+                      ctx.fillStyle = c.band;
+                      ctx.fillRect(x1, 0, (x2 - x1) * ease, mediaSize.height);
+                    }
+                  } else if (a.kind === "CHART_TREND") {
+                    const x1 = ts.timeToCoordinate(a.t1 as never);
+                    const x2 = ts.timeToCoordinate(a.t2 as never);
+                    const p1 = priceAt(a.t1);
+                    const p2 = priceAt(a.t2);
+                    const y1 = p1 === null ? null : series.priceToCoordinate(p1);
+                    const y2 = p2 === null ? null : series.priceToCoordinate(p2);
+                    if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+                      ctx.strokeStyle = c.line;
+                      ctx.lineWidth = 2;
+                      ctx.lineCap = "round";
+                      ctx.beginPath();
+                      ctx.moveTo(x1, y1);
+                      ctx.lineTo(x1 + (x2 - x1) * ease, y1 + (y2 - y1) * ease);
+                      ctx.stroke();
+                    }
+                  } else if (a.kind === "CHART_POINT") {
+                    const x = ts.timeToCoordinate(a.t as never);
+                    const p = priceAt(a.t);
+                    const y = p === null ? null : series.priceToCoordinate(p);
+                    if (x !== null && y !== null) {
+                      // A hand-drawn loop: a slightly oval circle that overshoots its start.
+                      ctx.strokeStyle = c.line;
+                      ctx.lineWidth = 2.2;
+                      ctx.lineCap = "round";
+                      ctx.beginPath();
+                      const start = -Math.PI / 2 - 0.3;
+                      ctx.ellipse(x, y, 11, 9, 0.2, start, start + (Math.PI * 2 + 0.4) * ease);
+                      ctx.stroke();
+                    }
+                  }
+                  ctx.restore();
+                }
+              });
+            },
+          }),
+        },
+      ];
+    },
+  };
+  series.attachPrimitive(primitive as never);
+
+  const annotate = (list: readonly ChartAnnotation[]) => {
+    for (const a of list) {
+      if (a.kind === "CHART_LEVEL") {
+        levels.push(series.createPriceLine({ price: a.price, color: c.line, lineWidth: 1, lineStyle: lw.LineStyle.Dashed, axisLabelVisible: true, title: a.label }));
+      } else shapes.push({ a, born: now() });
+    }
+    if (!anim) anim = (doc.defaultView ?? window).requestAnimationFrame(tick);
+  };
+  const clearAnnotations = () => {
+    for (const l of levels) series.removePriceLine(l);
+    levels = [];
+    shapes.length = 0;
+    requestUpdate?.();
+  };
+
   draw(data);
   return {
     update: draw,
+    annotate,
+    clearAnnotations,
     destroy() {
+      if (anim) (doc.defaultView ?? window).cancelAnimationFrame(anim);
       chart.remove();
       tooltip.remove();
       band.remove();

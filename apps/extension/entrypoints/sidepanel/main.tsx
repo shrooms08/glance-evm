@@ -23,6 +23,8 @@ import type { PageContext } from "../../lib/journal";
 import { defaultMode } from "../../lib/settings";
 import { pendingChart, takePendingCard, type PendingCard } from "../../lib/chartPanel";
 import { panelMount } from "../../lib/chartLoader";
+import { chartAnnotations } from "../../lib/chartAnnotations";
+import type { ChartAnnotation } from "@glance/core/showme";
 
 // The chart library comes with this chunk, loaded the first time a chart is shown.
 const StockChart = lazy(() => import("../../components/StockChart"));
@@ -50,6 +52,15 @@ function SidePanel() {
     }
   };
   useGreeting();
+  // Docked: Show me on the page draws on the chart here.
+  useEffect(() => {
+    const onMessage = (msg: { kind?: string; annotation?: ChartAnnotation }) => {
+      if (msg?.kind === "chart:annotate" && msg.annotation) chartAnnotations.annotate(msg.annotation);
+      return undefined;
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => browser.runtime.onMessage.removeListener(onMessage);
+  }, []);
   const [page, setPage] = useState<PageMatchesReply>({ host: "", companies: [] });
   pageRef.current = page;
 
@@ -147,7 +158,7 @@ function SidePanel() {
   const { setCard } = assistant;
   useEffect(() => {
     const show = (card: PendingCard | null) => {
-      if (card?.kind === "chart") setCard({ kind: "chart", symbol: card.symbol, key: Date.now() });
+      if (card?.kind === "chart") setCard({ kind: "chart", symbol: card.symbol, key: Date.now(), ...(card.range ? { range: card.range } : {}) });
       else if (card?.kind === "portfolio") setCard({ kind: "portfolio", key: Date.now() });
     };
     void takePendingCard().then(show);
@@ -159,9 +170,9 @@ function SidePanel() {
   return (
     <Panel
       layout="tall"
-      renderChart={(symbol, onClose) => (
+      renderChart={(symbol, onClose, range) => (
         <Suspense fallback={<div className="g-chart-box" aria-busy="true" />}>
-          <StockChart key={symbol} symbol={symbol} onClose={onClose} mount={panelMount} />
+          <StockChart key={`${symbol}:${range ?? ""}`} symbol={symbol} initialRange={range} onClose={onClose} mount={panelMount} />
         </Suspense>
       )}
       pageContext={pageContext}

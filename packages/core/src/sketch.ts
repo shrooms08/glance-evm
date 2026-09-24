@@ -85,3 +85,69 @@ function smooth(pts: Array<[number, number]>): string {
   }
   return d;
 }
+
+/** A loose, hand-drawn rectangle around `box`: four slightly wobbly sides whose corners overshoot a little. */
+export function boxPath(box: Box, seed = 1, pad = 6): string {
+  const r = seeded(seed);
+  const j = (n: number) => n + (r() - 0.5) * 3;
+  const x0 = box.x - pad;
+  const y0 = box.y - pad;
+  const x1 = box.x + box.width + pad;
+  const y1 = box.y + box.height + pad;
+  const o = 4; // corner overshoot
+  const side = (ax: number, ay: number, bx: number, by: number) => {
+    const mx = (ax + bx) / 2 + (r() - 0.5) * 2.5;
+    const my = (ay + by) / 2 + (r() - 0.5) * 2.5;
+    return `M${f(j(ax))},${f(j(ay))} Q${f(mx)},${f(my)} ${f(j(bx))},${f(j(by))}`;
+  };
+  return [side(x0 - o, y0, x1, y0), side(x1, y0 - o, x1, y1), side(x1 + o, y1, x0, y1), side(x0, y1 + o, x0, y0)].join(" ");
+}
+
+/** A curved, hand-drawn arrow from `from` to `to` (their nearest edges), with a two-stroke head. */
+export function arrowPath(from: Box, to: Box, seed = 1): { shaft: string; head: string } {
+  const r = seeded(seed);
+  const c = (b: Box) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  const a = c(from);
+  const b = c(to);
+  // Leave from, and arrive at, the point of each box nearest the other's center, a few pixels outside it: on a long
+  // line of text the arrow lands on the words, not on the far end of the line.
+  const edge = (bx: Box, toward: { x: number; y: number }) => {
+    const x = Math.min(Math.max(toward.x, bx.x), bx.x + bx.width);
+    const y = Math.min(Math.max(toward.y, bx.y), bx.y + bx.height);
+    const cx = bx.x + bx.width / 2;
+    const cy = bx.y + bx.height / 2;
+    const len = Math.hypot(x - cx, y - cy) || 1;
+    return { x: x + ((x - cx) / len) * 4, y: y + ((y - cy) / len) * 4 };
+  };
+  const p0 = edge(from, b);
+  const p1 = edge(to, a);
+  const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+  // Bow the curve sideways a little, like a quick pen stroke.
+  const bow = Math.min(60, len * 0.25) * (r() > 0.5 ? 1 : -1);
+  const nx = -(p1.y - p0.y) / len;
+  const ny = (p1.x - p0.x) / len;
+  const mx = (p0.x + p1.x) / 2 + nx * bow;
+  const my = (p0.y + p1.y) / 2 + ny * bow;
+  const shaft = `M${f(p0.x)},${f(p0.y)} Q${f(mx)},${f(my)} ${f(p1.x)},${f(p1.y)}`;
+  // The head follows the curve's direction at its end.
+  const angle = Math.atan2(p1.y - my, p1.x - mx);
+  const h = 11;
+  const wing = (d: number) => `M${f(p1.x)},${f(p1.y)} L${f(p1.x - h * Math.cos(angle + d))},${f(p1.y - h * Math.sin(angle + d))}`;
+  return { shaft, head: `${wing(0.45)} ${wing(-0.45)}` };
+}
+
+/** A marker swipe over each line box: a slightly slanted band, a little taller than the text, filled (not stroked). */
+export function highlightPath(lines: readonly Box[], seed = 1): string {
+  const r = seeded(seed);
+  return lines
+    .map((b) => {
+      const top = b.y + b.height * 0.12;
+      const bottom = b.y + b.height * 0.98;
+      const x0 = b.x - 3;
+      const x1 = b.x + b.width + 3;
+      const s1 = (r() - 0.5) * 2;
+      const s2 = (r() - 0.5) * 2;
+      return `M${f(x0)},${f(top + s1)} L${f(x1)},${f(top + s2)} L${f(x1 + 1)},${f(bottom + s2)} L${f(x0 - 1)},${f(bottom + s1)} Z`;
+    })
+    .join(" ");
+}

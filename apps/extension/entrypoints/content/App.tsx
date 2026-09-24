@@ -31,9 +31,11 @@ import { requestCard } from "../../lib/chartPanel";
 import StockChart from "../../components/StockChart";
 import { useGreeting } from "../../components/useGreeting";
 import { api } from "../../lib/api";
-import { findQuote, revealRange } from "../../lib/anchor";
+import { findQuote, nextSentence, revealRange } from "../../lib/anchor";
 import { pageMount } from "../../lib/chartLoader";
-import { readPage } from "../../lib/pageRead";
+import { listFigures, readPage } from "../../lib/pageRead";
+import { chartAnnotations } from "../../lib/chartAnnotations";
+import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
 import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
 import { hush, speak, warmVoice } from "../../lib/voiceClient";
@@ -163,16 +165,21 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   }, [flyRange]);
 
   const showChart = useCallback(
-    (symbol: string) => {
+    (symbol: string, range?: ChartRange) => {
       if (docked) {
-        void requestCard({ kind: "chart", symbol });
+        void requestCard({ kind: "chart", symbol, ...(range ? { range } : {}) });
         return;
       }
-      assistant.setCard({ kind: "chart", symbol, key: Date.now() });
+      // Already showing this stock on this range: keep it (its drawings are about to arrive).
+      const open = chartAnnotations.showing;
+      if (open?.symbol === symbol && (!range || open.range === range)) return;
+      assistant.setCard({ kind: "chart", symbol, key: Date.now(), ...(range ? { range } : {}) });
       setPanelOpen(true);
     },
     [docked, assistant],
   );
+  /** The visible figures listed with the last Show me question, for [BOX_FIGURE:n]. */
+  const figureElements = useRef<Element[]>([]);
   showChartRef.current = showChart;
 
   const ask = useCallback(
@@ -186,7 +193,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         }
       })();
       showRun.current = runShowMe(question, {
-        readPage: () => readPage(document, { companies: companiesRef.current.map((c) => c.symbol) }),
+        readPage: () => {
+          const { figures, elements } = listFigures(document);
+          figureElements.current = elements;
+          return readPage(document, { companies: companiesRef.current.map((c) => c.symbol), figures });
+        },
         surface: onConsole ? "console" : "page",
         capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null),
         downscale: downscaleJpeg,
@@ -196,14 +207,32 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         findQuote: (quote) => findQuote(document.body, quote),
         reveal: (range) => void revealRange(range),
         draw: (kind, range) => drawings.current?.draw(kind, range) ?? false,
+        drawArrow: (from, to) => drawings.current?.drawArrow(from, to) ?? false,
+        drawFigure: (n) => {
+          const el = figureElements.current[n - 1];
+          if (!el) return false;
+          el.scrollIntoView?.({ block: "center", behavior: "smooth" });
+          return drawings.current?.drawFigure(el) ?? false;
+        },
         point: setFlyRange,
         chart: showChart,
+        // Docked, the chart is in the side panel: its drawings go there.
+        annotate: (a) => (docked ? void send({ kind: "chart:annotate", annotation: a }).catch(() => {}) : chartAnnotations.annotate(a)),
+        openChart: () => chartAnnotations.showing,
         portfolio: () => {
           if (docked) void requestCard({ kind: "portfolio" });
           else assistant.setCard({ kind: "portfolio", key: Date.now() });
         },
         say: (line, state, note) => g.setOrb({ state, line, meta: note ?? (onConsole ? "Show me · on the console" : "Show me") }),
-        done: (cancelled) => (cancelled ? drawings.current?.clear() : drawings.current?.fadeLater()),
+        done: (cancelled) => {
+          if (cancelled) {
+            drawings.current?.clear();
+            chartAnnotations.clear();
+          } else {
+            drawings.current?.fadeLater();
+            chartAnnotations.clearLater();
+          }
+        },
       });
     },
     [g, docked, assistant, showChart],
@@ -217,7 +246,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     const range = lastSelection.current;
     if (!range || range.collapsed) return g.setOrb({ state: "idle", line: "Select some text on the page, then type “glance test drawing” again.", meta: "" });
     drawings.current?.clear();
-    const drawn = drawings.current?.drawTest(range) ?? [];
+    const drawn = drawings.current?.drawTest(range, nextSentence(range)) ?? [];
     g.setOrb({ state: "idle", line: `Drew ${drawn.join(", ").toLowerCase()} on your selection.`, meta: "Test drawing" });
     drawings.current?.fadeLater(8_000);
   };
@@ -327,6 +356,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           return;
         }
         drawings.current?.clear();
+        chartAnnotations.clear();
         closePanel();
       },
     },
@@ -548,7 +578,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               }}
               autoFocusInput={openedByKeyboard}
               pageContext={pageContextFor}
-              renderChart={(symbol, onClose) => <StockChart key={symbol} symbol={symbol} onClose={onClose} mount={pageMount} />}
+              renderChart={(symbol, onClose, range) => <StockChart key={`${symbol}:${range ?? ""}`} symbol={symbol} initialRange={range} onClose={onClose} mount={pageMount} />}
             />
           </GooPanel>
 

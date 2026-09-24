@@ -241,3 +241,21 @@ describe("GET /chart", () => {
     expect(limited.status).toBe(429);
   });
 });
+
+describe("Show me's chart summary", () => {
+  it("for a question about a stock's move: its chart, about 60 points (high and low kept), cached sources only", async () => {
+    const { chartContextFor, downsample } = await import("../../src/showmeChart.js");
+    const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" }), () => {});
+    ctx.chartOverrides = { reader: () => fakeFeed().reader, thresholds: async () => null, now: () => T };
+    const summaries = vi.spyOn(ctx.why.summaries, "get");
+    const [c] = await chartContextFor(ctx, { question: "show me where Tesla dropped this week" });
+    expect(c).toMatchObject({ symbol: "TSLA", name: "Tesla", range: "1W", source: "Chainlink", news: [] });
+    expect(c!.low.price).toBeLessThanOrEqual(c!.high.price);
+    expect(summaries).toHaveBeenCalledWith("TSLA"); // the "why" cache is read, never fetched
+    expect(await chartContextFor(ctx, { question: "what's a stock token?" })).toEqual([]);
+    const many = Array.from({ length: 500 }, (_, i) => ({ t: i, price: i === 250 ? 1 : i === 333 ? 999 : 100 }));
+    const d = downsample(many);
+    expect(d.length).toBeLessThanOrEqual(64);
+    expect(d.map((p) => p.price)).toEqual(expect.arrayContaining([1, 999]));
+  });
+});

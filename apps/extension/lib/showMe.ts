@@ -5,7 +5,8 @@
  * (lib/showScheduler.ts): the orb flies to a quote, circles and underlines are drawn (lib/showDraw.ts), a chart or the
  * portfolio opens. A quote that isn't on the page is skipped silently. Escape (or a new question) cancels it all.
  */
-import type { ShowAction } from "@glance/core/showme";
+import type { ChartRange } from "@glance/core/chart";
+import type { ChartAnnotation, ShowAction } from "@glance/core/showme";
 
 import type { ShowMeReply, ShowMeRequest } from "./api";
 import { wantsScreenshot, type PageRead } from "./pageRead";
@@ -33,10 +34,18 @@ export interface ShowMeDeps {
   hush(): void;
   findQuote(quote: string): Range | null;
   reveal(range: Range): void;
-  draw(kind: "CIRCLE" | "UNDERLINE", range: Range): boolean;
+  draw(kind: "CIRCLE" | "UNDERLINE" | "BOX" | "HIGHLIGHT", range: Range): boolean;
+  drawArrow(from: Range, to: Range): boolean;
+  /** Box the nth figure listed with the page (false if there's no such figure). */
+  drawFigure(n: number): boolean;
   /** The orb flies to the range (null: home). */
   point(range: Range | null): void;
-  chart(symbol: string): void;
+  /** Open a stock's chart (on the range that fits the question). */
+  chart(symbol: string, range?: ChartRange): void;
+  /** Draw on a Glance chart (it applies once the chart is showing). */
+  annotate(a: ChartAnnotation): void;
+  /** A Glance chart open right now, if any. */
+  openChart?(): { symbol: string; range: ChartRange } | null;
   portfolio(): void;
   /** What Glance is saying, for the panel's line (and a note under it). */
   say(line: string, state: "thinking" | "speaking" | "idle", note?: string): void;
@@ -54,26 +63,40 @@ export interface ShowMeRun {
 export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
   let cancelled = false;
   let scheduler: ShowScheduler | null = null;
+  let chartRange: ChartRange | undefined;
   const act = (a: ShowAction) => {
     if (cancelled) return;
     switch (a.kind) {
       case "POINT":
       case "CIRCLE":
-      case "UNDERLINE": {
+      case "UNDERLINE":
+      case "BOX":
+      case "HIGHLIGHT": {
         const range = d.findQuote(a.quote);
         if (!range) return; // not on the page: skip the drawing, keep talking
         d.reveal(range);
-        if (a.kind === "POINT") d.point(range);
-        else {
-          d.draw(a.kind, range);
-          d.point(range);
-        }
+        if (a.kind !== "POINT") d.draw(a.kind, range);
+        d.point(range);
         return;
       }
+      case "ARROW": {
+        const from = d.findQuote(a.from);
+        const to = d.findQuote(a.to);
+        if (!from || !to) return; // either end missing: no arrow
+        d.reveal(from);
+        d.drawArrow(from, to);
+        return;
+      }
+      case "BOX_FIGURE":
+        d.drawFigure(a.figure);
+        return;
       case "CHART":
-        return d.chart(a.symbol);
+        return d.chart(a.symbol, chartRange);
       case "PORTFOLIO":
         return d.portfolio();
+      default:
+        // CHART_POINT, CHART_LEVEL, CHART_RANGE, CHART_TREND: on Glance's own chart.
+        return d.annotate(a);
     }
   };
 
@@ -86,13 +109,14 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       screenshot = (shot ? await d.downscale(shot).catch(() => null) : null) ?? undefined;
     }
     if (cancelled) return;
-    const res = await d.ask({ question, surface: d.surface, page, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null });
+    const res = await d.ask({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null });
     if (cancelled) return;
     if (!res.ok) {
       d.say(res.message, "idle");
       return d.done(false);
     }
     const { spoken, actions } = res.data;
+    chartRange = res.data.chart?.range;
     scheduler = new ShowScheduler(actions, spoken, act);
     const s = scheduler;
     d.say(spoken, "thinking");

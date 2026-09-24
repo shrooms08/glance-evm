@@ -18,6 +18,7 @@ vi.mock("../components/context", () => ({
 }));
 
 import StockChart from "../components/StockChart";
+import { makeFake } from "./chartFake";
 import { clearSparklineCache, sparklineData, SPARKLINE_TTL_MS } from "../components/Sparkline";
 import { parseCommand } from "../lib/commands";
 
@@ -59,7 +60,7 @@ const flush = () => act(async () => new Promise((r) => setTimeout(r, 0)));
 describe("side panel chart", () => {
   it("draws the points, with the price, the change over the range and the Chainlink note", async () => {
     chart.mockResolvedValue({ ok: true, data: data() });
-    const mount = vi.fn(async () => ({ update: vi.fn(), destroy: vi.fn() }));
+    const mount = vi.fn(async () => ({ update: vi.fn(), destroy: vi.fn(), annotate: vi.fn(), clearAnnotations: vi.fn() }));
     await act(async () => root.render(createElement(StockChart, { symbol: "TSLA", mount })));
     await flush();
     expect(chart).toHaveBeenCalledWith("TSLA", "1D", "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113");
@@ -74,7 +75,7 @@ describe("side panel chart", () => {
 
   it("switching the range reloads and updates the same chart in place", async () => {
     chart.mockResolvedValue({ ok: true, data: data() });
-    const handle = { update: vi.fn(), destroy: vi.fn() };
+    const handle = { update: vi.fn(), destroy: vi.fn(), annotate: vi.fn(), clearAnnotations: vi.fn() };
     const mount = vi.fn(async () => handle);
     await act(async () => root.render(createElement(StockChart, { symbol: "TSLA", mount })));
     await flush();
@@ -108,35 +109,7 @@ describe("side panel chart", () => {
 });
 
 describe("the chart itself (a fake Lightweight Charts)", () => {
-  function fakeLibrary() {
-    const series = { setData: vi.fn() };
-    const markers = { setMarkers: vi.fn() };
-    let onMove: ((p: unknown) => void) | undefined;
-    let onClick: ((p: unknown) => void) | undefined;
-    const timeScale = {
-      fitContent: vi.fn(),
-      timeToCoordinate: (t: number) => (t - (T - 7_200)) / 10,
-      width: () => 800,
-      subscribeVisibleTimeRangeChange: vi.fn(),
-      subscribeSizeChange: vi.fn(),
-    };
-    const api = {
-      addSeries: vi.fn(() => series),
-      timeScale: () => timeScale,
-      subscribeCrosshairMove: (f: (p: unknown) => void) => (onMove = f),
-      subscribeClick: (f: (p: unknown) => void) => (onClick = f),
-      remove: vi.fn(),
-    };
-    const lib = {
-      createChart: vi.fn(() => api),
-      createSeriesMarkers: vi.fn(() => markers),
-      AreaSeries: "Area",
-      ColorType: { Solid: "solid" },
-      CrosshairMode: { Normal: 0 },
-      LineType: { WithSteps: 1 },
-    };
-    return { lib, series, markers, api, move: (p: unknown) => onMove!(p), click: (p: unknown) => onClick!(p) };
-  }
+  const fakeLibrary = () => makeFake(T);
 
   it("draws a stepped line carried to now, keeps the attribution, and places buys, sells and news", async () => {
     const f = fakeLibrary();
@@ -180,6 +153,29 @@ describe("the chart itself (a fake Lightweight Charts)", () => {
     expect(placeMarkers([{ t: T - 5_000 }, { t: T - 10 }, { t: T - 99_999 }], line).map((m) => m.at)).toEqual([T - 7_200, T - 3_600]);
     expect(rangeChange([data().points[0]!])).toBeNull();
     expect(sparklinePath(data().points, 100, 20)).toMatch(/^M2\.0,18\.0H98\.0V2\.0$/);
+  });
+});
+
+describe("Show me drawings on the chart", () => {
+  it("a level is the library's dashed price line with its label; points, bands and trends draw through the primitive", async () => {
+    const el = document.createElement("div");
+    document.body.append(el);
+    const fake = makeFake(T);
+    const h = await mountChart(el, data(), { theme: "dark", library: fake.lib as never });
+    h.annotate([
+      { kind: "CHART_LEVEL", symbol: "TSLA", price: 370, label: "Week low $370", at: 0 },
+      { kind: "CHART_RANGE", symbol: "TSLA", t1: T - 7_200, t2: T - 3_600, at: 0 },
+      { kind: "CHART_POINT", symbol: "TSLA", t: T - 3_600, at: 0 },
+      { kind: "CHART_TREND", symbol: "TSLA", t1: T - 7_200, t2: T - 3_600, at: 0 },
+    ]);
+    expect(fake.series.createPriceLine).toHaveBeenCalledWith(expect.objectContaining({ price: 370, title: "Week low $370", lineStyle: 2, color: "#C4F135" }));
+    // The primitive draws the band, the circle and the line (a fake canvas records the calls).
+    const calls: string[] = [];
+    const ctx = new Proxy({}, { get: (_t, k) => (typeof k === "string" && !["fillStyle", "strokeStyle", "lineWidth", "lineCap"].includes(k) ? (..._a: unknown[]) => calls.push(k) : undefined), set: () => true });
+    fake.primitive()!.paneViews()[0]!.renderer()!.draw({ useMediaCoordinateSpace: (fn: (s: unknown) => void) => fn({ context: ctx, mediaSize: { width: 800, height: 300 } }) });
+    expect(calls).toEqual(expect.arrayContaining(["fillRect", "ellipse", "lineTo"]));
+    h.clearAnnotations();
+    expect(fake.series.removePriceLine).toHaveBeenCalledTimes(1);
   });
 });
 

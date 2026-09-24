@@ -7,19 +7,49 @@
  * darker limeMark on light ones, where lime is 1.3:1 on white), with a faint halo under the stroke. The stroke is heavy
  * and hand-drawn, so it never reads as the passive dotted company underline.
  */
-import { markColors, isLightColor } from "@glance/design";
-import { circlePath, seedOf, underlinePath, type Box } from "@glance/core/sketch";
+import { isLightColor, markColors } from "@glance/design";
+import { arrowPath, boxPath, circlePath, highlightPath, seedOf, underlinePath, type Box } from "@glance/core/sketch";
 
 export const STROKE_MS = 600;
 export const FADE_AFTER_MS = 4_000;
 const SVG = "http://www.w3.org/2000/svg";
 
+export type MarkKind = "CIRCLE" | "UNDERLINE" | "BOX" | "HIGHLIGHT" | "ARROW" | "BOX_FIGURE";
+
+/** A mark's shapes for the current layout (re-measured on scroll and resize); null when its target has no box. */
+type Geometry = () => { strokes: string[]; fill?: string } | null;
+
 interface Mark {
-  kind: "CIRCLE" | "UNDERLINE";
-  range: Range;
-  paths: SVGPathElement[];
-  seed: number;
+  kind: MarkKind;
+  geometry: Geometry;
+  paths: Array<{ el: SVGPathElement; part: "stroke" | "fill"; index: number }>;
 }
+
+/** The block a quote sits in, for BOX: its paragraph, list item, table cell, caption or quote. */
+export function blockOf(range: Range): Element | null {
+  const start = range.startContainer.nodeType === 1 ? (range.startContainer as Element) : range.startContainer.parentElement;
+  return start?.closest("p, li, td, th, figcaption, blockquote, dd, dt, h1, h2, h3, h4, h5, h6, pre") ?? start ?? null;
+}
+
+/** Every line box of a range (for HIGHLIGHT): the rects on each line joined. */
+export function lineBoxes(range: Range): Box[] {
+  const rects = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0);
+  const lines: Box[] = [];
+  for (const r of rects) {
+    const line = lines.find((l) => Math.abs(l.y - r.top) < r.height / 2);
+    if (line) {
+      const right = Math.max(line.x + line.width, r.right);
+      line.x = Math.min(line.x, r.left);
+      line.width = right - line.x;
+    } else lines.push({ x: r.left, y: r.top, width: r.width, height: r.height });
+  }
+  return lines;
+}
+
+const elementBox = (el: Element): Box | null => {
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? { x: r.left, y: r.top, width: r.width, height: r.height } : null;
+};
 
 /** The background color actually behind a node: the nearest ancestor with a mostly opaque background ("" for none). */
 export function backgroundUnder(node: Node, win: Window = window): string {
@@ -73,20 +103,86 @@ export class ShowDrawings {
     return this.marks.length;
   }
 
-  /** Draws a circle or underline around the range. Returns false if the words have no box (hidden): skipped. */
-  draw(kind: "CIRCLE" | "UNDERLINE", range: Range): boolean {
-    const box = rangeBox(range);
-    if (!box) return false;
+  /** Draws a circle, underline, box or highlight for the range. False if it has no box (hidden): skipped. */
+  draw(kind: "CIRCLE" | "UNDERLINE" | "BOX" | "HIGHLIGHT", range: Range): boolean {
+    const seed = seedOf(`${kind}:${range.toString()}`);
+    const geometry: Geometry =
+      kind === "HIGHLIGHT"
+        ? () => {
+            const lines = lineBoxes(range);
+            return lines.length ? { strokes: [], fill: highlightPath(lines, seed) } : null;
+          }
+        : kind === "BOX"
+          ? () => {
+              const block = blockOf(range);
+              const box = (block ? elementBox(block) : null) ?? rangeBox(range);
+              return box ? { strokes: [boxPath(box, seed)] } : null;
+            }
+          : () => {
+              const box = rangeBox(range);
+              return box ? { strokes: [kind === "CIRCLE" ? circlePath(box, seed) : underlinePath(box, seed)] } : null;
+            };
+    return this.add(kind, geometry, marksFor(range, this.win));
+  }
+
+  /** A curved arrow from one range to another. False if either has no box: skipped. */
+  drawArrow(from: Range, to: Range): boolean {
+    const seed = seedOf(`${from.toString()}->${to.toString()}`);
+    return this.add(
+      "ARROW",
+      () => {
+        const a = rangeBox(from);
+        const b = rangeBox(to);
+        if (!a || !b) return null;
+        const { shaft, head } = arrowPath(a, b, seed);
+        return { strokes: [shaft, head] };
+      },
+      marksFor(from, this.win),
+    );
+  }
+
+  /** A box around a figure (an image, a canvas, a chart). */
+  drawFigure(el: Element): boolean {
+    const seed = seedOf(`figure:${el.tagName}:${el.getAttribute("src") ?? ""}`);
+    return this.add(
+      "BOX_FIGURE",
+      () => {
+        const box = elementBox(el);
+        return box ? { strokes: [boxPath(box, seed, 8)] } : null;
+      },
+      markColors(isLightColor(backgroundUnder(el.parentElement ?? el, this.win))),
+    );
+  }
+
+  private add(kind: MarkKind, geometry: Geometry, colors: { stroke: string; halo: string; highlight: string }): boolean {
+    const g = geometry();
+    if (!g) return false;
     clearTimeout(this.fadeTimer);
     this.svg.style.opacity = "1";
-    const seed = seedOf(range.toString());
-    const d = kind === "CIRCLE" ? circlePath(box, seed) : underlinePath(box, seed);
-    const colors = marksFor(range, this.win);
-    // A faint halo under the stroke, then the stroke: both drawn in together.
-    const halo = this.stroke(d, colors.halo, kind === "CIRCLE" ? 6 : 6.5);
-    const pen = this.stroke(d, colors.stroke, kind === "CIRCLE" ? 3 : 3.4);
-    pen.setAttribute("data-mark", kind.toLowerCase());
-    this.marks.push({ kind, range, paths: [halo, pen], seed });
+    const paths: Mark["paths"] = [];
+    if (g.fill) {
+      // A marker swipe: a translucent wash that blends with the page, so the words under it stay readable.
+      const fill = this.host.ownerDocument.createElementNS(SVG, "path");
+      fill.setAttribute("d", g.fill);
+      fill.setAttribute("fill", colors.highlight);
+      fill.setAttribute("data-mark", "highlight");
+      // A plain translucent wash (at most .35 opaque: the words stay readable). No blend mode: our overlay is its own
+      // layer above the page, so a multiply or screen blend would have nothing under it to blend with and vanish.
+      const reduced = this.win.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      Object.assign(fill.style, { clipPath: reduced ? "none" : "inset(0 100% 0 0)", transition: `clip-path ${STROKE_MS}ms cubic-bezier(.3,.7,.2,1)` });
+      this.svg.append(fill);
+      if (!reduced) this.win.requestAnimationFrame(() => this.win.requestAnimationFrame(() => (fill.style.clipPath = "inset(0 0 0 0)")));
+      setTimeout(() => (fill.style.clipPath = "none"), STROKE_MS + 100);
+      paths.push({ el: fill, part: "fill", index: 0 });
+    }
+    g.strokes.forEach((d, index) => {
+      // A faint halo under the stroke, then the stroke: both drawn in together.
+      const halo = this.stroke(d, colors.halo, kind === "UNDERLINE" ? 6.5 : 6);
+      const pen = this.stroke(d, colors.stroke, kind === "UNDERLINE" ? 3.4 : 3);
+      pen.setAttribute("data-mark", kind.toLowerCase());
+      paths.push({ el: halo, part: "stroke", index }, { el: pen, part: "stroke", index });
+    });
+    this.marks.push({ kind, geometry, paths });
     return true;
   }
 
@@ -110,12 +206,13 @@ export class ShowDrawings {
   }
 
   /**
-   * Developer check: every shape on `range` (the selection), so drawings can be checked by eye in seconds. Returns the
-   * shapes drawn.
+   * Developer check: every shape on `range` (the selection), and an arrow to `next` (the following sentence), so
+   * drawings can be checked by eye in seconds. Returns the shapes drawn.
    */
-  drawTest(range: Range): string[] {
+  drawTest(range: Range, next: Range | null = null): string[] {
     const drawn: string[] = [];
-    for (const kind of ["CIRCLE", "UNDERLINE"] as const) if (this.draw(kind, range)) drawn.push(kind);
+    for (const kind of ["CIRCLE", "UNDERLINE", "HIGHLIGHT", "BOX"] as const) if (this.draw(kind, range)) drawn.push(kind);
+    if (next && this.drawArrow(range, next)) drawn.push("ARROW");
     return drawn;
   }
 
@@ -149,14 +246,15 @@ export class ShowDrawings {
     this.raf = this.win.requestAnimationFrame(() => {
       this.raf = 0;
       for (const m of this.marks) {
-        const box = rangeBox(m.range);
-        if (!box) continue;
-        const d = m.kind === "CIRCLE" ? circlePath(box, m.seed) : underlinePath(box, m.seed);
+        const g = m.geometry();
+        if (!g) continue;
         for (const p of m.paths) {
-          p.setAttribute("d", d);
+          const d = p.part === "fill" ? g.fill : g.strokes[p.index];
+          if (!d) continue;
+          p.el.setAttribute("d", d);
           // Already drawn: no replay of the stroke.
-          p.style.transition = "none";
-          p.style.strokeDasharray = "none";
+          p.el.style.transition = "none";
+          if (p.part === "stroke") p.el.style.strokeDasharray = "none";
         }
       }
     });

@@ -27,7 +27,7 @@ const data: ChartData = {
 
 describe("PriceChartView", () => {
   it("renders the points into the chart with the page's theme, and the change over the range", async () => {
-    const mount = vi.fn(async () => ({ update: vi.fn(), destroy: vi.fn() }));
+    const mount = vi.fn(async () => ({ update: vi.fn(), destroy: vi.fn(), annotate: vi.fn(), clearAnnotations: vi.fn() }));
     render(<PriceChartView symbol="AMD" range="1W" onRange={() => {}} theme="light" loading={false} data={data} mount={mount} />);
     await act(async () => {});
     expect(mount).toHaveBeenCalledTimes(1);
@@ -42,7 +42,7 @@ describe("PriceChartView", () => {
 
   it("range buttons switch the range", () => {
     const onRange = vi.fn();
-    render(<PriceChartView symbol="AMD" range="1W" onRange={onRange} theme="dark" loading={false} data={data} mount={vi.fn(async () => ({ update: vi.fn(), destroy: vi.fn() }))} />);
+    render(<PriceChartView symbol="AMD" range="1W" onRange={onRange} theme="dark" loading={false} data={data} mount={vi.fn(async () => ({ update: vi.fn(), destroy: vi.fn(), annotate: vi.fn(), clearAnnotations: vi.fn() }))} />);
     expect(screen.getByRole("tab", { name: "1W" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("tab", { name: "1M" }));
     expect(onRange).toHaveBeenCalledWith("1M");

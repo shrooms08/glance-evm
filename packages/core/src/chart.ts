@@ -131,6 +131,8 @@ export interface ChartColors {
   sell: string;
   news: string;
   closedBand: string;
+  /** Show me's band on the chart (CHART_RANGE). */
+  band: string;
 }
 
 /** Black with the lime line and a soft lime fill on dark; the paper tokens (lime ink) on light. */
@@ -150,5 +152,6 @@ export function chartColors(theme: ThemeName): ChartColors {
     sell: t.down,
     news: t.soft,
     closedBand: dark ? color.chartClosed : color.chartClosedInk,
+    band: dark ? color.chartBand : color.chartBandInk,
   };
 }

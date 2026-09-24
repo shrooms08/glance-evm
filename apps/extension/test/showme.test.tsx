@@ -185,8 +185,11 @@ function deps(over: Partial<ShowMeDeps> = {}, reply = { spoken: "Deliveries hit 
     findQuote: (q) => findQuote(document.body, q),
     reveal: () => calls.push("reveal"),
     draw: vi.fn((kind) => (calls.push(kind), true)),
+    drawArrow: vi.fn(() => (calls.push("ARROW"), true)),
+    drawFigure: vi.fn((n) => (calls.push(`figure:${n}`), true)),
+    annotate: vi.fn((a) => calls.push(a.kind)),
     point: vi.fn((r) => calls.push(r ? `point:${r.toString().replace(/\s+/g, " ")}` : "home")),
-    chart: vi.fn((s) => calls.push(`chart:${s}`)),
+    chart: vi.fn((s, r) => calls.push(`chart:${s}${r ? `:${r}` : ""}`)),
     portfolio: vi.fn(() => calls.push("portfolio")),
     say: vi.fn(),
     done: vi.fn((c) => calls.push(c ? "cleared" : "fade")),
@@ -302,6 +305,54 @@ describe("one voice: a reply that stops part way", () => {
     for (const dir of ["lib", "components", "entrypoints"]) walk(join(root, dir));
     const offenders = files.filter((f) => /speechSynthesis|SpeechSynthesisUtterance/.test(readFileSync(f, "utf8")));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("the new tags, end to end", () => {
+  it("an arrow with a missing end is skipped; box, highlight and figure are drawn", async () => {
+    const spoken = "Look here. And there. And that picture.";
+    const d = deps({}, {
+      spoken,
+      actions: [
+        { kind: "ARROW", from: "Revenue grew 12%", to: "not on this page", at: 0 },
+        { kind: "ARROW", from: "record deliveries", to: "Revenue grew 12%", at: 0 },
+        { kind: "BOX", quote: "gross margin", at: 0 },
+        { kind: "HIGHLIGHT", quote: "Cybertruck", at: 0 },
+        { kind: "BOX_FIGURE", figure: 1, at: 0 },
+      ],
+    });
+    const run = runShowMe("show me", d);
+    await flush();
+    expect(d.drawArrow).toHaveBeenCalledTimes(1);
+    expect(d.calls.filter((c) => ["ARROW", "BOX", "HIGHLIGHT", "figure:1"].includes(c))).toEqual(["ARROW", "BOX", "HIGHLIGHT", "figure:1"]);
+    d.end();
+    await run.finished;
+  });
+
+  it("chart tags: the chart opens on the reply's range, and each drawing goes to it", async () => {
+    const spoken = "Here's the week. It slid here. Down to the low.";
+    const d = deps();
+    (d.ask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      data: {
+        reply: spoken,
+        spoken,
+        source: "claude",
+        chart: { symbol: "TSLA", range: "1W" },
+        actions: [
+          { kind: "CHART", symbol: "TSLA", at: 0 },
+          { kind: "CHART_RANGE", symbol: "TSLA", t1: 1, t2: 2, at: spoken.indexOf("It slid") },
+          { kind: "CHART_POINT", symbol: "TSLA", t: 2, at: spoken.indexOf("Down") },
+          { kind: "CHART_LEVEL", symbol: "TSLA", price: 362.2, label: "Week low $362.20", at: spoken.indexOf("Down") },
+        ],
+      },
+    });
+    const run = runShowMe("show me where Tesla dropped this week", d);
+    await flush();
+    expect(d.calls).toContain("chart:TSLA:1W");
+    d.end();
+    await run.finished;
+    expect(d.calls.filter((c) => c.startsWith("CHART_"))).toEqual(["CHART_RANGE", "CHART_POINT", "CHART_LEVEL"]);
   });
 });
 

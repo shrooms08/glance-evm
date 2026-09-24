@@ -7,7 +7,7 @@ import { color } from "@glance/design";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parseCommand } from "../lib/commands";
-import { backgroundUnder, ShowDrawings, STROKE_MS } from "../lib/showDraw";
+import { backgroundUnder, blockOf, ShowDrawings, STROKE_MS } from "../lib/showDraw";
 
 const TARGET = { left: 110, top: 430, width: 140, height: 20, right: 250, bottom: 450, x: 110, y: 430, toJSON() {} } as DOMRect;
 
@@ -94,5 +94,37 @@ describe("Show me marks are visible", () => {
   it("'glance test drawing' is a command", () => {
     expect(parseCommand("glance test drawing", []).kind).toBe("testDrawing");
     expect(parseCommand("test drawing", []).kind).toBe("testDrawing");
+  });
+});
+
+describe("boxes, highlights, arrows", () => {
+  it("BOX picks the block around the quote: its list item, table cell, caption or paragraph", () => {
+    document.body.innerHTML = `<ul><li id="li">Deliveries: <b id="b">1.2 million</b></li></ul><table><tr><td id="td"><span id="s">Revenue</span></td></tr></table><figure><img><figcaption id="fc">Chart: <i id="i">deliveries</i></figcaption></figure>`;
+    const at = (id: string) => {
+      const r = document.createRange();
+      r.selectNodeContents(document.getElementById(id)!);
+      return r;
+    };
+    expect(blockOf(at("b"))!.id).toBe("li");
+    expect(blockOf(at("s"))!.id).toBe("td");
+    expect(blockOf(at("i"))!.id).toBe("fc");
+  });
+
+  it("HIGHLIGHT is a translucent wash (no blend mode, which would vanish in our layer): the text stays readable", () => {
+    const { range, layer } = page("#ffffff");
+    new ShowDrawings(layer).draw("HIGHLIGHT", range);
+    const fill = layer.querySelector('path[data-mark="highlight"]') as SVGPathElement;
+    expect(fill.getAttribute("fill")).toBe(color.highlightOnLight);
+    expect(Number(/,\s*([\d.]+)\)$/.exec(color.highlightOnLight)![1])).toBeLessThanOrEqual(0.35);
+    expect(fill.style.mixBlendMode).toBe("");
+    expect(bbox(fill.getAttribute("d")!).x0).toBeLessThan(TARGET.left);
+  });
+
+  it("the test drawing draws every shape, with an arrow to the next sentence", () => {
+    const { range, layer } = page("#ffffff");
+    const next = document.createRange();
+    next.selectNodeContents(document.querySelector("article")!);
+    next.getClientRects = () => [{ ...TARGET, top: 500, bottom: 520, y: 500 }] as unknown as DOMRectList;
+    expect(new ShowDrawings(layer).drawTest(range, next)).toEqual(["CIRCLE", "UNDERLINE", "HIGHLIGHT", "BOX", "ARROW"]);
   });
 });

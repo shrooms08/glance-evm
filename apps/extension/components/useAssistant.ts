@@ -56,7 +56,7 @@ export type AssistantCard =
   | { kind: "spent" }
   | { kind: "portfolio"; key: number; tab?: "positions" | "journal" }
   | { kind: "why"; symbol: string; key: number }
-  | { kind: "chart"; symbol: string; key: number }
+  | { kind: "chart"; symbol: string; key: number; range?: import("@glance/core/chart").ChartRange }
   | null;
 
 export interface AssistantOptions {

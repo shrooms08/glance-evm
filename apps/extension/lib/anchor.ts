@@ -100,3 +100,32 @@ export function revealRange(range: Range, win: Window = window): boolean {
   el?.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
   return true;
 }
+
+/** The start of the sentence after `range` (up to about 40 characters), for the test drawing's arrow; null at the end. */
+export function nextSentence(range: Range): Range | null {
+  const doc = range.startContainer.ownerDocument!;
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  walker.currentNode = range.endContainer;
+  let node: Node | null = range.endContainer;
+  let offset = range.endOffset;
+  let passedEnd = false;
+  for (let hops = 0; node && hops < 50; hops++) {
+    const text = node.nodeValue ?? "";
+    for (let i = offset; i < text.length; i++) {
+      if (!passedEnd) {
+        if (/[.!?]/.test(text[i]!)) passedEnd = true;
+        continue;
+      }
+      if (/\S/.test(text[i]!)) {
+        const r = doc.createRange();
+        r.setStart(node, i);
+        r.setEnd(node, Math.min(text.length, i + 40));
+        return r;
+      }
+    }
+    node = walker.nextNode();
+    offset = 0;
+    passedEnd = true; // a new block counts as a new sentence
+  }
+  return null;
+}

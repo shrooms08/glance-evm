@@ -34,4 +34,7 @@ export interface PageMatchesReply {
 /** Show me: a JPEG of the visible tab (a data URL), for a question about a chart or an image. Never stored. */
 export type CaptureRequest = { kind: "capture:tab" };
 
-export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | { kind: "open:settings" };
+/** Docked: a Show me drawing for the chart in the side panel. */
+export type ChartAnnotateMessage = { kind: "chart:annotate"; annotation: import("@glance/core/showme").ChartAnnotation };
+
+export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | { kind: "open:settings" };

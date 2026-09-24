@@ -34,6 +34,25 @@ export function containsAdvice(text: string): boolean {
   return ADVICE_PATTERNS.some((p) => p.test(text));
 }
 
+/**
+ * On a chart, these words read as a forecast ("support at $360", "a breakout", "the level will hold"): a chart reply
+ * or label describes what happened, never what will. A label with one is dropped; a reply with one is replaced.
+ */
+export const CHART_ADVICE_PATTERNS: readonly RegExp[] = [
+  /\bsupports?\b/i,
+  /\bresistance\b/i,
+  /\bbreak ?outs?\b/i,
+  /\bbreak(s|ing)? (out|through)\b/i,
+  /\btargets?\b/i,
+  /\bwill (hold|bounce|break|test|retest)\b/i,
+  /\bbottomed\b|\bbottoming\b/i,
+  /\boversold\b|\boverbought\b/i,
+];
+
+export function containsChartAdvice(text: string): boolean {
+  return containsAdvice(text) || CHART_ADVICE_PATTERNS.some((p) => p.test(text));
+}
+
 export const NO_CLEAR_NEWS = "No clear news explains this move.";
 export const NEWS_UNAVAILABLE = "News isn't available right now.";
 export const NO_RECENT_NEWS = "No news about this company in the last 3 days.";

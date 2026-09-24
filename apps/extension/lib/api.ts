@@ -5,6 +5,8 @@ import type { Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, S
 import type { ChartData, ChartRange } from "@glance/core/chart";
 import type { ShowAction } from "@glance/core/showme";
 
+import type { PageFigure } from "./pageRead";
+
 import { send } from "./lifecycle";
 import { setChainStatus } from "./chainStatus";
 import type { ApiRequest, ApiResponse } from "./messages";
@@ -49,7 +51,9 @@ async function once<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
 export interface ShowMeRequest {
   question: string;
   surface: "page" | "console";
-  page?: { title: string; host: string; selection?: string; text: string; companies: string[] };
+  page?: { title: string; host: string; selection?: string; text: string; companies: string[]; figures?: PageFigure[] };
+  /** A Glance chart open in the panel right now (Show me can draw on it). */
+  openChart?: { symbol: string; range: ChartRange } | null;
   screenshot?: string;
   lastGuard?: { code: string; message: string } | null;
 }
@@ -59,6 +63,8 @@ export interface ShowMeReply {
   spoken: string;
   actions: ShowAction[];
   source: "claude" | "budget" | "guarded" | "unavailable";
+  /** The chart to open, on the range that fits the question, when the reply draws on it. */
+  chart?: { symbol: string; range: ChartRange };
 }
 
 const q = (params: Record<string, string | number | undefined>) =>
