@@ -43,3 +43,6 @@ apps/console/CLAUDE.md
 
 # The API's resolver cache and Claude call counter (RESOLVER_CACHE_FILE)
 apps/api/.cache/
+
+# Private keys (the extension signing key lives outside the repo: ~/.glance-extension-key.pem)
+*.pem

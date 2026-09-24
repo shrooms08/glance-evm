@@ -6,6 +6,7 @@
  * it off; open-source Chromium builds lack Google's speech service), the user hasn't granted Glance the microphone yet,
  * or there is no microphone.
  */
+import { EXTENSION_ID } from "./extensionId";
 
 export type BrowserName = "Google Chrome" | "Chromium" | "Brave" | "Microsoft Edge" | "Opera" | "Other";
 
@@ -150,14 +151,17 @@ export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
 }
 
 /** Where the browser's own microphone setting lives, for the "only allowed for a while" line. */
-export function micSettingsUrl(browser: Pick<BrowserInfo, "name">): string {
-  if (browser.name === "Brave") return "brave://settings/content/microphone";
-  if (browser.name === "Microsoft Edge") return "edge://settings/content/microphone";
-  return "chrome://settings/content/microphone";
+/**
+ * Glance's own entry in the browser's site settings, where Microphone is set to Allow (for good). The page is the
+ * extension's origin, chrome-extension://<id>, and the ID is fixed (lib/extensionId.ts).
+ */
+export function micSettingsUrl(browser: Pick<BrowserInfo, "name">, id: string = EXTENSION_ID): string {
+  const scheme = browser.name === "Brave" ? "brave" : browser.name === "Microsoft Edge" ? "edge" : "chrome";
+  return `${scheme}://settings/content/siteDetails?site=chrome-extension%3A%2F%2F${id}`;
 }
 
 /** The mic worked before and now it's refused: the browser's grant was temporary. */
 export function micTemporaryLine(browser: Pick<BrowserInfo, "name">): string {
   const name = browser.name === "Other" ? "Your browser" : browser.name;
-  return `${name} only allowed the mic for a while. Open ${micSettingsUrl(browser)} and set Glance to Allow.`;
+  return `${name} only allowed the mic for a while. Open ${micSettingsUrl(browser)} and set Microphone to Allow.`;
 }

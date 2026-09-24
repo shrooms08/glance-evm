@@ -2,8 +2,10 @@ import { defineConfig } from "wxt";
 
 /**
  * Manifest V3 for Chrome, Brave and Edge.
- * The fixed `key` gives every unpacked install the same extension ID (ldkhnhnmgilpmpdacnfajmilandbalfj), so it can be
- * added to the API's CORS_ORIGINS once. It is a public key; the matching private key was never kept.
+ * The fixed `key` gives every install the same extension ID (gmcdcaoneeohbacbnafjdnkkoojgnogl), from any folder, any
+ * profile, and the judges' zip: the ID is a hash of this key, not of the folder. So CORS_ORIGINS names it once, and
+ * the browser's microphone grant (kept per extension origin) survives rebuilds. It is the PUBLIC key only; the private
+ * key lives outside the repository (~/.glance-extension-key.pem, for packing a .crx) and is never committed.
  */
 export default defineConfig({
   modules: ["@wxt-dev/module-react"],
@@ -15,7 +17,7 @@ export default defineConfig({
     name: "Glance",
     short_name: "Glance",
     description: "Buy tokenized stocks from any page, through an agent your vault keeps on a leash.",
-    key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8yV3dhUWeWn7kvet4GWLKKvLbezbAXKnLJo4UTJQTMj78BysrEdVGDA/LsQS7j/daej3786Tg2wSUAc1folpeB/aG1qzA6pDtzzAp+bSamyzr2206el64Xbb87e6p+pm5jx7/GuaX+/inBooDGRsr2MVZRnNqV6cfMo5yPa41RghVteGq+EAboDD4XSmX5N/ej+3+gAhYGebSJ7RNtcdQ0ONnSFHjIET/D2KcPYShOuTAq7pcrkBu7VloNh5/uEzchOe21cXQ2id1Xmj4Sozyv1sbh4F3wxLQ/jWCotFPyp2VdkbPHTitDaQOiUl7rQfRH3tXNUNc/eHKCRtioTDoQIDAQAB",
+    key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzSKiRVmB29xrSL3ltvB7VAxQqYI8vkiwzSVmL/lwl1SlR8kC37I2XNaKRmmmbNvbIQ08isueZYCX9ZoPhAaaVg2PEcOmMFzO8MKr59voqpNXU0uY2P7WcgydVtv77QQ5QL12qMJ0qULmJszw8zxQKEZV3TJNc1yUidCVWdBldaD1cJU3Q8jICvxmpJfdf+jyp+LyXl91Fa0xl8rbRas57CKVBRgK5p3jHES61QE9DjTZZJJL83NauLUYFe350OykV0j1UUizqbNYkiq5IzQKfxWlPWsFLw8Wo7I58skKcokuu0DiGNl4yWZeIzzb3PQ6mAsh9Bt7MAmskRwcG9MC0wIDAQAB",
     minimum_chrome_version: "116",
     permissions: ["storage", "sidePanel", "offscreen"],
     host_permissions: ["http://localhost/*", "http://127.0.0.1/*"],

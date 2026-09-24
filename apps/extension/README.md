@@ -30,7 +30,7 @@ Chrome Web Store. It takes about a minute.
    icon later opens it in the side panel.
 
 Glance opens its settings page the first time. The extension ID shown there should be
-`ldkhnhnmgilpmpdacnfajmilandbalfj`. It is the same on every computer.
+`gmcdcaoneeohbacbnafjdnkkoojgnogl`. It is the same on every computer.
 
 Chrome may show a banner about developer-mode extensions when it starts. That is expected for any unpacked extension.
 Close the banner.
@@ -143,7 +143,7 @@ How it's built:
 - **Voice:** speech recognition never runs in the web page. From the floating orb, the background opens an offscreen
   document (`entrypoints/offscreen`, reason `USER_MEDIA`) that listens, and relays each session's events (started,
   interim text, final text, error, end) back to the tab. In the side panel, recognition runs in the panel itself.
-  Either way the microphone permission belongs to `chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj`. Every
+  Either way the microphone permission belongs to `chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl`. Every
   failure maps to one sentence in `lib/voiceReasons.ts`. In development builds the console logs
   `[glance] voice: running in <browser> <version>`.
 - **Liquid motion:** `components/GooPanel.tsx` and `components/DockTransition.tsx`, driven by

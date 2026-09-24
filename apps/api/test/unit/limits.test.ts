@@ -148,12 +148,12 @@ describe("rate limits", () => {
 });
 
 describe("CORS", () => {
-  const app = createApp(ctxWith({ CORS_ORIGINS: "chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj,https://console.glance.example" }));
+  const app = createApp(ctxWith({ CORS_ORIGINS: "chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl,https://console.glance.example" }));
   const preflight = (origin: string) =>
     app.request("/trade", { method: "OPTIONS", headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-glance-signature" } });
 
   it("allows the extension and the console, with the signed-request headers", async () => {
-    for (const origin of ["chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj", "https://console.glance.example"]) {
+    for (const origin of ["chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl", "https://console.glance.example"]) {
       const res = await preflight(origin);
       expect(res.headers.get("access-control-allow-origin")).toBe(origin);
       expect(res.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("x-glance-signature");
@@ -167,7 +167,7 @@ describe("CORS", () => {
   });
 
   it("an empty CORS_ORIGINS (a copied .env.example) means the default, not none", () => {
-    expect(loadConfig({ CORS_ORIGINS: "" }).corsOrigins).toEqual(["chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj", "http://localhost:3000"]);
+    expect(loadConfig({ CORS_ORIGINS: "" }).corsOrigins).toEqual(["chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl", "http://localhost:3000"]);
   });
 });
 

@@ -12,7 +12,7 @@ import { Orb, type OrbState } from "../../components/Orb";
 import { api } from "../../lib/api";
 import { hush, speak, startVoice, type VoiceSession } from "../../lib/voiceClient";
 import { diagnose, requestMic, type VoiceDiagnostics } from "../../lib/voiceDiagnostics";
-import { markVoiceEnabled, voiceState, type VoiceState } from "../../lib/voicePrefs";
+import { ALLOW_FOREVER_LINE, markVoiceEnabled, micSettingsUrl, micStatus, voiceState, type VoiceState } from "../../lib/voicePrefs";
 import { reasonFor, type VoiceCode } from "../../lib/voiceReasons";
 
 export function VoiceSection({ voiceKey }: { voiceKey: string }) {
@@ -114,7 +114,10 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
             ? server?.ok
               ? `Voice is on. Hold ⌥ ${voiceKey || "V"}, or use the mic button in Glance's panel, to talk.`
               : `The microphone is ready, but the Glance API has no transcription service${server?.reachable ? "" : " (it isn't reachable)"}: voice falls back to this browser's speech recognition.`
-            : "Click “Enable voice” once. Your browser will ask to let Glance use your microphone.";
+            : `Click “Enable voice” once. ${ALLOW_FOREVER_LINE}`;
+  const mic = diag ? micStatus(diag.micPermission, { workedAt: stored?.workedAt ?? null }) : null;
+  const settingsAddress = diag ? micSettingsUrl(diag.browser) : "";
+  const [copied, setCopied] = useState(false);
 
   return (
     <section className="g-card" aria-labelledby="voice">
@@ -130,6 +133,27 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
             {status}
           </span>
         </div>
+        {mic && (
+          <div className="g-row" style={{ gap: 12, flexWrap: "wrap" }} data-mic={mic.fix}>
+            <span className="g-ui">{mic.label}</span>
+            {mic.fix === "enable" && (
+              <button className="g-btn" onClick={() => void enable()} disabled={asking}>
+                {asking ? "Waiting for your answer…" : "Allow the mic"}
+              </button>
+            )}
+            {mic.fix === "settings" && (
+              <>
+                <span className="g-meta">
+                  Open <span className="g-mono">{settingsAddress}</span> and set Microphone to Allow.
+                </span>
+                <button className="g-btn" onClick={() => void navigator.clipboard?.writeText(settingsAddress).then(() => setCopied(true), () => {})}>
+                  {copied ? "Copied" : "Copy the address"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {mic?.fix === "enable" && <span className="g-meta">{ALLOW_FOREVER_LINE}</span>}
         <span className="g-meta">Typing always works, whatever this says.</span>
       </div>
 

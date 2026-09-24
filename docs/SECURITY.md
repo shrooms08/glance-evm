@@ -118,7 +118,7 @@ printed.
 ## CORS is not authentication
 
 The API allows browser calls only from the origins in `CORS_ORIGINS`: the extension (its fixed ID,
-`chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj`) and the console. That stops other web pages from using the API
+`chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl`) and the console. That stops other web pages from using the API
 through a visitor's browser. But anything outside a browser (curl, a script, a server) ignores CORS completely, which is
 why trades are signed and the paid endpoints are rate-limited and capped.
 

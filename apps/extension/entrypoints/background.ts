@@ -4,7 +4,8 @@
  */
 import { browser } from "wxt/browser";
 
-import { markMicWorked, onMicFailure } from "../lib/voicePrefs";
+import { markMicWorked, onMicFailure, voiceState } from "../lib/voicePrefs";
+import { offscreenKeeper } from "../lib/offscreenDoc";
 import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
@@ -119,25 +120,18 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
  */
 const voiceTabs = new Map<string, number>();
 const speechTabs = new Map<string, number>();
-let creatingOffscreen: Promise<void> | null = null;
-
-async function ensureOffscreen(): Promise<void> {
-  const url = browser.runtime.getURL("/offscreen.html");
-  const offscreen = (browser as unknown as { offscreen?: typeof chrome.offscreen }).offscreen;
-  if (!offscreen) throw new Error("no offscreen API");
-  const existing = await browser.runtime.getContexts?.({ contextTypes: ["OFFSCREEN_DOCUMENT" as never], documentUrls: [url] });
-  if (existing && existing.length > 0) return;
-  creatingOffscreen ??= offscreen
-    .createDocument({
-      url,
-      reasons: ["USER_MEDIA" as chrome.offscreen.Reason, "AUDIO_PLAYBACK" as chrome.offscreen.Reason],
-      justification: "Records push-to-talk audio under Glance's own microphone permission, and plays Glance's spoken replies.",
-    })
-    .finally(() => {
-      creatingOffscreen = null;
-    });
-  await creatingOffscreen;
-}
+/** The one offscreen document (lib/offscreenDoc.ts): created once per browser session, then kept open. */
+const ensureOffscreenDoc = offscreenKeeper({
+  url: browser.runtime.getURL("/offscreen.html"),
+  existing: async () =>
+    (await browser.runtime.getContexts?.({ contextTypes: ["OFFSCREEN_DOCUMENT" as never], documentUrls: [browser.runtime.getURL("/offscreen.html")] }))?.length ?? 0,
+  create: async (o) => {
+    const offscreen = (browser as unknown as { offscreen?: typeof chrome.offscreen }).offscreen;
+    if (!offscreen) throw new Error("no offscreen API");
+    await offscreen.createDocument({ url: o.url, reasons: o.reasons as chrome.offscreen.Reason[], justification: o.justification });
+  },
+});
+const ensureOffscreen = () => ensureOffscreenDoc();
 
 const apiBase = async () => (await apiBaseUrl.getValue()).replace(/\/+$/, "");
 
@@ -248,6 +242,12 @@ export default defineBackground(() => {
   browser.commands?.onCommand.addListener((command, tab) => {
     forwardCommand(command, tab?.id, (id, message) => browser.tabs.sendMessage(id, message));
   });
+
+  // Voice already on: open the offscreen document as the browser starts, and keep it all session (creating it asks
+  // for nothing; the microphone opens only on Option+V).
+  const keepVoiceReady = () => void voiceState.getValue().then((v) => (v.on ? ensureOffscreen() : undefined)).catch(() => {});
+  browser.runtime.onStartup?.addListener(keepVoiceReady);
+  keepVoiceReady();
 
   browser.runtime.onMessage.addListener((message: Message | VoiceRequest | VoiceEvent | SpeechEvent, sender) => {
     switch (message.kind) {

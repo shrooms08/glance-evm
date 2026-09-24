@@ -123,7 +123,7 @@ const envSchema = z.object({
     .string()
     .optional()
     // Empty (as in a copied .env.example) means the default, not "no origins".
-    .transform((v) => (v?.trim() ? v : "chrome-extension://ldkhnhnmgilpmpdacnfajmilandbalfj,http://localhost:3000")),
+    .transform((v) => (v?.trim() ? v : "chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl,http://localhost:3000")),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
   TRADE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
   /** Trust X-Forwarded-For for the client IP. Only enable behind a proxy you control. */

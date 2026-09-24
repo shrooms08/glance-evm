@@ -56,15 +56,15 @@ describe("what a microphone failure shows", () => {
   it("worked before, refused now: the Brave line with the address, once; then a short line, and no prompt at all", () => {
     const first = decideMicFailure("NotAllowedError", WORKED, FRESH);
     expect(first).toMatchObject({ code: "mic-temporary", openSetup: false });
-    expect(reasonFor(first.code, BRAVE)).toBe("Brave only allowed the mic for a while. Open brave://settings/content/microphone and set Glance to Allow.");
+    expect(reasonFor(first.code, BRAVE)).toBe("Brave only allowed the mic for a while. Open brave://settings/content/siteDetails?site=chrome-extension%3A%2F%2Fgmcdcaoneeohbacbnafjdnkkoojgnogl and set Microphone to Allow.");
     const again = decideMicFailure("NotAllowedError", WORKED, first.session);
     expect(again).toMatchObject({ code: "mic-blocked-again", openSetup: false });
-    expect(reasonFor(again.code, BRAVE)).toContain("brave://settings/content/microphone");
+    expect(reasonFor(again.code, BRAVE)).toContain("brave://settings/content/siteDetails?site=chrome-extension%3A%2F%2Fgmcdcaoneeohbacbnafjdnkkoojgnogl");
   });
 
   it("no microphone is its own answer", () => {
     expect(decideMicFailure("NotFoundError", WORKED, FRESH)).toMatchObject({ code: "no-mic", openSetup: false });
-    expect(micSettingsUrl({ name: "Google Chrome" })).toBe("chrome://settings/content/microphone");
+    expect(micSettingsUrl({ name: "Google Chrome" })).toBe("chrome://settings/content/siteDetails?site=chrome-extension%3A%2F%2Fgmcdcaoneeohbacbnafjdnkkoojgnogl");
   });
 
   it("applied to storage: repeated failures in one session open the settings page once", async () => {

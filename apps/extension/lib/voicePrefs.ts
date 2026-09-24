@@ -87,3 +87,20 @@ export async function onMicFailure(errorName: string): Promise<MicDecision> {
   if (d.session !== session) await micSession.setValue(d.session).catch(() => {});
   return d;
 }
+
+export type MicStatus = { label: string; fix: "none" | "enable" | "settings" };
+
+/**
+ * Settings' mic line. "granted": allowed for good. "prompt" after it has worked: the browser only allowed it for a while
+ * (Brave's "until I close this site"): enable again and choose Forever. "denied": blocked, fixed in the browser's site
+ * settings for Glance.
+ */
+export function micStatus(permission: "granted" | "prompt" | "denied" | "unknown", state: Pick<VoiceState, "workedAt">): MicStatus {
+  if (permission === "granted") return { label: "Mic: allowed", fix: "none" };
+  if (permission === "denied") return { label: "Mic: blocked", fix: "settings" };
+  if (state.workedAt !== null) return { label: "Mic: ask each time (choose Forever)", fix: "enable" };
+  return { label: "Mic: not allowed yet", fix: "enable" };
+}
+
+/** The line shown before the browser's own question, so the right answer is chosen once. */
+export const ALLOW_FOREVER_LINE = "Brave and Chrome will ask to use your mic. Choose Allow, and in Brave choose 'Forever' so I don't ask again.";

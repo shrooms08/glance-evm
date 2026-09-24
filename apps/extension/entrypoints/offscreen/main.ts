@@ -2,9 +2,10 @@
  * Glance's offscreen document: the voice worker (lib/voiceWorker.ts) for every surface.
  *
  * It lives at chrome-extension://<our id>, so the microphone permission is Glance's own (granted once from settings)
- * and no website's Permissions-Policy can block it. The background creates it on demand (reasons USER_MEDIA and
- * AUDIO_PLAYBACK), passes it the Glance API's address with each request (an offscreen document can't read storage),
- * and relays its events to the tab that asked.
+ * and no website's Permissions-Policy can block it. The background creates it once per browser session and keeps it
+ * open (reason USER_MEDIA only, see lib/offscreenDoc.ts), so a grant the browser tied to the page being open isn't
+ * dropped between uses. It passes it the Glance API's address with each request (an offscreen document can't read
+ * storage), and relays its events to the tab that asked.
  */
 import { browser } from "wxt/browser";
 
