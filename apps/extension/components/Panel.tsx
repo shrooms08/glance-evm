@@ -7,12 +7,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { keyLabel } from "../lib/hotkeys";
 import { isAddress } from "../lib/settings";
-import { isOpenDemoVault } from "../lib/linking";
 import { checklistRows, dismissChecklist } from "../lib/onboarding";
-import { Checklist, DemoNotice, EmptyPage } from "./Onboarding";
+import { Checklist, EmptyPage } from "./Onboarding";
 import { useChecklist } from "./useChecklist";
 import type { PageContext } from "../lib/journal";
-import { RelinkNotice } from "./Setup";
+import { LostBanner, RelinkNotice, SetupCard } from "./Setup";
+import { setupRows } from "../lib/readiness";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
 import { WhyCard } from "./Why";
@@ -93,6 +93,20 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         )}
       </div>
 
+      {g.gated !== false ? (
+        // Not set up yet: the setup card, and nothing else (no prices, charts, voice, Show me or trades).
+        <div className="g-scroll" style={{ flex: 1 }}>
+          {g.gated === null ? (
+            <div className="g-section" aria-busy="true" style={{ gap: 8 }}>
+              <span className="g-skeleton" style={{ width: "70%" }} />
+              <span className="g-skeleton" style={{ width: "50%" }} />
+            </div>
+          ) : (
+            <SetupCard rows={setupRows(g.readiness, g.setupProgress)} onSetUp={g.openSetup} />
+          )}
+        </div>
+      ) : (
+      <>
       <div className="g-scroll" style={{ flex: 1 }}>
         <div className="g-section" style={{ gap: 6, minHeight: 64 }}>
           <span className="g-body" aria-live="polite">
@@ -117,21 +131,13 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
               Open settings
             </button>
           </div>
-        ) : !isAddress(g.vaultAddress) ? (
-          <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
-            <span className="g-ui">No vault yet</span>
-            <span className="g-meta">You can look up prices now. To trade, set up your own vault in the console.</span>
-            <button className="g-btn" onClick={g.openSetup}>
-              Set up my own vault
-            </button>
-          </div>
-        ) : isOpenDemoVault(g.vaultAddress) ? (
-          <DemoNotice onSetup={g.openSetup} />
+        ) : g.lost ? (
+          <LostBanner lost={g.lost} onAction={g.lost === "relink" ? g.openRelink : g.lost === "add-usdg" ? g.openAddUsdg : g.openSetup} />
         ) : (
           <RelinkNotice hint={g.relink} onRelink={g.openRelink} />
         )}
 
-        {checklistState && !checklistState.dismissed && <Checklist rows={checklistRows(checklistState, isAddress(g.vaultAddress) && !isOpenDemoVault(g.vaultAddress))} onDismiss={() => void dismissChecklist()} />}
+        {checklistState && !checklistState.dismissed && <Checklist rows={checklistRows(checklistState)} onDismiss={() => void dismissChecklist()} />}
 
         {host && companies.length === 0 && !assistant.card && <EmptyPage />}
 
@@ -261,6 +267,8 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           Settings
         </button>
       </div>
+      </>
+      )}
     </div>
   );
 }

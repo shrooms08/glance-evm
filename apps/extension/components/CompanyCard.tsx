@@ -15,7 +15,7 @@ import { Orb } from "./Orb";
 import { Sparkline } from "./Sparkline";
 import { useTradeFlow, type FlowStep, type PageContextSource } from "./useTradeFlow";
 import { tradeErrorAction } from "../lib/errorAction";
-import { DEMO_VAULT_LABEL, isOpenDemoVault, linkedUntil } from "../lib/linking";
+import { linkedUntil } from "../lib/linking";
 import { WhyLine } from "./Why";
 
 const PRESETS = ["10", "25", "100"];
@@ -133,12 +133,6 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
       {flow.step === "idle" || flow.step === "failed" ? (
         <div className="g-section">
           {flow.step === "failed" && <FailedNotice code={flow.code} message={flow.message} onRetry={() => void start(flow.amount)} />}
-          {/* On the open demo vault: one tap to try it (a real testnet buy, inside the demo vault's limits). */}
-          {isOpenDemoVault(g.vaultAddress) && (
-            <button className="g-btn g-btn-primary" onClick={() => void start("10")} disabled={!price || price.marketState === "STALE"}>
-              Try a $10 demo buy
-            </button>
-          )}
           <div className="g-chips" role="group" aria-label="Amount to buy">
             {PRESETS.map((p) => (
               <button key={p} className="g-chip" onClick={() => void start(p)} disabled={!price || price.marketState === "STALE"}>
@@ -169,7 +163,6 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
             </button>
           </form>
           {variant === "hover" && <span className="g-meta">Glance checks every limit on chain before anything is sent.</span>}
-          {isOpenDemoVault(g.vaultAddress) && <span className="g-meta">{DEMO_VAULT_LABEL}</span>}
           <WhyLine symbol={symbol} />
         </div>
       ) : flow.step === "quoting" ? (
@@ -240,7 +233,7 @@ function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash:
 /**
  * The API wants this browser linked to the vault before it asks the agent to trade: nothing was sent. "Link Glance" opens
  * the console's Dashboard with its link card focused, where the owner signs (no transaction); once linked, one tap sends
- * the same buy. Never shown for the demo vault (it's open).
+ * the same buy.
  */
 export function NeedsLink({
   flow,

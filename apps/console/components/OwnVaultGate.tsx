@@ -1,8 +1,8 @@
 "use client";
 /**
  * Dashboard, Limits and Activity are about the connected wallet's own vault, and only that. Without a wallet they show
- * a clean "Connect your wallet" screen; with a wallet but no vault, a "Create your vault" screen. No demo data, ever
- * (developers can still open a demo vault with ?dev=1).
+ * a clean "Connect your wallet" screen; with a wallet but no vault, a "Create your vault" screen. Only your own vault
+ * (developers can open the team's vaults with ?dev=1).
  */
 import Link from "next/link";
 import type { ReactNode } from "react";

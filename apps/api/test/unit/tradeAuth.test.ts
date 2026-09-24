@@ -159,3 +159,18 @@ describe("POST /trade", () => {
     expect(((await again.json()) as { error: { code: string } }).error.code).toBe("REPLAYED");
   });
 });
+
+describe("no open vaults by default", () => {
+  it("OPEN_DEMO_VAULTS is empty unless set (recording day only): every vault needs its owner's linked browser", async () => {
+    expect(loadConfig({}).openDemoVaults).toEqual([]);
+    expect(baseCtx.config.openDemoVaults).toEqual([]);
+    // Even the team's Paxos USDG vault: an unsigned trade is refused before anything else.
+    const res = await createApp(baseCtx).request("/trade", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ vault: DEMO, symbol: "TSLA", side: "buy", amount: "10" }),
+    });
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("SESSION_REQUIRED");
+  });
+});

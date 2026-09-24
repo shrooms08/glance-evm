@@ -60,8 +60,8 @@ You need a browser wallet (for example MetaMask) on Robinhood Chain testnet, and
    name, pick $10, check the preflight, and confirm. The receipt links to your transaction on the explorer. Try $150
    to see the vault refuse it and explain why.
 
-Just want to look? The extension defaults to our demo vault on real Paxos USDG, so steps 5 and 6 work without steps 1
-to 4 (trades then spend the demo vault's USDG).
+Glance needs your own vault: until one is set up, linked to your browser and funded, the extension shows only its
+setup card. **Set me up** there opens the console's Get started, which does steps 1 to 4 and links Glance for you.
 
 ## Contracts and deployment
 
@@ -99,7 +99,7 @@ the assistant can say. See [apps/api/README.md](apps/api/README.md).
 
 Only a browser the vault's owner has linked (by signature, in the console) can ask the agent to trade, and every trade
 request is signed. The paid voice and Claude endpoints are rate-limited and capped per day. See
-[docs/SECURITY.md](docs/SECURITY.md) for the threat, the design and the demo vault exception.
+[docs/SECURITY.md](docs/SECURITY.md) for the threat and the design.
 
 ```sh
 pnpm install

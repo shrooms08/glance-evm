@@ -59,7 +59,9 @@ export class Underliner {
 
   constructor(private readonly exclude: Element) {}
 
+  /** Starts scanning (once: a second call does nothing until stop()). Glance starts it only once setup is complete. */
   start() {
+    if (this.observer) return;
     void this.scan();
     this.observer = new MutationObserver((records) => {
       // Ignore our own UI, and pure attribute churn.
@@ -72,6 +74,9 @@ export class Underliner {
 
   stop() {
     this.observer?.disconnect();
+    this.observer = null;
+    this.mentions = [];
+    this.listeners.forEach((l) => l([]));
     clearTimeout(this.timer);
     this.timer = undefined;
     registry()?.delete(HIGHLIGHT);

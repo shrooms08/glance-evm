@@ -12,24 +12,13 @@ export const DEFAULT_CONSOLE_URL = "http://localhost:3000";
 
 export const apiBaseUrl = storage.defineItem<string>("sync:apiBaseUrl", { fallback: DEFAULT_API_URL });
 /**
- * The demo vaults on Robinhood Chain testnet (deployments/46630.json). The default is the one on the real Paxos USDG
- * (claimable at https://faucet.paxos.com/). The TestUSDG vault is the documented alternative for anyone without Paxos
- * USDG: its stand-in token has an on-chain faucet.
+ * The vault Glance uses: set by the console's handshake once the owner connects Glance (or typed by hand under
+ * Settings > Advanced, for developers). Empty until then: Glance shows only its setup card.
  */
-export const DEMO_VAULTS = {
-  paxosUSDG: "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113",
-  testUSDG: "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D",
-} as const;
-export const DEFAULT_VAULT = DEMO_VAULTS.paxosUSDG;
+export const vaultAddress = storage.defineItem<string>("sync:vaultAddress", { fallback: "" });
 
-/** The vault the agent trades for. Defaults to the Paxos USDG demo vault; set by the console (or by hand, under Advanced). */
-export const vaultAddress = storage.defineItem<string>("sync:vaultAddress", { fallback: DEFAULT_VAULT });
-
-/**
- * Where the vault came from: the console's handshake (the owner connected Glance), or typed under settings' Advanced.
- * Null: nothing chose one, so Glance uses the open demo vault (the default).
- */
-export type VaultSource = "console" | "demo" | "manual";
+/** Where the vault came from: the console's handshake (the owner connected Glance), or typed under Settings > Advanced. */
+export type VaultSource = "console" | "manual";
 export const vaultSource = storage.defineItem<VaultSource | null>("sync:vaultSource", { fallback: null });
 
 /** Letter tapped with Option/Alt to glance at the page (scan and show what was found). Kept under its old storage key. */

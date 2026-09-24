@@ -312,6 +312,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         wasDocked.current = msg.open;
         setDocked(msg.open);
       }
+      if ((msg.kind === "page:matches" || msg.kind === "page:scan") && gatedRef.current !== false) return Promise.resolve({ host, companies: [] });
       if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
       if (msg.kind === "page:scan") return underliner.glance().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
@@ -330,6 +331,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     return () => safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
   }, [host, underliner, g.catalog]);
 
+  const gatedRef = useRef<boolean | null>(null);
+  gatedRef.current = g.gated;
   // Browser commands arrive in the listener above; these refs always hold the latest glance and talk handlers.
   const glanceRef = useRef<() => Promise<void>>(async () => {});
   const talkHandlers = useRef({ start: () => {}, stop: () => {} });
@@ -346,6 +349,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const glance = useCallback(async () => {
     // Mid dock or undock: the orb isn't back yet, so nothing opens until it has reformed.
     if (dockAnim) return;
+    // Not set up yet: the shortcut opens the setup card, and nothing is scanned.
+    if (g.gated !== false) {
+      setPanelOpen(true);
+      return;
+    }
     await underliner.glance();
     const found = companiesFrom(underliner.current(), g.catalog);
     if (docked) {
@@ -360,6 +368,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   // ---- voice (Option+V, hold) --------------------------------------------------------------------------------
   const startTalking = useCallback(() => {
     if (dockAnim) return;
+    // Not set up yet: no voice; the setup card instead.
+    if (g.gated !== false) {
+      setPanelOpen(true);
+      return;
+    }
     if (docked) {
       // The side panel owns the conversation (and the voice session, recorded in the offscreen document either way).
       heldForPanel.current = true;
@@ -371,7 +384,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     assistant.startListening();
     // While they talk: read the page now, so if it's a question about it, the context is ready at the release.
     setTimeout(() => preread.current(), 0);
-  }, [docked, assistant, dockAnim]);
+  }, [docked, assistant, dockAnim, g.gated]);
 
   const stopTalking = useCallback(() => {
     if (heldForPanel.current) {
@@ -430,6 +443,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const [onboard, setOnboard] = useState<{ phase: "welcome"; line: string } | { phase: "tour"; step: number } | null>(null);
   const reducedMotion = prefersReducedMotion();
   useEffect(() => {
+    // The welcome and the tour wait until Glance is set up (the gate has opened), then run once each.
+    if (g.gated !== false) return;
     void safely(async () => {
       const [wasGreeted, toured] = await Promise.all([greeted.getValue(), tourDone.getValue()]);
       const show = firstRun(wasGreeted, toured);
@@ -446,7 +461,13 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       } else if (show === "tour") setOnboard({ phase: "tour", step: 0 });
     }, Promise.resolve());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [g.gated]);
+
+  // Underlines only once Glance is set up (and none again should it ever be gated).
+  useEffect(() => {
+    if (g.gated === false) underliner.start();
+    else underliner.stop();
+  }, [g.gated, underliner]);
   const endTour = () => {
     setOnboard(null);
     void safely(() => tourDone.setValue(true), Promise.resolve());
@@ -700,7 +721,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
             />
           )}
           {/* This browser's link ends within 3 days (or has ended): a small "Relink" above the orb (one signature). */}
-          {g.relink.show && !panelOpen && !orbFlying && (
+          {g.relink.show && g.gated === false && !panelOpen && !orbFlying && (
             <button
               className="g-chip"
               style={{ position: "fixed", right: pos.right, bottom: pos.bottom + orbTokens.floating + 8, zIndex: 1, pointerEvents: "auto" }}

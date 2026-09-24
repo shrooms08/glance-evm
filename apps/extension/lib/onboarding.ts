@@ -1,5 +1,5 @@
 /**
- * First run: the welcome and the three-step tour (each shown once, skippable), and the "Getting started" checklist,
+ * Once Glance is set up: the welcome and the three-step tour (each shown once, skippable), and the "Getting started" checklist,
  * whose items tick themselves off from real events. All kept in this browser only (chrome.storage.local).
  */
 import { storage } from "wxt/utils/storage";
@@ -9,11 +9,11 @@ import { safely } from "./lifecycle";
 /** The tour was finished or skipped (the welcome's "greeted" flag lives with the greeting, components/useGreeting). */
 export const tourDone = storage.defineItem<boolean>("local:tourDone", { fallback: false });
 
-export type ChecklistKey = "hover" | "ask" | "demoBuy";
+export type ChecklistKey = "hover" | "ask" | "buy";
 export interface ChecklistState {
   hover?: boolean;
   ask?: boolean;
-  demoBuy?: boolean;
+  buy?: boolean;
   dismissed?: boolean;
 }
 export const checklist = storage.defineItem<ChecklistState>("local:checklist", { fallback: {} });
@@ -32,18 +32,17 @@ export async function dismissChecklist(): Promise<void> {
 }
 
 export interface ChecklistRow {
-  key: ChecklistKey | "vault";
+  key: ChecklistKey;
   label: string;
   done: boolean;
 }
 
-/** The four items, in order; "create your vault" is done once Glance uses a vault that isn't the demo. */
-export function checklistRows(state: ChecklistState, ownVault: boolean): ChecklistRow[] {
+/** The three items, in order (your vault is already set up by then: Glance needs it to start). */
+export function checklistRows(state: ChecklistState): ChecklistRow[] {
   return [
     { key: "hover", label: "Hover an underlined company", done: Boolean(state.hover) },
     { key: "ask", label: "Ask Glance a question", done: Boolean(state.ask) },
-    { key: "demoBuy", label: "Make a demo buy", done: Boolean(state.demoBuy) },
-    { key: "vault", label: "Create your own vault", done: ownVault },
+    { key: "buy", label: "Make your first buy", done: Boolean(state.buy) },
   ];
 }
 

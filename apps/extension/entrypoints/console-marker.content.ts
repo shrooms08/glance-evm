@@ -12,8 +12,8 @@ import { consoleMatchPatterns, consoleOrigins } from "../lib/consoleOrigins";
 import { createHandshake } from "../lib/handshake";
 import type { SessionInfo } from "../lib/messages";
 import { sessionLink } from "../lib/session";
-import { isOpenDemoVault } from "../lib/linking";
 import { vaultAddress, vaultSource } from "../lib/settings";
+import { setupComplete, setupProgress } from "../lib/readiness";
 
 export default defineContentScript({
   matches: consoleMatchPatterns(import.meta.env.WXT_CONSOLE_ORIGINS),
@@ -27,15 +27,16 @@ export default defineContentScript({
       version: browser.runtime.getManifest().version,
       shortcuts: async () => (await browser.runtime.sendMessage({ kind: "commands:get" })) as { glance: string; talk: string },
       sessionAddress: async () => ((await browser.runtime.sendMessage({ kind: "session:info" })) as SessionInfo).address,
-      // The vault Glance uses: the one the console set, or one typed by hand; the open demo vault by default.
-      vault: () => vaultAddress.getValue(),
-      isDemo: isOpenDemoVault,
+      // The vault Glance uses (the console sets it), or null before setup.
+      vault: async () => (await vaultAddress.getValue()) || null,
+      ready: () => setupComplete.getValue(),
       link: () => sessionLink.getValue(),
       setVault: async (vault) => {
         await vaultAddress.setValue(vault);
         await vaultSource.setValue("console");
       },
       setLink: (link) => (link ? sessionLink.setValue(link) : sessionLink.removeValue()),
+      setProgress: (progress) => setupProgress.setValue(progress),
       status: async (vault, session) => {
         const res = await api.sessionStatus(vault, session);
         if (!res.ok) return null;

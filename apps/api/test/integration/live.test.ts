@@ -186,11 +186,12 @@ describe.skipIf(!online)("live testnet", () => {
     expect(((await res.json()) as any).error.code).toBe("SESSION_REQUIRED");
   });
 
-  it("POST /trade on the open demo vault refuses without the agent key and never sends", async () => {
-    const res = await app!.request("/trade", {
+  it("POST /trade on a vault opened with OPEN_DEMO_VAULTS (recording day only) refuses without the agent key and never sends", async () => {
+    const open = createApp(createContext(loadConfig({ ...env, OPEN_DEMO_VAULTS: vault! }), () => {}));
+    const res = await open.request("/trade", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ vault: ctx!.config.openDemoVaults[0], symbol: "TSLA", side: "buy", amount: "1" }),
+      body: JSON.stringify({ vault, symbol: "TSLA", side: "buy", amount: "1" }),
     });
     expect(res.status).toBe(503);
     expect(((await res.json()) as any).error.code).toBe("AGENT_KEY_MISSING");

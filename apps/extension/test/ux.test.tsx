@@ -94,7 +94,6 @@ describe("the talk command", () => {
 describe("one action per trade error", () => {
   it("Set up my vault, Link Glance, or Try again", () => {
     expect(tradeErrorAction("NO_VAULT").label).toBe("Set up my vault");
-    expect(tradeErrorAction("DEMO_LIMIT").label).toBe("Set up my vault");
     expect(tradeErrorAction("SESSION_EXPIRED").label).toBe("Link Glance");
     for (const code of ["API_OFFLINE", "TIMEOUT", "RPC_UNAVAILABLE", "REPLAYED", "INTERNAL"]) expect(tradeErrorAction(code).label).toBe("Try again");
   });

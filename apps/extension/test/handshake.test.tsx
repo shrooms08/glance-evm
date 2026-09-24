@@ -10,10 +10,9 @@ import { fakeBrowser } from "wxt/testing/fake-browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BrowserLink, vaultSourceLine } from "../components/BrowserLink";
-import { DEMO_NO_SETUP, RelinkNotice } from "../components/Setup";
+import { RelinkNotice } from "../components/Setup";
 import { consoleOrigins, consolePageUrl } from "../lib/consoleOrigins";
 import { createHandshake, FROM_CONSOLE, relinkHint, type Hello, type HandshakeDeps } from "../lib/handshake";
-import { DEMO_VAULTS } from "../lib/settings";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const background = vi.hoisted(() => ({ reply: (_msg: { kind: string; path?: string }): unknown => undefined }));
@@ -37,7 +36,7 @@ function setup(o: { pageOrigin?: string; apiLinked?: boolean } = {}) {
     version: "0.1.0",
     sessionAddress: async () => session,
     vault: async () => state.vault,
-    isDemo: (v) => v.toLowerCase() === DEMO_VAULTS.paxosUSDG.toLowerCase(),
+    ready: async () => true,
     link: async () => state.link,
     setVault: async (v) => void (state.vault = v),
     setLink: async (l) => void (state.link = l),
@@ -54,7 +53,7 @@ describe("the console handshake", () => {
     t.state.vault = VAULT;
     t.state.link = { vault: VAULT, expiresAt: NOW + 86_400 };
     expect(await t.h.receive(from({ source: FROM_CONSOLE, type: "GLANCE_PING" }))).toBe("hello");
-    expect(t.posted[0]).toEqual({ source: "glance-extension", type: "GLANCE_HELLO", installed: true, version: "0.1.0", sessionAddress: session, vault: VAULT, linkedUntil: NOW + 86_400, mode: "own" });
+    expect(t.posted[0]).toEqual({ source: "glance-extension", type: "GLANCE_HELLO", installed: true, version: "0.1.0", sessionAddress: session, vault: VAULT, linkedUntil: NOW + 86_400, mode: "ready" });
     for (const m of t.posted) {
       const text = JSON.stringify(m);
       expect(text).not.toContain(privateKey.slice(2));
@@ -134,21 +133,15 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("the demo vault", () => {
-  it("no Link button anywhere: 'Demo vault: open for trying Glance, no setup needed.'", async () => {
+describe("settings: This browser", () => {
+  it("'Link Glance' for the vault the console set; 'Unlink this browser' stays", async () => {
     background.reply = (m) => (m.kind === "session:info" ? { address: session } : { ok: true, status: 200, data: { linked: false, reason: "unknown" } });
-    const { host, unmount } = render(createElement(BrowserLink, { vault: DEMO_VAULTS.paxosUSDG }));
-    await act(async () => {});
-    expect(host.textContent).toContain(DEMO_NO_SETUP);
-    expect(DEMO_NO_SETUP).toBe("Demo vault: open for trying Glance, no setup needed.");
-    expect(buttons(host)).toEqual(["Unlink this browser"]);
-    unmount();
     const own = render(createElement(BrowserLink, { vault: VAULT }));
     await act(async () => {});
     expect(buttons(own.host)).toEqual(["Link Glance", "Unlink this browser"]);
     own.unmount();
-    expect(vaultSourceLine("demo", DEMO_VAULTS.paxosUSDG)).toBe(DEMO_NO_SETUP);
     expect(vaultSourceLine("console", VAULT)).toMatch(/Set by the console/);
+    expect(vaultSourceLine(null, "")).toMatch(/Set me up/);
   });
 });
 

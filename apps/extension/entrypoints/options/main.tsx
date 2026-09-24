@@ -17,8 +17,6 @@ import {
   apiBaseUrl,
   consoleUrl,
   DEFAULT_API_URL,
-  DEFAULT_VAULT,
-  DEMO_VAULTS,
   defaultMode,
   hotkeyLetter,
   isAddress,
@@ -36,7 +34,6 @@ import { BrowserLink, vaultSourceLine } from "../../components/BrowserLink";
 
 type Test = { state: "idle" } | { state: "running" } | { state: "ok"; health: Health } | { state: "failed"; message: string };
 
-const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.toLowerCase();
 
 function isLocal(url: string) {
   try {
@@ -66,7 +63,7 @@ function DevToggle() {
 }
 
 function Settings() {
-  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: DEFAULT_VAULT as string, hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true, sounds: sound.enabledByDefault as boolean });
+  const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: "", hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true, sounds: sound.enabledByDefault as boolean });
   const [saved, setSaved] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [test, setTest] = useState<Test>({ state: "idle" });
@@ -137,7 +134,7 @@ function Settings() {
     const vaultChanged = form.vault.trim() !== loadedVault;
     await Promise.all([
       apiBaseUrl.setValue(form.api.replace(/\/+$/, "")),
-      ...(vaultChanged ? [vaultAddress.setValue(form.vault.trim()), vaultSource.setValue(sameAddress(form.vault, DEMO_VAULTS.paxosUSDG) ? "demo" : "manual")] : []),
+      ...(vaultChanged ? [vaultAddress.setValue(form.vault.trim()), vaultSource.setValue("manual")] : []),
       hotkeyLetter.setValue(form.hotkey),
       voiceKeyLetter.setValue(form.voiceKey),
       defaultMode.setValue(form.mode),
@@ -179,14 +176,6 @@ function Settings() {
             <details>
               <summary className="g-meta">Advanced: enter a vault address by hand</summary>
               <input className="g-input g-mono" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
-              <div className="g-chips" role="group" aria-label="Demo vaults">
-                <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.paxosUSDG)} onClick={() => set("vault", DEMO_VAULTS.paxosUSDG)} style={{ fontFamily: "var(--g-font)" }}>
-                  Demo vault · Paxos USDG
-                </button>
-                <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.testUSDG)} onClick={() => set("vault", DEMO_VAULTS.testUSDG)} style={{ fontFamily: "var(--g-font)" }}>
-                  Demo vault · TestUSDG
-                </button>
-              </div>
             </details>
           </Field>
           <BrowserLink vault={form.vault} />

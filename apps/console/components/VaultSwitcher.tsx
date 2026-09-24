@@ -9,7 +9,7 @@ import { useDevMode, useHref, useMyVaults, usePathWithVault, useSelectedVault, v
 
 /**
  * The header's vault control, for the connected wallet's own vaults only: "Create your vault" with none, "Your vault
- * 0x…" with one, a menu of just its vaults with two or more. (?dev=1 adds the demo vaults and an address box.)
+ * 0x…" with one, a menu of just its vaults with two or more. (?dev=1 adds the team's vaults and an address box.)
  */
 export function VaultSwitcher() {
   const my = useMyVaults();

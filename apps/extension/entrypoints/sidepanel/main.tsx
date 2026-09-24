@@ -136,7 +136,15 @@ function SidePanel() {
     g.setOrb({ state: "idle", line: glanceLine(reply.host, reply.companies), meta: `Hold ${keyLabel(g.voiceKey)} to ask about them` });
   }, [g]);
 
-  useHotkeys({ glance: g.glanceKey, voice: g.voiceKey }, { onGlance: () => void glance(), onVoiceStart: assistant.startListening, onVoiceEnd: assistant.stopListening });
+  // Not set up yet: the panel shows only its setup card, and the keys do nothing else.
+  useHotkeys(
+    { glance: g.glanceKey, voice: g.voiceKey },
+    {
+      onGlance: () => g.gated === false && void glance(),
+      onVoiceStart: () => g.gated === false && assistant.startListening(),
+      onVoiceEnd: assistant.stopListening,
+    },
+  );
 
   const reveal = async (symbol: string) => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });

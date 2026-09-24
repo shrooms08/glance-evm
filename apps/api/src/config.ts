@@ -143,12 +143,12 @@ const envSchema = z.object({
   SESSION_STORE_FILE: z.string().optional(),
   SESSION_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(30),
   /**
-   * Vaults anyone may trade without a linked browser, so judges can try Glance (comma separated). Default: the Paxos
-   * USDG demo vault. "" for none. Their on-chain caps still apply, and each visitor is limited per hour.
+   * Vaults anyone may trade without a linked browser (comma separated). Empty by default: every vault needs its owner's
+   * linked browser. For recording day only; their on-chain caps still apply, and each visitor is limited per hour.
    */
   OPEN_DEMO_VAULTS: z
     .string()
-    .default("0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113")
+    .default("")
     .refine((v) => v.split(",").map((a) => a.trim()).filter(Boolean).every((a) => /^0x[0-9a-fA-F]{40}$/.test(a)), "OPEN_DEMO_VAULTS must be comma-separated 0x addresses"),
   DEMO_TRADES_PER_HOUR: z.coerce.number().int().min(0).default(10),
   /** Per-IP limits for voice (every /voice route and the audio stream) and for /resolve. */

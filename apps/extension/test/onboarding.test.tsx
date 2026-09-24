@@ -1,16 +1,14 @@
 /**
  * First run: the welcome and the tour each show once (skippable), the tour's steps, the coach mark stays on screen, the
- * "Getting started" checklist ticks itself off from real events and can be hidden, the demo vault is the default, and
- * a page with no companies says where to try Glance instead.
+ * "Getting started" checklist ticks itself off from real events and can be hidden, and a page with no companies says where to try Glance instead.
  */
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { fakeBrowser } from "wxt/testing/fake-browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Checklist, DemoNotice, EMPTY_PAGE_LINE, EmptyPage, placeCoach, Tour } from "../components/Onboarding";
+import { Checklist, EMPTY_PAGE_LINE, EmptyPage, placeCoach, Tour } from "../components/Onboarding";
 import { checklist, checklistRows, dismissChecklist, firstRun, tick, tourSteps } from "../lib/onboarding";
-import { DEFAULT_VAULT, DEMO_VAULTS, vaultAddress } from "../lib/settings";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -67,48 +65,31 @@ describe("the Getting started checklist", () => {
   it("ticks itself off from real events, once each, and can be hidden", async () => {
     await tick("hover");
     await tick("hover");
-    await tick("demoBuy");
+    await tick("buy");
     const state = await checklist.getValue();
-    expect(state).toEqual({ hover: true, demoBuy: true });
-    expect(checklistRows(state, false).map((r) => [r.key, r.done])).toEqual([
-      ["hover", true],
-      ["ask", false],
-      ["demoBuy", true],
-      ["vault", false],
+    expect(state).toEqual({ hover: true, buy: true });
+    expect(checklistRows(state).map((r) => [r.key, r.label, r.done])).toEqual([
+      ["hover", "Hover an underlined company", true],
+      ["ask", "Ask Glance a question", false],
+      ["buy", "Make your first buy", true],
     ]);
-    // "Create your own vault" ticks once Glance uses a vault that isn't the demo.
-    expect(checklistRows(state, true).at(-1)!.done).toBe(true);
     await dismissChecklist();
     expect((await checklist.getValue()).dismissed).toBe(true);
   });
 
   it("shows progress, and 'All done' when every item is ticked", () => {
     const onDismiss = vi.fn();
-    const some = render(createElement(Checklist, { rows: checklistRows({ ask: true }, false), onDismiss }));
-    expect(some.host.textContent).toContain("1 of 4");
+    const some = render(createElement(Checklist, { rows: checklistRows({ ask: true }), onDismiss }));
+    expect(some.host.textContent).toContain("1 of 3");
     expect(buttons(some.host)).toEqual(["Hide"]);
     some.unmount();
-    const all = render(createElement(Checklist, { rows: checklistRows({ hover: true, ask: true, demoBuy: true }, true), onDismiss }));
+    const all = render(createElement(Checklist, { rows: checklistRows({ hover: true, ask: true, buy: true }), onDismiss }));
     expect(buttons(all.host)).toEqual(["All done: hide this"]);
     all.unmount();
   });
 });
 
-describe("demo by default", () => {
-  it("with no vault set, Glance uses the open demo vault", async () => {
-    expect(DEFAULT_VAULT).toBe(DEMO_VAULTS.paxosUSDG);
-    expect(await vaultAddress.getValue()).toBe(DEMO_VAULTS.paxosUSDG);
-  });
-
-  it("the panel says so, with 'Set up my own vault'", () => {
-    const onSetup = vi.fn();
-    const { host, unmount } = render(createElement(DemoNotice, { onSetup }));
-    expect(host.textContent).toContain("Demo vault: open for trying Glance");
-    act(() => (host.querySelector("button") as HTMLButtonElement).click());
-    expect(onSetup).toHaveBeenCalledTimes(1);
-    unmount();
-  });
-
+describe("the empty page", () => {
   it("a page with no companies says where to try Glance", () => {
     const { host, unmount } = render(createElement(EmptyPage));
     expect(host.textContent).toBe(EMPTY_PAGE_LINE);

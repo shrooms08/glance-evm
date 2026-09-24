@@ -11,7 +11,7 @@
  * The signature is checked before the nonce is recorded, so nobody can burn a nonce without the session key. Seen
  * nonces are kept until their deadline (at most 60s): after that the deadline alone refuses the request.
  *
- * The open demo vaults (OPEN_DEMO_VAULTS) may trade without a session, so anyone can try Glance, limited per IP (default
+ * Vaults listed in OPEN_DEMO_VAULTS (empty by default; recording day only) may trade without a session, limited per IP (default
  * 10 trades an hour) and logged. A browser that IS linked to a demo vault is checked like any other.
  *
  * The vault's on-chain caps still apply to every trade: this is an extra layer, not a replacement.

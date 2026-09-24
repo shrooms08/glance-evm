@@ -11,6 +11,7 @@ import { safely, send } from "../lib/lifecycle";
 import type { CatalogStock, Health, Vault } from "../lib/api-types";
 import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, vaultSource, voiceKeyLetter, voiceReplies, type Mode, type VaultSource } from "../lib/settings";
 import { relinkHint, type RelinkHint } from "../lib/handshake";
+import { lostAction, readiness, setupComplete, setupProgress, type Readiness, type SetupProgress } from "../lib/readiness";
 import type { Shortcuts } from "../lib/messages";
 import { openConsolePage } from "../lib/linking";
 import { sessionLink } from "../lib/session";
@@ -60,12 +61,25 @@ export interface Glance {
   shortcuts: Shortcuts | null;
   /** From 3 days before this browser's link ends: "Relink" on the orb and in the panel. */
   relink: RelinkHint;
+  /**
+   * The gate: until Glance has been ready once (your own vault, this browser linked, USDG in the vault), only the setup
+   * card shows. Null while that's still being read.
+   */
+  gated: boolean | null;
+  ready: boolean;
+  readiness: Readiness;
+  setupProgress: SetupProgress | null;
+  /** Set up once, then lost: the one thing to do (Relink, Add USDG). */
+  lost: "set-up" | "relink" | "add-usdg" | null;
+  openAddUsdg(): void;
   /** Opens the console: Get started, or the Dashboard's link card for this vault (one signature there). */
   openSetup(): void;
   openRelink(): void;
 }
 
 const Ctx = createContext<Glance | null>(null);
+/** Tests only: provide a Glance state directly. */
+export const GlanceContextForTests = Ctx;
 
 export function useGlance(): Glance {
   const g = useContext(Ctx);
@@ -105,6 +119,10 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const [shortcuts, setShortcuts] = useState<Shortcuts | null>(null);
   useEffect(() => void send<Shortcuts | undefined>({ kind: "commands:get" }).then((s) => setShortcuts(s ?? null), () => {}), []);
   const link = useSetting(sessionLink, null);
+  const complete = useSetting<boolean | undefined>(setupComplete as never, undefined);
+  const progress = useSetting<SetupProgress | null>(setupProgress as never, null);
+  // The API's word on this browser's link (null while unknown): checked on load, whenever the link changes, and every minute.
+  const [linkConfirmed, setLinkConfirmed] = useState<boolean | null>(null);
 
   const [catalog, setCatalog] = useState<CatalogStock[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
@@ -203,6 +221,43 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
     };
   }, [chainTrouble, apiUrl]);
 
+  // Is this browser's link still good? The handshake stored it; the API has the last word (it may have been unlinked).
+  useEffect(() => {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(vaultAddr) || !link) {
+      setLinkConfirmed(null);
+      return;
+    }
+    let live = true;
+    const check = async () => {
+      const session = await send<{ address: string } | undefined>({ kind: "session:info" }).catch(() => undefined);
+      if (!session) return;
+      const res = await api.sessionStatus(vaultAddr, session.address);
+      if (live && res.ok) setLinkConfirmed(res.data.linked);
+    };
+    void check();
+    const t = setInterval(() => void check(), 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [vaultAddr, link]);
+
+  const ready = readiness({ vault: vaultAddr, link, linkConfirmed, usdgRaw: vault?.balances.usdg.raw ?? null, now: Math.floor(Date.now() / 1000) });
+  // The first time everything holds, the gate opens for good (the welcome and tour start then).
+  useEffect(() => {
+    if (ready.ready && complete === false) void safely(() => setupComplete.setValue(true), Promise.resolve());
+  }, [ready.ready, complete]);
+  // While gated, look again every 10 seconds, so the card flips to ready by itself as the console finishes.
+  useEffect(() => {
+    if (complete !== false) return;
+    const t = setInterval(() => void refreshVault(), 10_000);
+    return () => clearInterval(t);
+  }, [complete, refreshVault]);
+  const gated = complete === undefined ? null : !complete && !ready.ready;
+  // Lost after setup: said only once the facts are in (no banner while the vault or the link check is still loading).
+  const factsIn = !ready.steps.vault || (vault !== null && (link === null || linkConfirmed !== null));
+  const lost = complete && factsIn ? lostAction(ready) : null;
+
   const value = useMemo<Glance>(
     () => ({
       apiUrl,
@@ -233,8 +288,14 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       relink: relinkHint(link, vaultAddr, Math.floor(Date.now() / 1000)),
       openSetup: () => void openConsolePage("start"),
       openRelink: () => void openConsolePage("link", vaultAddr),
+      gated,
+      ready: ready.ready,
+      readiness: ready,
+      setupProgress: progress,
+      lost,
+      openAddUsdg: () => void openConsolePage("start"),
     }),
-    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link, shortcuts],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link, shortcuts, gated, ready, progress, lost],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -45,8 +45,8 @@ export default defineContentScript({
       isolateEvents: ["keydown", "keyup", "keypress"],
       onMount(container, _shadow, host) {
         host.setAttribute("style", `all: initial !important; position: fixed !important; inset: 0 !important; pointer-events: none !important; z-index: ${layer.host} !important;`);
+        // Started by the App once Glance is set up (nothing is underlined before that).
         const underliner = new Underliner(host);
-        underliner.start();
         ctx.onInvalidated(() => underliner.stop());
         const root = createRoot(container);
         root.render(<App underliner={underliner} sfx={sfx} />);

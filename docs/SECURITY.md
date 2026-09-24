@@ -84,20 +84,19 @@ When a trade is refused for `SESSION_REQUIRED` or `SESSION_EXPIRED`, the trade c
 the owner has signed in the console, one tap sends the same buy again. The API runs the on-chain preflight again
 before sending.
 
-## The demo vault exception
+## Open vaults (recording day only)
 
-So judges can try Glance without a vault of their own, the vaults in `OPEN_DEMO_VAULTS` (default: the Paxos USDG demo
-vault, `0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113`) trade without a session:
+Glance requires your own vault, so no vault is open by default: `OPEN_DEMO_VAULTS` is empty. For a recording, the
+vaults listed there trade without a session:
 
 - Each visitor (by IP) gets `DEMO_TRADES_PER_HOUR` trades an hour (default 10). Past that the API answers 429
   `DEMO_LIMIT`.
 - Every open demo trade is logged with a short hash of the IP (not the IP itself) and the count so far.
 - The vault's own on-chain caps still apply, as always.
 - A browser that is linked to a demo vault is checked like any other (so a replayed request is still refused).
-- The extension labels it "Demo vault: open for trying Glance".
 
 For recording day, `make link-demo-session SESSION=0x<session address from Glance's settings>` links a browser to the
-demo vault with the deployer key (`PRIVATE_KEY`, or `LINK_PRIVATE_KEY`). The key is read from the environment and never
+team's vault with the deployer key (`PRIVATE_KEY`, or `LINK_PRIVATE_KEY`). The key is read from the environment and never
 printed.
 
 ## Paid endpoints

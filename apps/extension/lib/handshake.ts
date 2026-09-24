@@ -2,12 +2,14 @@
  * The console <-> extension handshake, over window.postMessage on the console's own pages only (the console-marker
  * content script runs on WXT_CONSOLE_ORIGINS alone, and checks the origin again here).
  *
- *   extension -> page  GLANCE_HELLO     { installed, version, sessionAddress, vault, linkedUntil, mode }
+ *   extension -> page  GLANCE_HELLO     { installed, version, sessionAddress, vault, linkedUntil, mode: setup | ready }
  *   page -> extension  GLANCE_PING      (asks for a HELLO: the page may load before or after the content script)
  *                      GLANCE_SET_VAULT { vault }   sent by the console only once the connected wallet is verified as
  *                                                   that vault's owner
  *                      GLANCE_LINKED    { vault, sessionAddress, expiresAt }
  *                      GLANCE_UNLINKED  { vault }
+ *                      GLANCE_PROGRESS  { wallet, vault, funded, linked }   Get started's progress, for the setup card
+ *                                                   (shown only: Glance checks readiness itself, with the API)
  *
  * Nothing a page says can make the extension trade: it can only choose which vault Glance uses, and report a link.
  * A reported link or unlink is believed only once GET /session/status confirms it. The session's private key is never
@@ -25,8 +27,8 @@ export interface Hello {
   vault: string | null;
   /** Unix seconds, when this browser's link to `vault` ends (null: not linked). */
   linkedUntil: number | null;
-  /** "demo": Glance is on the open demo vault (the default); "own": a vault the console set (or typed by hand). */
-  mode: "demo" | "own";
+  /** "setup": Glance shows only its setup card; "ready": set up (own vault, linked, funded) at least once. */
+  mode: "setup" | "ready";
   /** The keyboard shortcuts as the browser has them ("⌥G"), for the install page. */
   shortcuts?: { glance: string; talk: string };
 }
@@ -35,7 +37,8 @@ export type ConsoleMessage =
   | { source: typeof FROM_CONSOLE; type: "GLANCE_PING" }
   | { source: typeof FROM_CONSOLE; type: "GLANCE_SET_VAULT"; vault: string }
   | { source: typeof FROM_CONSOLE; type: "GLANCE_LINKED"; vault: string; sessionAddress: string; expiresAt: number }
-  | { source: typeof FROM_CONSOLE; type: "GLANCE_UNLINKED"; vault: string };
+  | { source: typeof FROM_CONSOLE; type: "GLANCE_UNLINKED"; vault: string }
+  | { source: typeof FROM_CONSOLE; type: "GLANCE_PROGRESS"; wallet: boolean; vault: boolean; funded: boolean; linked: boolean };
 
 const address = (v: unknown): v is string => typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -56,6 +59,8 @@ export function parseConsoleMessage(data: unknown): ConsoleMessage | null {
         : null;
     case "GLANCE_UNLINKED":
       return address(m.vault) ? { source: FROM_CONSOLE, type: "GLANCE_UNLINKED", vault: m.vault } : null;
+    case "GLANCE_PROGRESS":
+      return { source: FROM_CONSOLE, type: "GLANCE_PROGRESS", wallet: m.wallet === true, vault: m.vault === true, funded: m.funded === true, linked: m.linked === true };
     default:
       return null;
   }
@@ -72,12 +77,14 @@ export interface HandshakeDeps {
   shortcuts?(): Promise<{ glance: string; talk: string } | null>;
   sessionAddress(): Promise<string>;
   vault(): Promise<string | null>;
-  /** Whether a vault is the open demo vault. */
-  isDemo(vault: string): boolean;
+  /** Whether Glance has been set up (its gate opened at least once). */
+  ready(): Promise<boolean>;
   /** This browser's last confirmed link: { vault, expiresAt } or null. */
   link(): Promise<{ vault: string; expiresAt: number } | null>;
   setVault(vault: string): Promise<void>;
   setLink(link: { vault: string; expiresAt: number } | null): Promise<void>;
+  /** Get started's progress, for the setup card only. */
+  setProgress?(progress: { wallet: boolean; vault: boolean; funded: boolean; linked: boolean }): Promise<void>;
   /** GET /session/status through the background: the API's word, not the page's. */
   status(vault: string, session: string): Promise<{ linked: true; expiresAt: number } | { linked: false } | null>;
   now?(): number;
@@ -88,9 +95,9 @@ export function createHandshake(d: HandshakeDeps) {
   const allowed = d.allowedOrigins.includes(d.pageOrigin);
 
   async function hello(): Promise<Hello> {
-    const [sessionAddress, vault, link, shortcuts] = await Promise.all([d.sessionAddress(), d.vault(), d.link(), d.shortcuts?.().catch(() => null) ?? null]);
+    const [sessionAddress, vault, link, shortcuts, ready] = await Promise.all([d.sessionAddress(), d.vault(), d.link(), d.shortcuts?.().catch(() => null) ?? null, d.ready()]);
     const linkedUntil = link && vault && same(link.vault, vault) && link.expiresAt > now() ? link.expiresAt : null;
-    return { source: FROM_EXTENSION, type: "GLANCE_HELLO", installed: true, version: d.version, sessionAddress, vault, linkedUntil, mode: !vault || d.isDemo(vault) ? "demo" : "own", ...(shortcuts ? { shortcuts } : {}) };
+    return { source: FROM_EXTENSION, type: "GLANCE_HELLO", installed: true, version: d.version, sessionAddress, vault, linkedUntil, mode: ready ? "ready" : "setup", ...(shortcuts ? { shortcuts } : {}) };
   }
 
   async function sayHello() {
@@ -128,6 +135,9 @@ export function createHandshake(d: HandshakeDeps) {
           await sayHello();
           return "linked";
         }
+        case "GLANCE_PROGRESS":
+          await d.setProgress?.({ wallet: m.wallet, vault: m.vault, funded: m.funded, linked: m.linked });
+          return "progress";
         case "GLANCE_UNLINKED": {
           const link = await d.link();
           if (!link || !same(link.vault, m.vault)) return "ignored";

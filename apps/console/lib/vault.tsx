@@ -14,10 +14,10 @@ import { api, ApiProblem, retryDelay, shouldRetry } from "./api";
 import { CHAIN_ID, demoVaults, factories, primaryVault } from "./deployment";
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Whose vault: the connected wallet's own, and nobody else's (the demo vaults only with ?dev=1)
+// Whose vault: the connected wallet's own, and nobody else's (the team's vaults only with ?dev=1)
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** ?dev=1: the developer fallbacks (demo vaults, any pasted vault, the TestUSDG setup). Off for everyone else. */
+/** ?dev=1: the developer fallbacks (the team's vaults, any pasted vault, the TestUSDG setup). Off for everyone else. */
 export function useDevMode(): boolean {
   return useSearchParams().get("dev") === "1";
 }
@@ -51,7 +51,7 @@ export function useMyVaults(): MyVaults {
 
 /**
  * The vault to show: the ?vault= one if the wallet owns it, else the wallet's first vault. Nothing when the wallet owns
- * none: there is no fallback to a demo vault. With ?dev=1, any ?vault= is allowed, and the demo vault is the default.
+ * none: there is no fallback. With ?dev=1, any ?vault= is allowed, and the team's primary vault is the default.
  */
 export function selectVault(param: string | null, owned: readonly Address[], dev: boolean): Address | null {
   const asked = param && isAddress(param) ? getAddress(param) : null;
@@ -131,7 +131,7 @@ export type VaultMenu =
 
 /**
  * The header's vault control. Only the wallet's own vaults: nothing without one, a plain "Your vault 0x…" with one,
- * a menu listing only them with two or more. ?dev=1 adds the demo vaults and the "any other vault" box.
+ * a menu listing only them with two or more. ?dev=1 adds the team's vaults and the "any other vault" box.
  */
 export function vaultMenu(owned: readonly OwnedVault[], dev: boolean): VaultMenu {
   const mine: VaultOption[] = owned.map((o) => ({
@@ -141,10 +141,10 @@ export function vaultMenu(owned: readonly OwnedVault[], dev: boolean): VaultMenu
     mine: true,
   }));
   if (dev) {
-    const demos: VaultOption[] = demoVaults
+    const team: VaultOption[] = demoVaults
       .filter((d) => !mine.some((m) => isAddressEqual(m.address, d.address)))
-      .map((d) => ({ address: d.address, label: `${d.label} (dev)`, note: d.primary ? "Demo, real Paxos USDG" : "Demo, TestUSDG", mine: false }));
-    return { kind: "menu", options: [...mine, ...demos], paste: true };
+      .map((d) => ({ address: d.address, label: `${d.label} (dev)`, note: d.primary ? "Team vault, real Paxos USDG" : "Team vault, TestUSDG", mine: false }));
+    return { kind: "menu", options: [...mine, ...team], paste: true };
   }
   if (mine.length === 0) return { kind: "none" };
   if (mine.length === 1) return { kind: "single", option: mine[0]! };

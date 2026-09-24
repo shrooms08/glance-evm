@@ -14,7 +14,7 @@ import type { Guard, Quote, Trade } from "../lib/api-types";
 import { recordTrade, type PageContext } from "../lib/journal";
 import { isAddress } from "../lib/settings";
 import { tick } from "../lib/onboarding";
-import { isOpenDemoVault, LINK_CODES, startLinking, waitForLink } from "../lib/linking";
+import { LINK_CODES, startLinking, waitForLink } from "../lib/linking";
 import { useGlance } from "./context";
 
 export type FlowStep =
@@ -94,14 +94,14 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
       setFlow({ step: "done", amount, quote, trade: res.data });
       // The headline journal (this browser only): where this buy came from, now that it's confirmed.
       void recordTrade(page, res.data, { symbol, amount, priceAtBuy: quote.price.value });
-      if (isOpenDemoVault(g.vaultAddress)) void tick("demoBuy"); // "Getting started": a demo buy
+      void tick("buy"); // "Getting started": your first buy
       const got = res.data.filled?.tokensOut?.formatted ?? symbol;
       g.setOrb({ state: "success", line: `Bought ${got} for $${amount}`, meta: `tx ${res.data.txHash.slice(0, 6)}…${res.data.txHash.slice(-4)}` });
       void g.refreshVault();
     } else if (res.guard) {
       setFlow({ step: "blocked", amount, guard: res.guard, quote });
       g.setOrb({ state: "blocked", line: res.guard.message, meta: `Guard · ${res.guard.code}` });
-    } else if (LINK_CODES.has(res.code) && !isOpenDemoVault(g.vaultAddress)) {
+    } else if (LINK_CODES.has(res.code)) {
       // Nothing was sent: this browser isn't linked to the vault yet (or its link ran out).
       setFlow({ step: "needs-link", amount, quote, code: res.code, message: res.message, link: "idle" });
       g.setOrb({ state: "idle", line: res.message, meta: "" });

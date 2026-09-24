@@ -306,7 +306,7 @@ curl 'localhost:8790/quote?vault=0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D&symb
 ### `POST /trade`
 
 Signed by a linked browser session (headers `x-glance-session`, `x-glance-signature`, `x-glance-deadline`,
-`x-glance-nonce`), or for an open demo vault. Otherwise 401 `SESSION_REQUIRED`, `SESSION_EXPIRED`, `BAD_SIGNATURE` or
+`x-glance-nonce`), or for a vault listed in `OPEN_DEMO_VAULTS` (empty by default; recording day only). Otherwise 401 `SESSION_REQUIRED`, `SESSION_EXPIRED`, `BAD_SIGNATURE` or
 `REPLAYED`, each with a sentence the extension shows. See [docs/SECURITY.md](../../docs/SECURITY.md).
 
 ### `POST /session/link`, `POST /session/revoke`, `GET /session/status`, `GET /session/list`
@@ -378,7 +378,7 @@ VOICE_PROVIDERS=fake PORT=8797 pnpm --filter api dev   # simulated providers, to
 - **Validation:** every input is checked with zod; addresses, tickers and decimal strings are strict. `/resolve`
   text is capped at 20,000 characters.
 - **Signed trades:** `POST /trade` needs a request signed by a browser session the vault's owner linked (EIP-712), or
-  one of the open demo vaults (`OPEN_DEMO_VAULTS`, 10 trades an hour per visitor). See
+  a vault listed in `OPEN_DEMO_VAULTS` (empty by default; recording day only; 10 trades an hour per visitor). See
   [docs/SECURITY.md](../../docs/SECURITY.md).
 - **CORS:** allows only the origins in `CORS_ORIGINS`: by default the extension's fixed ID and the console at
   `http://localhost:3000`. **CORS isn't authentication.** Anything outside a browser ignores it, which is why trades

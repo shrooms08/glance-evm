@@ -2,13 +2,10 @@
  * Linking this browser to a vault, from any surface (settings, a trade card): open the console's /link page, where the
  * vault's owner signs, then wait for the API to say it's linked. The session key itself stays in the background worker.
  */
-import { DEMO_VAULT_LABEL } from "@glance/core/session";
-
 import { api } from "./api";
 import { send } from "./lifecycle";
 import type { SessionInfo, SessionLinkStarted } from "./messages";
 import { sessionLink } from "./session";
-import { DEMO_VAULTS } from "./settings";
 export { consolePageUrl } from "./consoleOrigins";
 
 /** Opens a console page (from any surface; the background opens the tab). */
@@ -19,11 +16,6 @@ export async function openConsolePage(page: "start" | "link", vault?: string): P
 /** A trade refused for want of a linked browser: the card offers to link it. */
 export const LINK_CODES = new Set(["SESSION_REQUIRED", "SESSION_EXPIRED"]);
 
-/** The vault anyone may trade without linking (the API's OPEN_DEMO_VAULTS default), and how it's labelled. */
-export function isOpenDemoVault(vault: string): boolean {
-  return vault.toLowerCase() === DEMO_VAULTS.paxosUSDG.toLowerCase();
-}
-export { DEMO_VAULT_LABEL };
 
 /** This browser's session address (never the key). */
 export async function sessionInfo(): Promise<string | null> {

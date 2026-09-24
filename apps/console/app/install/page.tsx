@@ -50,7 +50,7 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
           <p className="meta">
             {p.installed
               ? `Glance underlines the companies it knows. Hover one for its price and a buy button, or hold ${talkKey} and ask.`
-              : "About a minute. Glance starts on the demo vault, so you can try a buy straight away: no wallet needed."}
+              : "About a minute. Then Glance's Set me up walks you through your own vault: a few wallet prompts, nothing to paste."}
           </p>
         </div>
       </div>

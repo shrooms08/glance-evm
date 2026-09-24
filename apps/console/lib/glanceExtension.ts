@@ -26,8 +26,8 @@ export interface GlanceHello {
   sessionAddress: Address;
   vault: Address | null;
   linkedUntil: number | null;
-  /** "demo": Glance is on the open demo vault; "own": a vault the console set (or one typed by hand). */
-  mode?: "demo" | "own";
+  /** "setup": Glance shows only its setup card; "ready": set up (your own vault, linked, funded) at least once. */
+  mode?: "setup" | "ready";
   /** The keyboard shortcuts as this browser has them ("⌥G"). */
   shortcuts?: { glance: string; talk: string };
 }
@@ -48,7 +48,7 @@ export function parseHello(data: unknown): GlanceHello | null {
   if (typeof m.sessionAddress !== "string" || !isAddress(m.sessionAddress)) return null;
   const vault = typeof m.vault === "string" && isAddress(m.vault) ? (m.vault as Address) : null;
   const linkedUntil = typeof m.linkedUntil === "number" ? m.linkedUntil : null;
-  const mode = m.mode === "demo" || m.mode === "own" ? m.mode : undefined;
+  const mode = m.mode === "setup" || m.mode === "ready" ? m.mode : undefined;
   const sc = m.shortcuts as { glance?: unknown; talk?: unknown } | undefined;
   const shortcuts = sc && typeof sc.glance === "string" && typeof sc.talk === "string" ? { glance: sc.glance.slice(0, 20), talk: sc.talk.slice(0, 20) } : undefined;
   return { installed: true, version: typeof m.version === "string" ? m.version : "", sessionAddress: m.sessionAddress as Address, vault, linkedUntil, mode, shortcuts };

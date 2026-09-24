@@ -2,13 +2,10 @@
  * First run, on the page and in the panel:
  *   Welcome     the orb's greeting, once (also said in Glance's pre-recorded voice when voice replies are on)
  *   Tour        three coach marks, skippable, shown once: underlines, hover, hold ⌥V
- *   Checklist   "Getting started": hover a company, ask a question, make a demo buy, create your vault
- *   DemoNotice  on the demo vault: "Demo vault: open for trying Glance" and "Set up my own vault"
+ *   Checklist   "Getting started": hover a company, ask a question, make your first buy
  *   EmptyPage   a page with no companies: where to try Glance instead
  * Presentational: the content script decides when each shows.
  */
-import { DEMO_VAULT_LABEL } from "@glance/core/session";
-
 import type { ChecklistRow } from "../lib/onboarding";
 
 /** Where a coach mark points: a rectangle on the page (an underline, the orb), in viewport coordinates. */
@@ -118,17 +115,6 @@ export function Checklist({ rows, onDismiss }: { rows: ChecklistRow[]; onDismiss
       </ul>
       <button className="g-btn g-btn-ghost" onClick={onDismiss} style={{ alignSelf: "flex-start" }}>
         {done === rows.length ? "All done: hide this" : "Hide"}
-      </button>
-    </div>
-  );
-}
-
-export function DemoNotice({ onSetup }: { onSetup(): void }) {
-  return (
-    <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
-      <span className="g-meta">{DEMO_VAULT_LABEL}. Buys here are real testnet trades, inside the demo vault&apos;s limits.</span>
-      <button className="g-btn" onClick={onSetup}>
-        Set up my own vault
       </button>
     </div>
   );

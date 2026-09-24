@@ -1,20 +1,21 @@
-/** The extension's built-in demo vaults must match the deployment record, and default to its primary vault. */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+/**
+ * Glance needs your own vault: there's no built-in vault and no demo fallback. The vault starts empty, and only the
+ * console's handshake (or a developer, under Settings > Advanced) sets it.
+ */
+import { fakeBrowser } from "wxt/testing/fake-browser";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_VAULT, DEMO_VAULTS } from "../lib/settings";
+import * as settings from "../lib/settings";
 
-const deployment = JSON.parse(readFileSync(join(import.meta.dirname, "../../../deployments/46630.json"), "utf8"));
+beforeEach(() => fakeBrowser.reset());
 
-describe("demo vaults", () => {
-  it("match deployments/46630.json", () => {
-    expect(DEMO_VAULTS.paxosUSDG).toBe(deployment.demoVaultPaxosUSDG.address);
-    expect(DEMO_VAULTS.testUSDG).toBe(deployment.demoVaultTestUSDG.address);
+describe("no demo vault", () => {
+  it("the vault is empty until the console sets it", async () => {
+    expect(await settings.vaultAddress.getValue()).toBe("");
+    expect(await settings.vaultSource.getValue()).toBeNull();
   });
-  it("default to the deployment's primary vault, on real Paxos USDG", () => {
-    expect(deployment.primaryVault).toBe("demoVaultPaxosUSDG");
-    expect(DEFAULT_VAULT).toBe(deployment[deployment.primaryVault].address);
-    expect(deployment.demoVaultPaxosUSDG.usdg).toBe("0x7E955252E15c84f5768B83c41a71F9eba181802F");
+
+  it("nothing demo is left in the settings module", () => {
+    expect(Object.keys(settings).filter((k) => /demo|default_vault/i.test(k))).toEqual([]);
   });
 });

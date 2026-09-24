@@ -1,19 +1,19 @@
 /**
  * Linking UX: a trade that needs a linked browser says so on the card, with a button that starts linking; while the
  * owner signs, it waits; once linked, one tap sends the same buy. The status poll stops as soon as the API says linked.
- * The demo vault is labelled as open. Fakes only: a fake background answers the API calls.
+ * Fakes only: a fake background answers the API calls.
  */
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { fakeBrowser } from "wxt/testing/fake-browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEMO_VAULT_LABEL, SESSION_MESSAGES } from "@glance/core/session";
+import { SESSION_MESSAGES } from "@glance/core/session";
 
 import { NeedsLink } from "../components/CompanyCard";
 import type { Quote } from "../lib/api-types";
-import { isOpenDemoVault, LINK_CODES, waitForLink } from "../lib/linking";
+import { LINK_CODES, waitForLink } from "../lib/linking";
 import { sessionLink } from "../lib/session";
-import { DEMO_VAULTS } from "../lib/settings";
+const VAULT = "0x1111111111111111111111111111111111111111";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,23 +81,15 @@ describe("waiting for the link", () => {
       calls++;
       return calls < 3 ? { ok: true, status: 200, data: { linked: false, reason: "unknown" } } : { ok: true, status: 200, data: { linked: true, expiresAt: 1_792_000_000, linkedAt: 1_790_000_000 } };
     };
-    const status = await waitForLink(DEMO_VAULTS.testUSDG, "0x1234567890123456789012345678901234567890", { sleep: async () => {} });
+    const status = await waitForLink(VAULT, "0x1234567890123456789012345678901234567890", { sleep: async () => {} });
     expect(status).toEqual({ linked: true, expiresAt: 1_792_000_000 });
     expect(calls).toBe(3);
-    expect(await sessionLink.getValue()).toEqual({ vault: DEMO_VAULTS.testUSDG, expiresAt: 1_792_000_000 });
+    expect(await sessionLink.getValue()).toEqual({ vault: VAULT, expiresAt: 1_792_000_000 });
   });
 
   it("stops when cancelled", async () => {
     const abort = new AbortController();
     abort.abort();
-    expect(await waitForLink(DEMO_VAULTS.testUSDG, "0x1234567890123456789012345678901234567890", { signal: abort.signal })).toEqual({ linked: false, reason: "cancelled" });
-  });
-});
-
-describe("the demo vault", () => {
-  it("is labelled as open for trying Glance (only the Paxos demo vault is open)", () => {
-    expect(isOpenDemoVault(DEMO_VAULTS.paxosUSDG.toLowerCase())).toBe(true);
-    expect(isOpenDemoVault(DEMO_VAULTS.testUSDG)).toBe(false);
-    expect(DEMO_VAULT_LABEL).toBe("Demo vault: open for trying Glance");
+    expect(await waitForLink(VAULT, "0x1234567890123456789012345678901234567890", { signal: abort.signal })).toEqual({ linked: false, reason: "cancelled" });
   });
 });
