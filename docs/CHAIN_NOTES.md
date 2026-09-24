@@ -186,6 +186,9 @@ the testnet clock instead of the source's timestamp.
 | TSLA, AMZN, PLTR, AMD | `mainnet-mirror` | the Chainlink proxies in the Chainlink table above, recorded in `config/price-sources.json` |
 | NFLX | `public-quote` | Yahoo Finance `regularMarketPrice`, with its `regularMarketTime` as `updatedAt` (no Chainlink NFLX feed exists) |
 
+The console's Prices page says the same: "Chainlink, mirrored from mainnet" for TSLA, AMZN, PLTR and AMD, and "Public
+quote (no Chainlink NFLX feed on Robinhood Chain)" for NFLX.
+
 How it runs:
 
 - **Once, locally or from cron:** `make keeper`.

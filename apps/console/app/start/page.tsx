@@ -12,14 +12,14 @@ import { VaultStep } from "@/components/VaultStep";
 import { CHAIN_ID, demoVaults, primaryVault, type DemoVault } from "@/lib/deployment";
 import { formatUsd, parseDecimal } from "@/lib/format";
 import { SingleFlight } from "@/lib/singleFlight";
-import { addMorePlan, setupPlan } from "@/lib/setup";
+import { addMorePlan, setupFlavourKey, setupPlan } from "@/lib/setup";
 import { reportError } from "@/lib/report";
 import { runSetupSteps } from "@/lib/setupRunner";
 import { activityFor, STATUS_LABELS, stepStatuses, summarize, vaultProgress, type StepStatus, type StatusInputs } from "@/lib/setupStatus";
 import { describeTxError } from "@/lib/txMessages";
 import { useOwnerTx } from "@/lib/useOwnerTx";
 import { readStartState, useStartState } from "@/lib/useSetupSnapshot";
-import { useHref } from "@/lib/vault";
+import { useDevMode, useHref } from "@/lib/vault";
 
 type RunMode = "setup" | "add-more";
 
@@ -37,7 +37,10 @@ export default function StartPage() {
   const { address, isConnected, chainId } = useAccount();
   const gate = useGate(address);
   const reconnect = useReconnect();
-  const [flavourKey, setFlavourKey] = useState<DemoVault["key"]>(primaryVault.key);
+  // Paxos USDG for everyone. The TestUSDG setup is a developer fallback, reachable only with ?dev=1.
+  const dev = useDevMode();
+  const [chosenKey, setFlavourKey] = useState<DemoVault["key"]>(primaryVault.key);
+  const flavourKey = setupFlavourKey(dev, chosenKey);
   const flavour = demoVaults.find((d) => d.key === flavourKey)!;
   const q = useStartState(address, flavour);
   const extension = useExtensionInstalled();
@@ -208,7 +211,7 @@ export default function StartPage() {
             busy={busy}
             flavour={effective}
             flavours={demoVaults}
-            flavourLocked={Boolean(s?.vaultFlavour)}
+            showFlavourChoice={dev && !s?.vaultFlavour}
             onFlavour={setFlavourKey}
             vault={s?.snapshot.vault ?? null}
             vaultHref={s?.snapshot.vault ? href("/", s.snapshot.vault) : undefined}
@@ -228,7 +231,11 @@ export default function StartPage() {
             Build it with <code>pnpm --filter extension build</code> and load <code>apps/extension/.output/chrome-mv3</code> as an unpacked extension (Brave, Arc,
             Chrome). In its settings, paste your vault&apos;s address. Then tap Option + G on any article.
           </p>
-          <p className="meta">{extension ? "Detected on this page." : "Not detected on this page yet. (The extension marks the console when it's installed; this step isn't on chain.)"}</p>
+          <p className="meta">
+            {extension
+              ? "Detected on this page."
+              : "Not detected on this page yet. Already installed? Reload it on your browser's extensions page (brave://extensions or chrome://extensions): after an update the browser keeps running the old copy until you do. Then refresh this page. (This step isn't on chain.)"}
+          </p>
         </Step>
       </ol>
     </div>

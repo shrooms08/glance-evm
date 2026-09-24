@@ -23,8 +23,6 @@ export default defineContentScript({
   cssInjectionMode: "manual",
   async main(ctx) {
     if (window.top !== window || !document.body || !contextAlive()) return;
-    // On the Glance console only (it carries <meta name="glance-console">): say Glance is installed, for its Get started.
-    if (document.querySelector('meta[name="glance-console"]')) document.documentElement.dataset.glanceExtension = "installed";
     // Reloading or updating Glance orphans this script: shut down quietly and leave a refresh notice.
     installPageLifecycle(ctx);
     injectPageStyles((path) => browser.runtime.getURL(path as "/glance-mark.png"));

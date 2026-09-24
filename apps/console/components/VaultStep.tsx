@@ -28,8 +28,11 @@ export interface VaultStepProps {
   busy: boolean;
   flavour: DemoVault;
   flavours: DemoVault[];
-  /** The wallet already has a vault, so its USDG can't be chosen. */
-  flavourLocked: boolean;
+  /**
+   * Offer the Paxos USDG / TestUSDG choice. Only with ?dev=1 (the TestUSDG fallback, should the Paxos faucet ever go
+   * down) and only before the wallet has a vault. Everyone else gets Paxos USDG.
+   */
+  showFlavourChoice: boolean;
   onFlavour(key: DemoVault["key"]): void;
   vault: Address | null;
   vaultHref?: string;
@@ -55,20 +58,19 @@ export function VaultStep(p: VaultStepProps) {
     <div className="create">
       {oneTx ? (
         <p className="meta">
-          One transaction creates your vault configured exactly like <code>make create-vault</code> leaves one: the five stocks with their price feeds
-          and freshness (20 hours open, 96 hours closed), the stock desk, the Glance agent for 30 days, and $100 a trade, $500 a day each way, 1% slippage,
-          25% while the market&apos;s closed. Your deposit goes in with it. You&apos;re the owner from the start; the factory keeps no rights. Change any
-          limit later under Limits.
+          One transaction creates your vault, already set up: the five stocks with their price checks, the Glance agent for 30 days, and limits of $100 a
+          trade and $500 a day each way (a quarter of that while the market is closed). Your deposit goes in with it. You&apos;re the owner from the start,
+          and nobody else can move your money. Change any limit later under Limits.
         </p>
       ) : (
         <p className="meta">
-          Exactly what <code>make create-vault</code> does: the vault, the five stocks with their price feeds and freshness (20 hours open, 96 hours
-          closed), the stock desk, the Glance agent for 29 days, then your first deposit. It starts with the vault&apos;s default limits: $100 a trade, $500
-          a day each way, 1% slippage, 25% while the market&apos;s closed. Change them any time under Limits.
+          Sets up your vault one wallet prompt at a time: the five stocks with their price checks, the Glance agent for 29 days, then your first
+          deposit. It starts with limits of $100 a trade and $500 a day each way (a quarter of that while the market is closed). You&apos;re the owner,
+          and nobody else can move your money. Change any limit later under Limits.
         </p>
       )}
 
-      {!p.flavourLocked && !funded && (
+      {p.showFlavourChoice && !funded && (
         <fieldset className="segmented" aria-label="Which USDG" disabled={p.busy}>
           {p.flavours.map((d) => (
             <label key={d.key} className="segment">

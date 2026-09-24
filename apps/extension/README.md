@@ -119,6 +119,18 @@ node apps/extension/e2e/voice-server.mjs brave http://localhost:8797   # server 
 node apps/extension/e2e/interaction.mjs  # hotkeys, the gooey panel, orb-click docking, and an extension reload, on CNBC
 ```
 
+**The console's "Install the Glance extension" step.** A tiny content script (`entrypoints/console-marker.content.ts`)
+sets `<html data-glance-extension="installed">` on the Glance console, and nowhere else. It runs only on the origins in
+`WXT_CONSOLE_ORIGINS`, read at build time: a comma-separated list, default `http://localhost:3000`. Each origin becomes
+the match pattern `<origin>/*`, and anything that isn't a plain origin fails the build. For a deployed console:
+
+```sh
+WXT_CONSOLE_ORIGINS=http://localhost:3000,https://your-console.vercel.app pnpm --filter extension build
+```
+
+Content script matches grant no host permissions, so this doesn't widen what the extension can access. After any
+rebuild, click Reload on the browser's extensions page: an unpacked extension keeps running its old copy until then.
+
 How it's built:
 
 - **Stack:** WXT, React 18 and TypeScript; Manifest V3.

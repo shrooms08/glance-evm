@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/Skeleton";
 import type { CatalogStock, FeedStatus } from "@/lib/api";
 import { addressUrl, txUrl } from "@/lib/chain";
 import { formatAgeHours, formatAgo, formatUsd, formatWhen, shortAddress } from "@/lib/format";
+import { priceSourceLabel } from "@/lib/priceSource";
 import { useNow } from "@/lib/useNow";
 import { useCatalog, useHealth } from "@/lib/vault";
 
@@ -38,10 +39,11 @@ export default function PricesPage() {
 
       {(allStandIns || stocks.some((s) => !s.feedReal)) && (
         <Notice tone="info" title="Stand-in feeds, stated plainly">
-          Robinhood Chain testnet has no Chainlink stock feeds, so these are Glance's own stand-in feeds. Each one marked <em>mirrored</em> copies the live
+          Robinhood Chain testnet has no Chainlink stock feeds, so these are Glance's own stand-in feeds. Each one marked <em>Chainlink, mirrored from mainnet</em> copies the live
           Chainlink feed for that stock on Robinhood Chain <strong>mainnet</strong>, both its price and its own timestamp, never “now”. So a stand-in is
           fresh exactly when the real feed is, and goes quiet at nights and weekends just like it. A keeper copies them on a schedule; its last write is shown above. The stock
-          tokens themselves are the real Robinhood testnet tokens.
+          tokens themselves are the real Robinhood testnet tokens. NFLX has no Chainlink feed on Robinhood Chain at all, so its
+          stand-in follows a public quote instead, and says so.
         </Notice>
       )}
 
@@ -70,7 +72,8 @@ export default function PricesPage() {
 function PriceCard({ stock, feed, now }: { stock: CatalogStock; feed?: FeedStatus; now: number }) {
   const price = feed?.price ? formatUsd(BigInt(feed.price.raw), feed.price.decimals) : "–";
   const age = feed?.updatedAt ? now - feed.updatedAt : feed?.ageSeconds ?? null;
-  const mirrored = feed?.source === "mainnet-mirror" || stock.priceSourceKind === "mainnet-mirror";
+  const source = priceSourceLabel({ symbol: stock.symbol, feedReal: stock.feedReal, kind: feed?.source ?? stock.priceSourceKind });
+  const mirrored = !stock.feedReal && source.tone === "neutral";
   return (
     <article className="card price">
       <div className="between">
@@ -89,13 +92,7 @@ function PriceCard({ stock, feed, now }: { stock: CatalogStock; feed?: FeedStatu
         <div>
           <dt>Source</dt>
           <dd>
-            {stock.feedReal ? (
-              <span className="chip chip-accent">Real feed</span>
-            ) : mirrored ? (
-              <span className="chip">Mirrored stand-in</span>
-            ) : (
-              <span className="chip chip-guard">Stand-in, public quote</span>
-            )}
+            <span className={`chip source-chip ${source.tone === "accent" ? "chip-accent" : source.tone === "guard" ? "chip-guard" : ""}`}>{source.label}</span>
           </dd>
         </div>
       </dl>

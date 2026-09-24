@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { env } from "@/lib/env";
+import { trackInputModality } from "@/lib/inputModality";
 import { useTheme } from "@/lib/theme";
 import { useHref } from "@/lib/vault";
 
@@ -23,6 +24,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const href = useHref();
   const { theme, toggle } = useTheme();
+  // Focus rings for keyboard users only (see globals.css).
+  useEffect(() => trackInputModality(), []);
   return (
     <div className="shell">
       <header className="top">

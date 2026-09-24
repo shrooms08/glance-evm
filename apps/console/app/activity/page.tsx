@@ -1,7 +1,9 @@
 "use client";
 import { useMemo, useState } from "react";
+import type { Address } from "viem";
 
 import { Notice } from "@/components/Notice";
+import { OwnVaultGate } from "@/components/OwnVaultGate";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
 import type { ActivityItem, ActivityView } from "@/lib/api";
@@ -9,7 +11,7 @@ import { dayLabel, formatWhen, shortAddress } from "@/lib/format";
 import { foldOwnerRuns } from "@/lib/activity";
 import { guardCounts } from "@/lib/guards";
 import { useNow } from "@/lib/useNow";
-import { useActivity, useSelectedVault } from "@/lib/vault";
+import { useActivity } from "@/lib/vault";
 
 type Filter = "all" | "trade" | "refusal" | "owner";
 
@@ -21,7 +23,10 @@ const FILTERS: Array<{ key: Filter; label: string }> = [
 ];
 
 export default function ActivityPage() {
-  const vault = useSelectedVault();
+  return <OwnVaultGate>{(vault) => <ActivityFor vault={vault} />}</OwnVaultGate>;
+}
+
+function ActivityFor({ vault }: { vault: Address }) {
   const q = useActivity(vault);
   const [filter, setFilter] = useState<Filter>("all");
 

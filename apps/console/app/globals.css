@@ -20,6 +20,10 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 button, input { font: inherit; color: inherit; }
 code { font-family: var(--g-mono); font-size: 0.92em; padding: 1px 6px; border-radius: var(--g-r-xs); background: var(--t-raised); border: 1px solid var(--t-line); }
 :focus-visible { outline: 2px solid var(--t-accent-text); outline-offset: 2px; border-radius: var(--g-r-sm); }
+/* The ring is for keyboard focus only. Links and buttons clicked with a mouse or touch never show it (some browsers
+   and client-side navigation leave a clicked link matching :focus-visible); lib/inputModality.ts sets the attribute. */
+:focus:not(:focus-visible) { outline: none; }
+:root[data-input="pointer"] :is(a, button, summary, [role="tab"], [role="menuitem"]):focus-visible { outline: none; }
 ul, ol { list-style: none; }
 strong { font-weight: 600; }
 em { font-style: normal; color: var(--t-text); font-weight: 500; }
@@ -61,10 +65,10 @@ em { font-style: normal; color: var(--t-text); font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 /* ---------- Header ---------- */
+/* Solid, in both themes: nothing on the page shows through the bar or its tabs when scrolled. */
 .top {
   position: sticky; top: 0; z-index: 20;
-  background: color-mix(in srgb, var(--t-canvas) 88%, transparent);
-  backdrop-filter: saturate(1.2) blur(12px); -webkit-backdrop-filter: saturate(1.2) blur(12px);
+  background: var(--t-canvas);
   border-bottom: 1px solid var(--t-line);
 }
 .top-row { max-width: 1120px; margin: 0 auto; padding: var(--g-s5) var(--g-s7); display: flex; align-items: center; justify-content: space-between; gap: var(--g-s5); flex-wrap: wrap; }
@@ -378,3 +382,14 @@ fieldset.segmented:disabled label.segment { opacity: 0.5; cursor: not-allowed; }
 
 .plan.one-tx > li { align-items: center; flex-wrap: wrap; }
 .plan.one-tx > li[data-done] { color: var(--t-soft); }
+
+/* ---------- Own-vault gate and the single-vault header link ---------- */
+.gate-screen { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--g-s7); padding: var(--g-s12) var(--g-s7); border: 1px solid var(--t-line); border-radius: var(--g-r-card); background: var(--t-surface); }
+.gate-copy { max-width: 520px; color: var(--t-soft); }
+.gate-actions { justify-content: center; }
+.gate-actions .btn { align-self: center; }
+.switcher-single { display: inline-flex; align-items: center; gap: var(--g-s4); min-height: 36px; padding: 0 var(--g-s7); border-radius: var(--g-r-pill); border: 1px solid var(--t-line-strong); background: var(--t-raised); color: var(--t-text); font-size: var(--g-ui-size); font-weight: 500; }
+.switcher-single:hover { text-decoration: none; border-color: var(--t-mute); }
+
+/* Long source labels (e.g. NFLX's) wrap instead of overflowing the card. */
+.source-chip { white-space: normal; text-align: right; }

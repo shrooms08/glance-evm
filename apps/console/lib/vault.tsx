@@ -13,16 +13,72 @@ import { useAccount, useReadContracts } from "wagmi";
 import { api, ApiProblem, retryDelay, shouldRetry } from "./api";
 import { CHAIN_ID, demoVaults, factories, primaryVault } from "./deployment";
 
-export function useSelectedVault(): Address {
-  const params = useSearchParams();
-  const v = params.get("vault");
-  return v && isAddress(v) ? getAddress(v) : primaryVault.address;
+// ---------------------------------------------------------------------------------------------------------------------
+// Whose vault: the connected wallet's own, and nobody else's (the demo vaults only with ?dev=1)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** ?dev=1: the developer fallbacks (demo vaults, any pasted vault, the TestUSDG setup). Off for everyone else. */
+export function useDevMode(): boolean {
+  return useSearchParams().get("dev") === "1";
 }
 
-/** A link that keeps the selected vault. */
+export interface OwnedVault {
+  vault: Address;
+  factoryVersion: 1 | 2;
+}
+
+export type MyVaults =
+  | { status: "no-wallet" }
+  | { status: "loading" }
+  | { status: "error"; error: unknown }
+  | { status: "none" }
+  | { status: "ready"; vaults: OwnedVault[] };
+
+/** What the connected wallet owns, as a state the pages can switch on. */
+export function myVaultsState(p: { connected: boolean; isLoading: boolean; error: unknown; owned: OwnedVault[] }): MyVaults {
+  if (!p.connected) return { status: "no-wallet" };
+  if (p.owned.length > 0) return { status: "ready", vaults: p.owned };
+  if (p.error) return { status: "error", error: p.error };
+  if (p.isLoading) return { status: "loading" };
+  return { status: "none" };
+}
+
+export function useMyVaults(): MyVaults {
+  const { isConnected } = useAccount();
+  const { owned, isLoading, error } = useOwnedVaults();
+  return myVaultsState({ connected: isConnected, isLoading, error, owned });
+}
+
+/**
+ * The vault to show: the ?vault= one if the wallet owns it, else the wallet's first vault. Nothing when the wallet owns
+ * none: there is no fallback to a demo vault. With ?dev=1, any ?vault= is allowed, and the demo vault is the default.
+ */
+export function selectVault(param: string | null, owned: readonly Address[], dev: boolean): Address | null {
+  const asked = param && isAddress(param) ? getAddress(param) : null;
+  if (asked && (dev || owned.some((o) => isAddressEqual(o, asked)))) return asked;
+  return owned[0] ?? (dev ? primaryVault.address : null);
+}
+
+export function useSelectedVault(): Address | null {
+  const params = useSearchParams();
+  const dev = params.get("dev") === "1";
+  const my = useMyVaults();
+  const owned = my.status === "ready" ? my.vaults.map((v) => v.vault) : [];
+  return selectVault(params.get("vault"), owned, dev);
+}
+
+/** A link that keeps the chosen vault (when it isn't the default) and ?dev=1. */
 export function useHref() {
-  const vault = useSelectedVault();
-  return (path: string, to: Address = vault) => (isAddressEqual(to, primaryVault.address) ? path : `${path}?vault=${to}`);
+  const params = useSearchParams();
+  const dev = params.get("dev") === "1";
+  const vault = params.get("vault");
+  return (path: string, to: Address | null = vault && isAddress(vault) ? getAddress(vault) : null) => {
+    const q = new URLSearchParams();
+    if (to) q.set("vault", to);
+    if (dev) q.set("dev", "1");
+    const qs = q.toString();
+    return qs ? `${path}?${qs}` : path;
+  };
 }
 
 export function usePathWithVault() {
@@ -58,8 +114,8 @@ export function useOwnedVaults() {
 export function ownedFromReads(
   from: Array<{ version: 1 | 2; address: Address }>,
   data: ReadonlyArray<{ status: string; result?: unknown }> | undefined,
-): Array<{ vault: Address; factoryVersion: 1 | 2 }> {
-  const out: Array<{ vault: Address; factoryVersion: 1 | 2 }> = [];
+): OwnedVault[] {
+  const out: OwnedVault[] = [];
   from.forEach((f, i) => {
     const r = data?.[i];
     const vault = r?.status === "success" ? (r.result as Address) : null;
@@ -68,25 +124,31 @@ export function ownedFromReads(
   return out.sort((a, b) => b.factoryVersion - a.factoryVersion);
 }
 
-export function useVaultOptions(): VaultOption[] {
-  const { address } = useAccount();
-  const { owned } = useOwnedVaults();
-  const options: VaultOption[] = demoVaults.map((d) => ({
-    address: d.address,
-    label: d.label,
-    note: d.primary ? "Primary demo, real Paxos USDG" : "Fallback, TestUSDG from its own faucet",
-    mine: Boolean(address && isAddressEqual(d.owner, address)),
+export type VaultMenu =
+  | { kind: "none" }
+  | { kind: "single"; option: VaultOption }
+  | { kind: "menu"; options: VaultOption[]; paste: boolean };
+
+/**
+ * The header's vault control. Only the wallet's own vaults: nothing without one, a plain "Your vault 0x…" with one,
+ * a menu listing only them with two or more. ?dev=1 adds the demo vaults and the "any other vault" box.
+ */
+export function vaultMenu(owned: readonly OwnedVault[], dev: boolean): VaultMenu {
+  const mine: VaultOption[] = owned.map((o) => ({
+    address: o.vault,
+    label: owned.length > 1 ? `Your vault (${o.factoryVersion === 2 ? "one-transaction setup" : "original setup"})` : "Your vault",
+    note: "Owned by the connected wallet",
+    mine: true,
   }));
-  for (const o of owned) {
-    if (options.some((x) => isAddressEqual(x.address, o.vault))) continue;
-    options.push({
-      address: o.vault,
-      label: owned.length > 1 ? `Your vault (${o.factoryVersion === 2 ? "one-transaction setup" : "original factory"})` : "Your vault",
-      note: "Owned by the connected wallet",
-      mine: true,
-    });
+  if (dev) {
+    const demos: VaultOption[] = demoVaults
+      .filter((d) => !mine.some((m) => isAddressEqual(m.address, d.address)))
+      .map((d) => ({ address: d.address, label: `${d.label} (dev)`, note: d.primary ? "Demo, real Paxos USDG" : "Demo, TestUSDG", mine: false }));
+    return { kind: "menu", options: [...mine, ...demos], paste: true };
   }
-  return options;
+  if (mine.length === 0) return { kind: "none" };
+  if (mine.length === 1) return { kind: "single", option: mine[0]! };
+  return { kind: "menu", options: mine, paste: false };
 }
 
 const readOptions = { retry: shouldRetry, retryDelay } as const;

@@ -52,7 +52,7 @@ function props(s: SetupSnapshot, over: Partial<VaultStepProps> = {}): VaultStepP
     busy: false,
     flavour: paxos,
     flavours: demoVaults,
-    flavourLocked: s.vault !== null,
+    showFlavourChoice: false,
     onFlavour: () => {},
     vault: s.vault,
     vaultBalance: s.vaultUsdgBalance,
@@ -139,10 +139,12 @@ describe("funded vault", () => {
 });
 
 describe("no vault yet", () => {
-  it("offers to create it, with the USDG choice", () => {
+  it("offers to create it; the USDG choice only in dev mode (?dev=1)", () => {
     const s: SetupSnapshot = { ...configured, vault: null, vaultUsdg: null, tokens: [], routerApproved: false, agent: zeroAddress, agentExpiry: 0 };
-    render(<VaultStep {...props(s)} />);
+    const { rerender } = render(<VaultStep {...props(s)} />);
     expect(screen.getByText("Create my vault")).toBeTruthy();
+    expect(screen.queryByRole("radio")).toBeNull();
+    rerender(<VaultStep {...props(s, { showFlavourChoice: true })} />);
     expect(screen.getByLabelText(/Paxos USDG/)).toBeTruthy();
   });
 });

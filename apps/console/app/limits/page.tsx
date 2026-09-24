@@ -3,6 +3,7 @@ import { glanceVaultAbi } from "@glance/core/abi";
 import { useMemo, useState } from "react";
 import { isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
 
+import { OwnVaultGate } from "@/components/OwnVaultGate";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
 import { TxStatus } from "@/components/TxStatus";
@@ -16,12 +17,15 @@ import { formatDuration, formatUsd, formatWhen, shortAddress, toDecimalString } 
 import { parseLimits, sameLimits, type LimitsForm } from "@/lib/limits";
 import { useNow } from "@/lib/useNow";
 import { useOwnerTx, type TxRequest } from "@/lib/useOwnerTx";
-import { useSelectedVault, useVaultChain, type VaultChainState } from "@/lib/vault";
+import { useVaultChain, type VaultChainState } from "@/lib/vault";
 
 const vaultAbi = glanceVaultAbi as Abi;
 
 export default function LimitsPage() {
-  const vault = useSelectedVault();
+  return <OwnVaultGate>{(vault) => <LimitsFor vault={vault} />}</OwnVaultGate>;
+}
+
+function LimitsFor({ vault }: { vault: Address }) {
   const chain = useVaultChain(vault);
   const gate = useGate(chain.data?.owner);
   const reconnect = useReconnect();

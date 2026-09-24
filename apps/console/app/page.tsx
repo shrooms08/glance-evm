@@ -1,7 +1,9 @@
 "use client";
 import Link from "next/link";
+import type { Address } from "viem";
 
 import { MarketChip } from "@/components/MarketChip";
+import { OwnVaultGate } from "@/components/OwnVaultGate";
 import { Meter } from "@/components/Meter";
 import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
@@ -10,12 +12,14 @@ import { WithdrawCard } from "@/components/WithdrawCard";
 import type { VaultView } from "@/lib/api";
 import { capRows, freesUp, marketNow, type CapRow, type CapState, type CapUse } from "@/lib/caps";
 import { addressUrl } from "@/lib/chain";
-import { demoVaults } from "@/lib/deployment";
 import { formatDuration, formatUsd, formatWhen, shortAddress } from "@/lib/format";
-import { useHref, useSelectedVault, useVaultView } from "@/lib/vault";
+import { useHref, useVaultView } from "@/lib/vault";
 
 export default function Dashboard() {
-  const vault = useSelectedVault();
+  return <OwnVaultGate>{(vault) => <DashboardFor vault={vault} />}</OwnVaultGate>;
+}
+
+function DashboardFor({ vault }: { vault: Address }) {
   const q = useVaultView(vault);
   const href = useHref();
 
@@ -52,12 +56,11 @@ export default function Dashboard() {
 }
 
 function VaultHeading({ vault, address }: { vault?: VaultView; address: string }) {
-  const demo = demoVaults.find((d) => d.address.toLowerCase() === address.toLowerCase());
   const usdg = vault?.usdg.real === true ? "Paxos USDG" : vault?.usdg.real === false ? "TestUSDG stand-in" : vault ? "USDG" : null;
   return (
     <div className="page-head">
       <div>
-        <p className="eyebrow">{demo ? demo.label : "Vault"}</p>
+        <p className="eyebrow">Your vault</p>
         <h1 className="title">Your vault, and the leash on its agent</h1>
         <p className="meta">
           <a className="mono" href={addressUrl(address)} target="_blank" rel="noreferrer">

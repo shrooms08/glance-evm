@@ -307,3 +307,8 @@ export function vaultConfigured(s: SetupSnapshot, flavour: DemoVault, usdgDecima
   const { steps, blocked } = planSetup(s, { flavour, testUsdg: flavour.key === "test", usdgDecimals, deposit: 0n });
   return !blocked && steps.length === 0;
 }
+
+/** Which USDG Get started sets up: Paxos USDG for everyone; the TestUSDG choice counts only with ?dev=1. */
+export function setupFlavourKey(dev: boolean, chosen: DemoVault["key"]): DemoVault["key"] {
+  return dev ? chosen : "paxos";
+}
