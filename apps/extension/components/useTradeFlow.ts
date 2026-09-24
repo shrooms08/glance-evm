@@ -11,6 +11,7 @@ import { api } from "../lib/api";
 import { onChainRecovered } from "../lib/chainStatus";
 import { speak } from "../lib/voiceClient";
 import type { Guard, Quote, Trade } from "../lib/api-types";
+import { recordTrade, type PageContext } from "../lib/journal";
 import { isAddress } from "../lib/settings";
 import { useGlance } from "./context";
 
@@ -23,7 +24,10 @@ export type FlowStep =
   | { step: "blocked"; amount: string; guard: Guard; quote?: Quote }
   | { step: "failed"; amount: string; code: string; message: string };
 
-export function useTradeFlow(symbol: string, opts: { voice?: boolean } = {}) {
+/** Where a buy was placed from, for the headline journal (null: not from a page). */
+export type PageContextSource = () => Promise<PageContext | null> | PageContext | null;
+
+export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContext?: PageContextSource } = {}) {
   const g = useGlance();
   const [flow, setFlow] = useState<FlowStep>({ step: "idle" });
   const run = useRef(0);
@@ -70,12 +74,18 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean } = {}) {
     if (flow.step !== "review") return;
     const { amount, quote } = flow;
     const id = ++run.current;
+    // The page the buy was placed from, as it is at this moment (for the journal; kept only in this browser).
+    const page = Promise.resolve()
+      .then(() => opts.pageContext?.() ?? null)
+      .catch(() => null);
     setFlow({ step: "trading", amount, quote });
     g.setOrb({ state: "thinking", line: `Buying $${amount} of ${symbol}`, meta: "Sending through your vault" });
     const res = await api.trade({ vault: g.vaultAddress, symbol, side: "buy", amount });
     if (id !== run.current) return;
     if (res.ok) {
       setFlow({ step: "done", amount, quote, trade: res.data });
+      // The headline journal (this browser only): where this buy came from, now that it's confirmed.
+      void recordTrade(page, res.data, { symbol, amount, priceAtBuy: quote.price.value });
       const got = res.data.filled?.tokensOut?.formatted ?? symbol;
       g.setOrb({ state: "success", line: `Bought ${got} for $${amount}`, meta: `tx ${res.data.txHash.slice(0, 6)}…${res.data.txHash.slice(-4)}` });
       void g.refreshVault();
@@ -86,7 +96,7 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean } = {}) {
       setFlow({ step: "failed", amount, code: res.code, message: res.message });
       g.setOrb({ state: "idle", line: res.message, meta: "" });
     }
-  }, [flow, g, symbol]);
+  }, [flow, g, symbol, opts]);
 
   // A quote that failed only because the testnet wasn't answering tries again, on its own, once it answers.
   useEffect(() => {

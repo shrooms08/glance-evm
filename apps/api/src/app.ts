@@ -14,7 +14,7 @@ import type { AppContext } from "./context.js";
 import { rateLimit } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
-import { ApiError, activityView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
+import { ApiError, activityView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
@@ -84,6 +84,8 @@ export function createServerApp(ctx: AppContext) {
   );
   app.use("*", rateLimit({ limit: config.RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "all" }));
   app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
+  app.use("/why/*", rateLimit({ limit: config.WHY_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "why" }));
+  app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
 
   app.get("/health", async (c) => send(c, await healthView(ctx)));
 
@@ -117,6 +119,10 @@ export function createServerApp(ctx: AppContext) {
   });
 
   app.get("/vault/:address", async (c) => send(c, await vaultView(ctx, parse(address, c.req.param("address")))));
+
+  app.get("/portfolio/:address", async (c) => send(c, await portfolioView(ctx, parse(address, c.req.param("address")))));
+
+  app.get("/why/:symbol", async (c) => send(c, await whyView(ctx, parse(symbol, c.req.param("symbol")))));
 
   app.get("/vault/:address/activity", async (c) => {
     const { limit } = parse(activityQuery, c.req.query());

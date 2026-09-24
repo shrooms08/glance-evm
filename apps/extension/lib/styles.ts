@@ -186,6 +186,27 @@ const components = /* css */ `
   .g-root *:not(.g-panel-reduced):not(.g-orb-button), .g-root *::before, .g-root *::after { animation: none !important; transition: none !important; }
   .g-orb-pulse { opacity: .5; transform: scale(1.25); }
 }
+
+/* ---------- Portfolio, journal, why it moved ---------- */
+.g-up { color: var(--g-lime); }
+.g-down { color: var(--g-down); }
+.g-tabs { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--g-r-pill); background: var(--g-raised); border: 1px solid var(--g-line); }
+.g-tab { border: 0; background: transparent; color: var(--g-mute); padding: 4px 12px; border-radius: var(--g-r-pill); font-size: var(--g-ui-size); font-weight: var(--g-ui-weight); cursor: pointer; }
+.g-tab[aria-selected="true"] { background: var(--g-surface); color: var(--g-text); box-shadow: 0 0 0 1px var(--g-line-strong); }
+.g-link-btn { border: 0; background: none; padding: 0; color: var(--g-lime); font-size: var(--g-meta-size); cursor: pointer; text-align: left; align-self: flex-start; }
+.g-link-btn:hover { color: var(--g-text); }
+.g-portfolio, .g-journal, .g-why { display: flex; flex-direction: column; gap: var(--g-s5); }
+.g-pos-cash { padding: var(--g-s4) 0; border-top: 1px solid var(--g-line); border-bottom: 1px solid var(--g-line); }
+.g-positions { list-style: none; display: flex; flex-direction: column; }
+.g-position { display: flex; flex-direction: column; gap: 3px; padding: var(--g-s5) 0; border-bottom: 1px solid var(--g-line); }
+.g-position:last-child { border-bottom: 0; }
+.g-bought-from a, .g-journal a.g-ui { color: var(--g-text); text-decoration: underline; text-decoration-color: var(--g-line-strong); text-underline-offset: 2px; }
+.g-quote { font-style: italic; color: var(--g-soft); }
+.g-why-summary { color: var(--g-text); }
+.g-cite { color: var(--g-lime); font-family: var(--g-mono); font-size: 11px; margin-left: 1px; }
+.g-sources { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.g-sources a { color: var(--g-text); font-size: var(--g-ui-size); }
+.g-sources a:hover { color: var(--g-lime); }
 `;
 
 export function stylesheet(selector = ":host"): string {

@@ -191,8 +191,33 @@ export async function apiGet<T>(path: string, fetchFn: typeof fetch = fetch): Pr
   throw new ApiProblem("other", message, code, res.status);
 }
 
+/** GET /portfolio/:vault: average cost from the vault's own trades, valued at its oracle prices. */
+export interface PortfolioPosition {
+  symbol: string;
+  name: string;
+  qty: Money;
+  avgCost: Money;
+  costBasis: Money;
+  price: { raw: string; decimals: number; value: string; formatted: string };
+  priceAge: { seconds: number; text: string };
+  marketState: MarketState;
+  value: Money;
+  unrealizedPnl: Money;
+  unrealizedPnlPct: string | null;
+  realizedPnl: Money;
+  transferredIn: Money | null;
+}
+
+export interface PortfolioView {
+  usdg: Money;
+  positions: PortfolioPosition[];
+  totals: { value: Money; stocksValue: Money; costBasis: Money; unrealizedPnl: Money; unrealizedPnlPct: string | null; realizedPnl: Money };
+  sentence: string;
+}
+
 export const api = {
   vault: (address: string) => apiGet<VaultView>(`/vault/${address}`),
+  portfolio: (address: string) => apiGet<PortfolioView>(`/portfolio/${address}`),
   activity: (address: string, limit = 200) => apiGet<ActivityView>(`/vault/${address}/activity?limit=${limit}`),
   health: () => apiGet<HealthView>("/health"),
   catalog: () => apiGet<CatalogView>("/catalog"),

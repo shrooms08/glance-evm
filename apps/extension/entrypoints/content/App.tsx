@@ -28,6 +28,7 @@ import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
 import { SoundCue, type Sfx } from "../../lib/sfx";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
+import { capturePage, type PageContext } from "../../lib/journal";
 import { rememberOrbAnchor } from "../../lib/updatedNotice";
 
 const HOVER_DWELL_MS = 300;
@@ -64,6 +65,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const voiceContext = useRef<() => VoiceCommandContext>(() => ({}));
   const assistant = useAssistant({ context: () => voiceContext.current() });
   const [mentions, setMentions] = useState<Mention[]>(underliner.current());
+  /** This page, and the sentence around the company's first underline, for the headline journal. */
+  const pageContextFor = (symbol: string): PageContext => capturePage(document, underliner.current().find((m) => m.symbol === symbol)?.range ?? null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [openedByKeyboard, setOpenedByKeyboard] = useState(false);
   const [docked, setDocked] = useState(false);
@@ -124,6 +127,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
       if (msg.kind === "page:scan") return underliner.scan().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
+      // The side panel is placing a buy: this page, and the sentence that named the company (kept in this browser).
+      if (msg.kind === "page:context") return Promise.resolve(pageContextFor(msg.symbol)) as never;
       return undefined;
     };
     safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
@@ -391,6 +396,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
                 assistant.setCard(null);
               }}
               autoFocusInput={openedByKeyboard}
+              pageContext={pageContextFor}
             />
           </GooPanel>
 
@@ -427,7 +433,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           onPointerDownCapture={() => (cardPinned.current = true)}
           onFocusCapture={() => (cardPinned.current = true)}
         >
-          <CompanyCard key={hover.symbol} symbol={hover.symbol} variant="hover" onClose={() => setHover(null)} />
+          <CompanyCard key={hover.symbol} symbol={hover.symbol} variant="hover" onClose={() => setHover(null)} pageContext={() => capturePage(document, hover.range)} />
         </div>
       )}
     </div>

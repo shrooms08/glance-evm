@@ -32,6 +32,9 @@ export const color = {
   inkSoft: "#3A3A40", // Secondary text on light
   // A transaction that failed (the chain rejected the owner's own change). Never a guard: guards are amber.
   fail: "#FF7A6B",
+  // A position that's down: a muted red, quieter than a failure (up is lime). Never used for a guard.
+  down: "#E08A80",
+  downInk: "#A8483C",
   failInk: "#B42318",
   // Translucent helpers
   idleRing: "rgba(255,255,255,.18)",
@@ -78,6 +81,7 @@ export const themes = {
     fail: color.fail,
     failWash: color.failWash,
     failLine: color.failLine,
+    down: color.down,
     shadow: color.shadow,
     scrim: color.scrim,
   },
@@ -102,6 +106,7 @@ export const themes = {
     fail: color.failInk,
     failWash: color.failInkWash,
     failLine: color.failInkLine,
+    down: color.downInk,
     shadow: color.lightShadow,
     scrim: color.scrim,
   },

@@ -12,7 +12,8 @@ import { ageHours, priceUsd, shortHash } from "../lib/format";
 import { BlockedCard } from "./BlockedCard";
 import { useGlance } from "./context";
 import { Orb } from "./Orb";
-import { useTradeFlow } from "./useTradeFlow";
+import { useTradeFlow, type PageContextSource } from "./useTradeFlow";
+import { WhyLine } from "./Why";
 
 const PRESETS = ["10", "25", "100"];
 
@@ -25,16 +26,18 @@ interface Props {
   variant?: "hover" | "panel";
   /** A spoken "yes" / "cancel" from the assistant, applied to a pending review. */
   decision?: { n: number; confirm: boolean };
+  /** Where this card is on a page, for the headline journal. */
+  pageContext?: PageContextSource;
 }
 
-export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", decision }: Props) {
+export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", decision, pageContext }: Props) {
   const g = useGlance();
   const stock = g.catalog.find((s) => s.symbol === symbol);
   const [price, setPrice] = useState<Price | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [custom, setCustom] = useState("");
   // A card opened by voice ("buy ten dollars of Tesla") answers aloud; one opened by hover or click stays quiet.
-  const { flow, start, confirm, reset } = useTradeFlow(symbol, { voice: Boolean(autoAmount) });
+  const { flow, start, confirm, reset } = useTradeFlow(symbol, { voice: Boolean(autoAmount), pageContext });
 
   const loadPrice = useCallback(async () => {
     setPriceError(null);
@@ -156,6 +159,7 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
             </button>
           </form>
           {variant === "hover" && <span className="g-meta">Glance checks every limit on chain before anything is sent.</span>}
+          <WhyLine symbol={symbol} />
         </div>
       ) : flow.step === "quoting" ? (
         <div className="g-section g-row" aria-live="polite">

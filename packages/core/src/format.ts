@@ -118,3 +118,30 @@ export function usdgToTokens(
 ): bigint {
   return (usdg * 10n ** BigInt(priceDecimals + tokenDecimals)) / (price * 10n ** BigInt(usdgDecimals));
 }
+
+/** A signed USDG amount: "+$1.40", "-$0.20", "$0". */
+export function formatSignedUsd(raw: bigint, decimals: number): string {
+  if (raw === 0n) return formatUsd(0n, decimals);
+  return raw > 0n ? `+${formatUsd(raw, decimals)}` : `-${formatUsd(-raw, decimals)}`;
+}
+
+/**
+ * `part` as a signed percentage of `whole`, one decimal place, rounded half away from zero: "+2.3%", "-1.1%", "0%".
+ * Null when `whole` is zero (no basis to compare against).
+ */
+export function formatSignedPercent(part: bigint, whole: bigint): string | null {
+  if (whole === 0n) return null;
+  const neg = (part < 0n) !== (whole < 0n);
+  const p = part < 0n ? -part : part;
+  const w = whole < 0n ? -whole : whole;
+  const tenths = (p * 1000n + w / 2n) / w;
+  if (tenths === 0n) return "0%";
+  const text = `${tenths / 10n}.${tenths % 10n}`.replace(/\.0$/, "");
+  return `${neg ? "-" : "+"}${text}%`;
+}
+
+/** Signed basis points of `part` over `whole` (rounded toward zero), for sorting and colour; 0 when `whole` is 0. */
+export function signedBps(part: bigint, whole: bigint): number {
+  if (whole === 0n) return 0;
+  return Number((part * 10_000n) / whole);
+}

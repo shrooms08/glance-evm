@@ -18,6 +18,8 @@ import { erc20Abi, glanceVaultAbi, stockDeskAbi, testPriceFeedAbi } from "./abi.
 import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
 import { primaryVault } from "./deployment.js";
+import { buildPortfolio, findDeployBlock, toTradeEvents, VaultEventCache } from "./portfolio.js";
+import { explainMove, type FeedMove, type WhyAnswer } from "./why.js";
 import { onChainRefusals } from "./refusals.js";
 import { glanceFactories } from "@glance/core/factories";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "./rpc.js";
@@ -890,10 +892,14 @@ async function feedStatus(ctx: AppContext, latest: bigint, now: number) {
 }
 
 /** Claude's budget for /health: the models in use (null where Claude is off), the daily limit, calls used, paused. */
-export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmModels" | "llmBudget">) {
+export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmModels" | "llmBudget"> & { why?: AppContext["why"] }) {
   const { dailyLimit, usedToday, paused } = ctx.llmBudget.status();
   return {
-    models: { resolver: ctx.llm ? ctx.llmModels.resolver : null, intent: ctx.intentModel ? ctx.llmModels.intent : null },
+    models: {
+      resolver: ctx.llm ? ctx.llmModels.resolver : null,
+      intent: ctx.intentModel ? ctx.llmModels.intent : null,
+      why: ctx.why?.summarizer ? ctx.llmModels.why : null,
+    },
     dailyLimit,
     usedToday,
     paused,
@@ -941,4 +947,83 @@ export async function healthView(ctx: AppContext) {
       },
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio
+// ---------------------------------------------------------------------------
+
+/** One incremental event cache per running API (per context, so tests stay isolated). */
+const portfolioCaches = new WeakMap<AppContext, VaultEventCache>();
+function portfolioEvents(ctx: AppContext): VaultEventCache {
+  let cache = portfolioCaches.get(ctx);
+  if (!cache) {
+    cache = new VaultEventCache({
+      latestBlock: () => ctx.client.getBlockNumber({ cacheTime: 0 }),
+      deployBlock: (vault, latest) =>
+        findDeployBlock((blockNumber) => ctx.client.getCode({ address: vault, blockNumber }), BigInt(ctx.deployment.blockNumber), latest),
+      events: async (vault, from, to) => toTradeEvents(await getVaultLogs(ctx, vault, from, to)),
+    });
+    portfolioCaches.set(ctx, cache);
+  }
+  return cache;
+}
+
+export async function portfolioView(ctx: AppContext, vaultParam: string) {
+  return buildPortfolio(
+    {
+      readVault: async (vault) => {
+        const v = await readVaultCore(ctx, vault);
+        return { usdg: v.usdg, usdgDecimals: v.usdgDecimals };
+      },
+      readPrice: async (symbol, vault) => {
+        const p = await readPrice(ctx, stockBySymbol(ctx, symbol), vault);
+        return { price: p.price, decimals: p.decimals, ageSeconds: p.ageSeconds, state: p.state };
+      },
+      balanceOf: (token, holder) => ctx.client.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [holder] }),
+      events: portfolioEvents(ctx),
+      now: () => latestTimestamp(ctx),
+    },
+    ctx,
+    vaultParam,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Why it moved
+// ---------------------------------------------------------------------------
+
+/** About 3 days of Robinhood Chain testnet blocks, to find where a feed stood 3 days before its last update. */
+const MOVE_LOOKBACK_BLOCKS = 1_600_000n;
+
+/**
+ * The move over the last 3 days of the feed's own history (its PriceSet events), measured up to its last update, so a
+ * closed market reads "as of the last close". Null when there's no earlier point to compare with.
+ */
+export async function feedMove(ctx: AppContext, symbol: string): Promise<FeedMove | null> {
+  const stock = stockBySymbol(ctx, symbol);
+  const [latest, current] = await Promise.all([ctx.client.getBlockNumber({ cacheTime: 0 }), readPrice(ctx, stock, ctx.defaultVault)]);
+  const logs = await ctx.client.getLogs({
+    address: stock.feed,
+    event: testPriceFeedAbi.find((i) => i.type === "event" && i.name === "PriceSet") as Extract<(typeof testPriceFeedAbi)[number], { type: "event"; name: "PriceSet" }>,
+    fromBlock: startBlock(ctx, latest, MOVE_LOOKBACK_BLOCKS),
+    toBlock: latest,
+  });
+  const points = logs
+    .map((l) => ({ answer: l.args.answer as bigint, updatedAt: Number(l.args.updatedAt as bigint) }))
+    .filter((p) => p.answer > 0n && p.updatedAt > 0)
+    .sort((a, b) => a.updatedAt - b.updatedAt);
+  if (points.length === 0) return null;
+  const windowStart = current.updatedAt - 3 * 86_400;
+  const from = points.filter((p) => p.updatedAt <= windowStart).at(-1) ?? points[0]!;
+  if (from.updatedAt >= current.updatedAt) return null;
+  return { fromPrice: from.answer, toPrice: current.price, decimals: current.decimals, fromAt: from.updatedAt, toAt: current.updatedAt, marketState: current.state };
+}
+
+export async function whyView(ctx: AppContext, symbolParam: string): Promise<WhyAnswer> {
+  const stock = stockBySymbol(ctx, symbolParam);
+  return explainMove(
+    { ...ctx.why, feedMove: (s) => feedMove(ctx, s), now: () => Date.now(), log: (l) => console.log(l) },
+    { symbol: stock.symbol, name: stock.name },
+  );
 }

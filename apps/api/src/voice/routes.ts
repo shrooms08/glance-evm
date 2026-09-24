@@ -16,7 +16,8 @@ import { isAddress } from "viem";
 import { z } from "zod";
 
 import type { AppContext } from "../context.js";
-import { ApiError, priceView, vaultView } from "../services.js";
+import { ApiError, portfolioView, priceView, vaultView, whyView } from "../services.js";
+import { spokenSummary } from "../why.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
 
 const MAX_AUDIO_BYTES = 2_000_000; // ~60s of opus: far more than a command
@@ -116,6 +117,15 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
         reply: `You've spent ${w.used.formatted} of your ${w.limit.formatted} in the last 24 hours. ${w.remaining.formatted} left.`,
         facts: { used: w.used.formatted, limit: w.limit.formatted, remaining: w.remaining.formatted },
       };
+    }
+    case "portfolio": {
+      if (!vault) return { reply: "Add your vault in settings and I can show your portfolio." };
+      const p = await portfolioView(ctx, vault);
+      return { reply: p.sentence, facts: { totals: p.totals } };
+    }
+    case "why": {
+      const a = await whyView(ctx, it.symbol!);
+      return { reply: spokenSummary(a, name), facts: { why: { summary: a.summary, sources: a.sources.length } } };
     }
     case "explain":
       if (context.lastGuard) return { reply: context.lastGuard.message };

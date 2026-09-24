@@ -74,6 +74,13 @@ const envSchema = z.object({
   FISH_LATENCY: z.enum(["low", "normal", "balanced"]).default("balanced"),
   /** Claude model for voice intents: a fast one, since this is on the path from key release to the reply. */
   INTENT_MODEL: z.string().default("claude-haiku-4-5"),
+  /** Claude model for "Why it moved" summaries: Haiku by default, Opus refused unless ALLOW_OPUS=1. */
+  WHY_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Company news for "Why it moved" (finnhub.io). Server-side only: never logged, never sent to a client. */
+  FINNHUB_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Per-IP limits for the new read endpoints. */
+  WHY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(20),
+  PORTFOLIO_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),
   /** Where RESOLVER_CACHE_FILE defaults to, relative to this package. */
   LLM_CACHE_DIR: z.string().default(resolve(import.meta.dirname, "../.cache")),
   /** "fake": simulated transcription and speech, for testing the voice path without keys (refused in production). */

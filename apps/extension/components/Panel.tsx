@@ -7,7 +7,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { keyLabel } from "../lib/hotkeys";
 import { isAddress } from "../lib/settings";
+import type { PageContext } from "../lib/journal";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
+import { PortfolioCard } from "./Portfolio";
+import { WhyCard } from "./Why";
 import { marketClosed, useGlance } from "./context";
 import { Orb, ORB_LABELS } from "./Orb";
 import type { useAssistant } from "./useAssistant";
@@ -29,9 +32,11 @@ interface Props {
   onClose?(): void;
   /** Focus the command box on open (keyboard users). */
   autoFocusInput?: boolean;
+  /** The page a buy from this panel is placed from, for the headline journal (null: none). */
+  pageContext?(symbol: string): Promise<PageContext | null> | PageContext | null;
 }
 
-export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput }: Props) {
+export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext }: Props) {
   const g = useGlance();
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -44,6 +49,7 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
   }, [autoFocusInput]);
 
   const idleLine = `Hold ${voiceLabel} to talk, or type below`;
+  const cardSymbol = assistant.card?.kind === "company" ? assistant.card.symbol : null;
   const line = g.orb.state === "idle" && !g.orb.line ? idleLine : g.orb.line || idleLine;
   const meta = g.orb.meta || (host ? `Reading ${host} · ${companies.length} ${companies.length === 1 ? "name" : "names"} found` : "");
 
@@ -107,7 +113,31 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
 
         {assistant.card?.kind === "company" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
-            <CompanyCard key={assistant.card.key} symbol={assistant.card.symbol} autoAmount={assistant.card.autoAmount} decision={assistant.decision} onClose={() => assistant.setCard(null)} />
+            <CompanyCard
+              key={assistant.card.key}
+              symbol={assistant.card.symbol}
+              autoAmount={assistant.card.autoAmount}
+              decision={assistant.decision}
+              onClose={() => assistant.setCard(null)}
+              pageContext={pageContext ? () => pageContext(cardSymbol!) : undefined}
+            />
+          </div>
+        )}
+
+        {assistant.card?.kind === "portfolio" && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
+            <PortfolioCard key={assistant.card.key} initialTab={assistant.card.tab} onClose={() => assistant.setCard(null)} />
+          </div>
+        )}
+
+        {assistant.card?.kind === "why" && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
+            <WhyCard
+              key={assistant.card.key}
+              symbol={assistant.card.symbol}
+              name={g.catalog.find((s) => s.symbol === (assistant.card as { symbol: string }).symbol)?.name}
+              onClose={() => assistant.setCard(null)}
+            />
           </div>
         )}
 
@@ -179,9 +209,12 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         </button>
       </form>
 
-      <div className="g-between" style={{ padding: "0 var(--g-s7) var(--g-s5)" }}>
+      <div className="g-between" style={{ padding: "0 var(--g-s7) var(--g-s5)", flexWrap: "wrap", rowGap: 0 }}>
         <button className="g-btn g-btn-ghost" onClick={onSwitchMode}>
           {layout === "tall" ? "Float on the page instead" : "Dock to the side panel"}
+        </button>
+        <button className="g-btn g-btn-ghost" onClick={() => assistant.setCard({ kind: "portfolio", key: Date.now() })}>
+          Portfolio
         </button>
         <button className="g-btn g-btn-ghost" onClick={g.openSettings}>
           Settings

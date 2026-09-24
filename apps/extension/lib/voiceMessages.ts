@@ -8,7 +8,7 @@ import type { VoiceCode } from "./voiceReasons";
 
 /** What the API understood. A buy only names the card to open: nothing trades without the confirm tap. */
 export interface VoiceIntent {
-  intent: "buy" | "sell" | "price" | "spend-so-far" | "explain" | "unknown";
+  intent: "buy" | "sell" | "price" | "spend-so-far" | "explain" | "portfolio" | "why" | "unknown";
   symbol: string | null;
   amount: string | null;
   /** The one-sentence spoken reply (already being spoken by the offscreen document). */

@@ -4,6 +4,7 @@ import type { Address } from "viem";
 
 import { MarketChip } from "@/components/MarketChip";
 import { OwnVaultGate } from "@/components/OwnVaultGate";
+import { PositionsTable } from "@/components/PositionsCard";
 import { Meter } from "@/components/Meter";
 import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
@@ -13,7 +14,7 @@ import type { VaultView } from "@/lib/api";
 import { capRows, freesUp, marketNow, type CapRow, type CapState, type CapUse } from "@/lib/caps";
 import { addressUrl } from "@/lib/chain";
 import { formatDuration, formatUsd, formatWhen, shortAddress } from "@/lib/format";
-import { useHref, useVaultView } from "@/lib/vault";
+import { useHref, usePortfolio, useVaultView } from "@/lib/vault";
 
 export default function Dashboard() {
   return <OwnVaultGate>{(vault) => <DashboardFor vault={vault} />}</OwnVaultGate>;
@@ -81,6 +82,7 @@ function VaultHeading({ vault, address }: { vault?: VaultView; address: string }
 
 function Balances({ v }: { v: VaultView }) {
   const held = v.positions.filter((p) => BigInt(p.quantity.raw) > 0n);
+  const portfolio = usePortfolio(v.address);
   const empty = BigInt(v.balances.total.raw) === 0n;
   return (
     <section className="card" aria-labelledby="bal-h">
@@ -99,6 +101,9 @@ function Balances({ v }: { v: VaultView }) {
         <Notice title="This vault holds nothing yet">It needs USDG before the agent can buy anything. Fund it from the owner's wallet: Get started walks through it.</Notice>
       ) : held.length === 0 ? (
         <p className="meta pad">No stock positions yet. Everything is in USDG.</p>
+      ) : portfolio.data && portfolio.data.positions.length > 0 ? (
+        // Average cost, PnL and price age, from the vault's own trades (GET /portfolio).
+        <PositionsTable data={portfolio.data} />
       ) : (
         <table className="table">
           <thead>

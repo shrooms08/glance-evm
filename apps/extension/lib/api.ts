@@ -1,7 +1,7 @@
 /**
  * Typed API client for every extension surface. Calls go through the background service worker.
  */
-import type { Catalog, Health, Price, Quote, Resolve, Side, Trade, Vault } from "./api-types";
+import type { Catalog, Health, Portfolio, Price, Quote, Resolve, Side, Trade, Vault, WhyMoved } from "./api-types";
 import { send } from "./lifecycle";
 import { setChainStatus } from "./chainStatus";
 import type { ApiRequest, ApiResponse } from "./messages";
@@ -60,6 +60,8 @@ export const api = {
   resolve: (text: string) => call<Resolve>("POST", "/resolve", { text }),
   price: (symbol: string, vault?: string) => call<Price>("GET", `/price/${encodeURIComponent(symbol)}${vault ? `?${q({ vault })}` : ""}`),
   vault: (address: string) => call<Vault>("GET", `/vault/${address}`),
+  portfolio: (address: string) => call<Portfolio>("GET", `/portfolio/${address}`),
+  why: (symbol: string) => call<WhyMoved>("GET", `/why/${encodeURIComponent(symbol)}`),
   quote: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Quote>("GET", `/quote?${q(p)}`),
   trade: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>

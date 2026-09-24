@@ -20,6 +20,7 @@ import { hush, speak, startVoice, type VoiceSession } from "../lib/voiceClient";
 import type { FallbackReason, VoiceCommandContext, VoiceIntent, VoiceTiming } from "../lib/voiceMessages";
 import { detectBrowser, failureKind, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
 import { useGlance } from "./context";
+import { spokenWhy } from "./Why";
 
 /** The short label under the reason, so the kinds of failure are told apart at a glance. */
 const KIND_META: Record<VoiceFailureKind, string> = {
@@ -51,6 +52,8 @@ export function voiceReason(code: VoiceCode): string {
 export type AssistantCard =
   | { kind: "company"; symbol: string; autoAmount?: string; key: number }
   | { kind: "spent" }
+  | { kind: "portfolio"; key: number; tab?: "positions" | "journal" }
+  | { kind: "why"; symbol: string; key: number }
   | null;
 
 export function useAssistant(opts: { context?: () => VoiceCommandContext } = {}) {
@@ -113,6 +116,21 @@ export function useAssistant(opts: { context?: () => VoiceCommandContext } = {})
           const frees = w.nextReleaseInSeconds ? ` The oldest buy frees up in ${until(w.nextReleaseInSeconds)}.` : "";
           return say(`You've spent ${w.used.formatted} of your ${w.limit.formatted} in the last 24 hours. ${w.remaining.formatted} left.${frees}`, "Rolling 24h window");
         }
+        case "portfolio": {
+          setCard({ kind: "portfolio", key: ++seq.current });
+          if (!isAddress(g.vaultAddress)) return say("Add your vault in settings and I can show your portfolio.");
+          const res = await api.portfolio(g.vaultAddress);
+          if (!res.ok) return say(res.message);
+          return say(res.data.sentence, "Portfolio");
+        }
+        case "why": {
+          setCard({ kind: "why", symbol: cmd.symbol, key: ++seq.current });
+          const name = g.catalog.find((s) => s.symbol === cmd.symbol)?.name ?? cmd.symbol;
+          g.setOrb({ state: "thinking", line: `Checking the news on ${name}`, meta: "" });
+          const res = await api.why(cmd.symbol);
+          if (!res.ok) return say(res.message);
+          return say(spokenWhy(res.data, name), "Sources below");
+        }
         case "confirm":
         case "cancel":
           // Only a tap (or a typed "yes") confirms: a misheard word must never move money.
@@ -140,6 +158,13 @@ export function useAssistant(opts: { context?: () => VoiceCommandContext } = {})
           break;
         case "spend-so-far":
           if (isAddress(g.vaultAddress)) setCard({ kind: "spent" });
+          break;
+        case "portfolio":
+          setCard({ kind: "portfolio", key: ++seq.current });
+          break;
+        case "why":
+          // The API is already speaking the summary; the card shows it with its sources as links.
+          if (it.symbol) setCard({ kind: "why", symbol: it.symbol, key: ++seq.current });
           break;
       }
       // The reply is about to play: stay on thinking (no flicker to idle) until the audio actually starts. With spoken

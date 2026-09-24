@@ -11,6 +11,8 @@ export type Command =
   | { kind: "buy"; symbol: string; amount: string }
   | { kind: "price"; symbol: string }
   | { kind: "spent" }
+  | { kind: "portfolio" }
+  | { kind: "why"; symbol: string }
   | { kind: "confirm" }
   | { kind: "cancel" }
   | { kind: "unknown"; heard: string };
@@ -90,6 +92,16 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
 
   if (/\b(spent|spend)\b.*\btoday\b|how much .*\b(spent|left)\b|what have i spent|what's left today|how much can i (still )?(spend|buy)/.test(t)) {
     return { kind: "spent" };
+  }
+
+  if (/\bhow am i doing\b|\bwhat do i (own|have|hold)\b|\b(show|open|see)( me)? my (portfolio|positions|holdings|stocks)\b|^(my )?(portfolio|positions|holdings)$|\bhow's my portfolio\b/.test(t)) {
+    return { kind: "portfolio" };
+  }
+
+  // "why did Tesla move", "why is AMD down": a company and a movement word.
+  if (/\bwhy\b|\bwhat moved\b/.test(t) && /\b(move|moved|moving|up|down|drop|dropped|jump|jumped|fall|fell|rise|rose|rally|rallied|slide|slid|surge|surged|plunge|plunged|spike|spiked|climb|climbed)\b/.test(t)) {
+    const symbol = findCompany(t.replace(/^why (did|is|has|was|are)\s+/, "").replace(/\s+(move|moved|moving|up|down|drop|dropped|jump|jumped|fall|fell|rise|rose|rally|rallied|today|so much).*$/, ""), table);
+    if (symbol) return { kind: "why", symbol };
   }
 
   // buy <amount> [dollars] [worth] [of] <company>

@@ -114,6 +114,9 @@ importers:
 
   apps/extension:
     dependencies:
+      '@glance/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@glance/design':
         specifier: workspace:*
         version: link:../../packages/design

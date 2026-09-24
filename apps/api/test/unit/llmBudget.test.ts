@@ -39,7 +39,7 @@ function resolverWith(client: MessagesClient, opts: { limit?: number; cacheFile?
 describe("models", () => {
   it("defaults every Claude call to Haiku, including the old ANTHROPIC_MODEL name", () => {
     const c = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE }), quiet);
-    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU });
+    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU });
     expect(HAIKU).toBe("claude-haiku-4-5");
   });
 
@@ -49,9 +49,9 @@ describe("models", () => {
     expect(log).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0]![0]).toMatch(/resolver model "claude-opus-5" refused/);
     const lines: string[] = [];
-    const c = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, ANTHROPIC_MODEL: "claude-opus-5", INTENT_MODEL: "claude-opus-4-7" }), (l) => lines.push(l));
-    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU });
-    expect(lines.filter((l) => l.includes("refused"))).toHaveLength(2);
+    const c = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, ANTHROPIC_MODEL: "claude-opus-5", INTENT_MODEL: "claude-opus-4-7", WHY_MODEL: "claude-opus-5" }), (l) => lines.push(l));
+    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU });
+    expect(lines.filter((l) => l.includes("refused"))).toHaveLength(3);
     // RESOLVER_MODEL wins over the old name.
     expect(createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, RESOLVER_MODEL: "claude-sonnet-5", ANTHROPIC_MODEL: "claude-opus-5" }), quiet).llmModels.resolver).toBe("claude-sonnet-5");
   });
@@ -229,11 +229,11 @@ describe("visibility", () => {
   });
 
   it("/health reports the models, the limit, calls used and whether Claude is paused", () => {
-    expect(llmHealth(ctx)).toEqual({ models: { resolver: null, intent: null }, dailyLimit: 150, usedToday: 0, paused: false });
+    expect(llmHealth(ctx)).toEqual({ models: { resolver: null, intent: null, why: null }, dailyLimit: 150, usedToday: 0, paused: false });
     const budget = new LlmBudget(5, null, quiet, () => T0);
     budget.tryAcquire();
     budget.failed({ status: 402 });
-    const withClaude = { ...ctx, llm: {} as never, intentModel: {} as never, llmBudget: budget };
-    expect(llmHealth(withClaude)).toEqual({ models: { resolver: HAIKU, intent: HAIKU }, dailyLimit: 5, usedToday: 1, paused: true });
+    const withClaude = { ...ctx, llm: {} as never, intentModel: {} as never, llmBudget: budget, why: { ...ctx.why, summarizer: {} as never } };
+    expect(llmHealth(withClaude)).toEqual({ models: { resolver: HAIKU, intent: HAIKU, why: HAIKU }, dailyLimit: 5, usedToday: 1, paused: true });
   });
 });

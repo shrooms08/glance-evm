@@ -240,6 +240,41 @@ says which in `refusal.source`:
   "sources": { "events": "ok", "preflightRefusals": { "persisted": true }, "onChainRefusals": "ok" } }
 ```
 
+### `GET /portfolio/:vault`
+
+This returns what the vault holds and how it's doing: USDG cash, and each stock with its quantity, average cost,
+cost basis, oracle price and its age, value, and unrealized and realized PnL. It also has totals and one plain
+sentence ("You hold $62 across 2 stocks, up $1.40 overall.").
+
+- **Cost basis:** comes from the vault's own `Bought`, `Sold` and `Withdrawn` events, by the average-cost method, in
+  bigint (6-decimal USDG, 18-decimal stocks).
+- **Sells:** take out cost at the average and book the difference as realized PnL.
+- **Shares that arrived outside a trade:** count at zero cost, flagged `transferredIn`.
+- **Event reads:** cached per vault and read incrementally, from the vault's deploy block (found by binary search on
+  its code) the first time, then only new blocks.
+- **Errors:** the same 503 `RPC_UNAVAILABLE` and 404 `NOT_A_VAULT` as `/vault`.
+- **Rate limit:** `PORTFOLIO_RATE_LIMIT_PER_MINUTE` per IP (default 60).
+
+### `GET /why/:symbol`
+
+This says why a stock moved, from the news, and never gives advice.
+
+- **Response:** `{ symbol, move: { pct, from, to, window, source, label, note? }, summary, sources: [{ title, url, site,
+  publishedAt }], generatedAt, cached }`.
+- **News:** Finnhub company news for the last 3 days (`FINNHUB_API_KEY`, server-side only), cached for 15 minutes.
+  Stock Tokens map to their US tickers in `@glance/core/tickers`.
+- **Move:** from our own feed history (the stand-in feeds' `PriceSet` events). Otherwise Finnhub's quote, labelled
+  "Finnhub quote (change since the previous close)". When the market is closed, the note says the move is as of the
+  last close.
+- **Summary:** Claude (Haiku, through the LLM budget) writes at most 2 sentences using only the numbered headlines,
+  citing them as [1] and [2], in hedged wording, or "No clear news explains this move." It's cached for 3 hours per
+  symbol.
+- **Checks on the summary:** citations must point at real headlines, and any advice or prediction phrase (the tone
+  rules in `@glance/core/tone`) discards the summary and returns the headlines alone.
+- **Fallbacks:** at the daily limit or if Claude fails, the top 3 headlines with no summary. If Finnhub is down,
+  "News isn't available right now." Neither is ever an error.
+- **Rate limit:** `WHY_RATE_LIMIT_PER_MINUTE` per IP (default 20).
+
 ### `GET /quote?vault=&symbol=&side=buy|sell&amount=[&slippageBps=]`
 
 For a buy, `amount` is in USDG; for a sell, it is in shares.

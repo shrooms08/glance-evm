@@ -162,3 +162,45 @@ export interface Trade {
   filled: { usdgIn?: Amount; tokensOut?: Amount; tokensIn?: Amount; usdgOut?: Amount } | null;
   balancesAfter: Record<string, Amount>;
 }
+
+/** GET /portfolio/:vault. Money is { raw, value, formatted }; signed amounts are formatted "+$1.40" / "-$0.20". */
+export interface PortfolioPosition {
+  symbol: string;
+  name: string;
+  token: string;
+  qty: Amount;
+  avgCost: Amount;
+  costBasis: Amount;
+  price: { raw: string; decimals: number; value: string; formatted: string };
+  priceAge: { seconds: number; text: string };
+  marketState: MarketState;
+  value: Amount;
+  unrealizedPnl: Amount;
+  unrealizedPnlPct: string | null;
+  unrealizedPnlBps: number;
+  realizedPnl: Amount;
+  /** Shares that arrived outside a trade, counted at zero cost. */
+  transferredIn: Amount | null;
+  lastBuy: { txHash: string; timestamp: number } | null;
+}
+
+export interface Portfolio {
+  vault: string;
+  usdg: Amount & { address: string };
+  positions: PortfolioPosition[];
+  totals: { value: Amount; stocksValue: Amount; costBasis: Amount; unrealizedPnl: Amount; unrealizedPnlPct: string | null; realizedPnl: Amount };
+  /** One plain sentence, e.g. "You hold $62 across 2 stocks, up $1.40 overall." */
+  sentence: string;
+  asOf: number;
+}
+
+/** GET /why/:symbol. The summary cites sources as [1], [2]; null when only the headlines are shown. */
+export interface WhyMoved {
+  symbol: string;
+  move: { pct: string | null; from: string; to: string; window: string; source: "glance-feed" | "finnhub-quote"; label: string; note?: string } | null;
+  summary: string | null;
+  summaryNote?: "llm-unavailable" | "guarded" | "no-news" | "news-unavailable";
+  sources: Array<{ title: string; url: string; site: string; publishedAt: string }>;
+  generatedAt: string;
+  cached: boolean;
+}

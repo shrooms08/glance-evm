@@ -163,6 +163,15 @@ export function useVaultView(vault: Address) {
   });
 }
 
+export function usePortfolio(vault: Address) {
+  return useQuery({
+    queryKey: ["portfolio", vault],
+    queryFn: () => api.portfolio(vault),
+    ...readOptions,
+    refetchInterval: (q) => (q.state.error instanceof ApiProblem ? 8_000 : 30_000),
+  });
+}
+
 export function useActivity(vault: Address) {
   return useQuery({
     queryKey: ["activity", vault],

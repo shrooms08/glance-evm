@@ -15,7 +15,7 @@ import type { MessagesClient } from "../llm.js";
 import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "../llmBudget.js";
 import { extractAmounts } from "./amounts.js";
 
-export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "unknown"] as const;
+export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
 export interface VoiceContext {
@@ -126,6 +126,13 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   if (/\b(spent|spend|spending)\b.*\b(today|so far)\b|how much (have i|did i) (spent|spend)|what have i spent|how much .*\bleft\b|how much can i (still )?(spend|buy)/.test(t)) {
     return { ...base, symbol: null, intent: "spend-so-far" };
   }
+  if (/\bhow am i doing\b|\bwhat do i (own|have|hold)\b|\b(show|open|see)( me)? my (portfolio|positions|holdings|stocks)\b|^(my )?(portfolio|positions|holdings)$|\bhow('s| is) my (portfolio|vault) doing\b/.test(t)) {
+    return { ...base, symbol: null, intent: "portfolio" };
+  }
+  // "why did Tesla move?", "why is AMD down?": a company and a movement word. (A bare "why?" explains a refusal.)
+  if (symbol && /\bwhy\b|\bwhat (moved|happened to)\b/.test(t) && /\b(move|moved|moving|up|down|drop|dropped|dropping|jump|jumped|fall|fell|falling|rise|rose|rising|rally|rallied|slide|slid|surge|surged|plunge|plunged|spike|spiked|tank|tanked|climb|climbed)\b/.test(t)) {
+    return { ...base, intent: "why" };
+  }
   if (/^(why|explain|what happened|what does that mean|how come)\b|\bwhy (was|did|is|not|can't|cant)\b/.test(t)) {
     return { ...base, symbol: null, intent: "explain" };
   }
@@ -180,6 +187,11 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
       if (block !== "advice") out.intent = "unknown";
     }
   }
+  if (out.intent === "why" && !out.symbol) {
+    notes.push("why without a catalog company");
+    out.intent = "explain";
+  }
+  if (out.intent === "portfolio") out.symbol = null;
   if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol) {
     notes.push(`${out.intent} without a catalog company`);
     out.intent = "unknown";
@@ -231,7 +243,9 @@ export function createClaudeIntent(
   const system = [
     "You turn one spoken command to a stock-buying browser assistant into a structured intent.",
     "Intents: buy, sell, price (the user wants a price), spend-so-far (how much they have spent or have left today),",
-    "explain (they ask why something happened, e.g. why a trade was refused), unknown (anything else, or ambiguous).",
+    "explain (they ask why something happened, e.g. why a trade was refused), portfolio (how they're doing, what they",
+    "own, or to show their portfolio), why (why a named stock moved, e.g. \"why did Tesla move?\"; needs the symbol),",
+    "unknown (anything else, or ambiguous).",
     "Rules:",
     "- symbol: ONLY a ticker from the list below, or null. Never any other ticker.",
     "- amount: ONLY a dollar amount the user explicitly said, as digits (\"ten dollars\" -> \"10\"). If they named no",

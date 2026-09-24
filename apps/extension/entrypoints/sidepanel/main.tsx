@@ -17,6 +17,7 @@ import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { mountPageStyles } from "../../lib/extensionPage";
 import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { PageMatchesReply } from "../../lib/messages";
+import type { PageContext } from "../../lib/journal";
 import { defaultMode } from "../../lib/settings";
 
 function SidePanel() {
@@ -103,9 +104,21 @@ function SidePanel() {
     if (tab?.id !== undefined) void browser.tabs.sendMessage(tab.id, { kind: "page:reveal", symbol }).catch(() => {});
   };
 
+  /** A buy from the side panel: ask the active tab which page it is and which sentence named the company. */
+  const pageContext = async (symbol: string): Promise<PageContext | null> => {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id === undefined) return null;
+    try {
+      return ((await browser.tabs.sendMessage(tab.id, { kind: "page:context", symbol })) as PageContext | undefined) ?? null;
+    } catch {
+      return null; // a browser page or the Web Store: not bought from a page
+    }
+  };
+
   return (
     <Panel
       layout="tall"
+      pageContext={pageContext}
       assistant={assistant}
       host={page.host}
       companies={page.companies as PageCompany[]}

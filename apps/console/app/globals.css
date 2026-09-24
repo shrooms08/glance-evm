@@ -393,3 +393,9 @@ fieldset.segmented:disabled label.segment { opacity: 0.5; cursor: not-allowed; }
 
 /* Long source labels (e.g. NFLX's) wrap instead of overflowing the card. */
 .source-chip { white-space: normal; text-align: right; }
+
+/* ---------- Positions (GET /portfolio) ---------- */
+.pnl-up { color: var(--t-accent-text); }
+.pnl-down { color: var(--t-down); }
+.meta.block { display: block; }
+.positions-total { padding-top: var(--g-s5); }

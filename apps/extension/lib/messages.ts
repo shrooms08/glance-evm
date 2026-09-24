@@ -17,7 +17,9 @@ export type PageMessage =
   | { kind: "page:matches" }
   /** Option+G from the side panel: rescan the page now, then reply with what was found. */
   | { kind: "page:scan" }
-  | { kind: "page:reveal"; symbol: string };
+  | { kind: "page:reveal"; symbol: string }
+  /** The side panel is placing a buy: what page is it on, and which sentence named the company? (For the journal.) */
+  | { kind: "page:context"; symbol: string };
 
 export interface PageMatchesReply {
   host: string;

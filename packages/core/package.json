@@ -10,7 +10,9 @@
     "./format": "./src/format.ts",
     "./rpc": "./src/rpc.ts",
     "./window": "./src/window.ts",
-    "./factories": "./src/factories.ts"
+    "./factories": "./src/factories.ts",
+    "./tone": "./src/tone.ts",
+    "./tickers": "./src/tickers.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
