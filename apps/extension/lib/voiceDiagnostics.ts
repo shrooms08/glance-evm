@@ -93,15 +93,3 @@ export async function voiceBlocker(): Promise<import("./voiceReasons").VoiceCode
   if ((await micDevicePresent()) === false) return "no-mic";
   return null;
 }
-
-/**
- * What would stop recording right now (server-side transcription needs no speech recognition in the browser, only
- * the microphone): the permission not granted yet, blocked, or no microphone. null means go ahead.
- */
-export async function micBlocker(): Promise<import("./voiceReasons").VoiceCode | null> {
-  const permission = await micPermission();
-  if (permission === "denied") return "mic-denied";
-  if (permission === "prompt") return "mic-not-enabled";
-  if ((await micDevicePresent()) === false) return "no-mic";
-  return null;
-}

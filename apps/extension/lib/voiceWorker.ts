@@ -36,7 +36,13 @@ export interface WorkerDeps {
    * whole file has arrived (MediaSource). Absent (tests, or no MediaSource): the element loads the URL itself.
    */
   streamInto?(el: HTMLAudioElement, url: string): Promise<void>;
-  micBlocker(): Promise<VoiceCode | null>;
+  /**
+   * getUserMedia failed with this error name: what to tell the user (the background decides from what it remembers:
+   * enable voice, the browser's grant ran out, no microphone). See lib/voicePrefs.ts.
+   */
+  micFailed(errorName: string): Promise<VoiceCode>;
+  /** The microphone opened: remembered, so voice stays on. */
+  micWorked(): void;
   /** The browser's speech recognition, for the fallback only. */
   listen(lang: string, h: ListenHandlers): Listener | null;
   /** The browser's speech synthesis, for the fallback only. Resolves when done; onStart when audible. */
@@ -157,23 +163,29 @@ export class VoiceWorker {
     const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", pending: null, chunks: [], capturing: false, released: 0, ended: false };
     this.sessions.set(id, s);
 
-    const [blocker, status] = await Promise.all([this.d.micBlocker(), this.apiStatus(api)]);
-    if (blocker) {
-      this.emit(s, { type: "error", code: blocker });
+    // The microphone is simply tried (a "prompt" from permissions.query isn't trusted): the permission was granted to
+    // the extension's origin once, and this document shares it. Only a real failure says anything.
+    const [status, mic] = await Promise.all([
+      this.apiStatus(api),
+      this.d.getUserMedia().then(
+        (stream) => ({ stream, error: null }),
+        (err: unknown) => ({ stream: null, error: String((err as DOMException)?.name ?? "Error") }),
+      ),
+    ]);
+    if (mic.error !== null) {
+      this.emit(s, { type: "error", code: await this.d.micFailed(mic.error).catch(() => "mic-denied" as VoiceCode) });
       return this.emit(s, { type: "end" });
     }
-    if (s.pending === "abort") return this.emit(s, { type: "end" });
-
+    this.d.micWorked();
+    if (s.pending === "abort") {
+      mic.stream!.getTracks().forEach((t) => t.stop());
+      return this.emit(s, { type: "end" });
+    }
     if (!status.reachable || !status.transcription) {
+      mic.stream!.getTracks().forEach((t) => t.stop()); // the browser's recognition opens its own
       return this.startBrowser(s, status.reachable ? "no-provider" : "api-unreachable");
     }
-    try {
-      s.stream = await this.d.getUserMedia();
-    } catch (err) {
-      const name = (err as DOMException).name;
-      this.emit(s, { type: "error", code: name === "NotAllowedError" ? "mic-denied" : name === "NotFoundError" ? "no-mic" : "audio-capture" });
-      return this.emit(s, { type: "end" });
-    }
+    s.stream = mic.stream!;
 
     // The stream to the API opens alongside the capture; audio captured before it opens is sent once it does.
     if (status.stream) {

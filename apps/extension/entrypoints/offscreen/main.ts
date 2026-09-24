@@ -9,8 +9,8 @@
 import { browser } from "wxt/browser";
 
 import { listen, speak as speakWithBrowser } from "../../lib/voice";
-import { micBlocker } from "../../lib/voiceDiagnostics";
-import type { OffscreenRequest, SpeechEvent, VoiceEvent } from "../../lib/voiceMessages";
+import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../../lib/voiceMessages";
+import type { VoiceCode } from "../../lib/voiceReasons";
 import { toPcm16, VoiceWorker } from "../../lib/voiceWorker";
 
 /** 40ms of audio per message to the API: small enough that little is left to send on release. */
@@ -96,7 +96,9 @@ const worker = new VoiceWorker({
   capturePcm,
   createAudio: () => new Audio(),
   streamInto,
-  micBlocker,
+  // This document has no chrome.storage: the background remembers what worked and decides what to show.
+  micFailed: async (name) => ((await browser.runtime.sendMessage({ kind: "voice:mic-failed", name } satisfies VoiceRequest)) as VoiceCode | undefined) ?? "mic-denied",
+  micWorked: () => void browser.runtime.sendMessage({ kind: "voice:mic-worked" } satisfies VoiceRequest).catch(() => {}),
   listen,
   speakLocally: async (text, onStart) => {
     let started = false;

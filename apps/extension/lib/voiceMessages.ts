@@ -61,7 +61,11 @@ export type VoiceRequest =
   | { kind: "voice:speak"; id: string; text: string }
   | { kind: "voice:hush" }
   /** The panel opened: have the API warm its provider connections for a command that may be coming. */
-  | { kind: "voice:warm" };
+  | { kind: "voice:warm" }
+  /** From the offscreen document: getUserMedia failed with this error name. The background answers with the code. */
+  | { kind: "voice:mic-failed"; name: string }
+  /** From the offscreen document: the microphone opened. */
+  | { kind: "voice:mic-worked" };
 
 /** Background -> offscreen document. The background adds the API's address, which the offscreen document can't read. */
 export type OffscreenRequest =

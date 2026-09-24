@@ -18,7 +18,7 @@ import { isAddress } from "../lib/settings";
 import { keyLabel } from "../lib/hotkeys";
 import { hush, speak, startVoice, type VoiceSession } from "../lib/voiceClient";
 import type { FallbackReason, VoiceCommandContext, VoiceIntent, VoiceTiming } from "../lib/voiceMessages";
-import { detectBrowser, failureKind, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
+import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
 import { useGlance } from "./context";
 import { spokenWhy } from "./Why";
 
@@ -75,6 +75,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
   const [heard, setHeard] = useState("");
   const [listening, setListening] = useState(false);
   const [timing, setTiming] = useState<VoiceTiming | null>(null);
+  /** The browser's microphone setting to copy, when its grant ran out (shown with a Copy button). */
+  const [micHint, setMicHint] = useState<{ line: string; url: string } | null>(null);
   /** Increments to tell the open company card to confirm (+1) or cancel (-1) its pending review (typed only). */
   const [decision, setDecision] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: true });
   const listener = useRef<VoiceSession | null>(null);
@@ -203,6 +205,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
   const voiceFailed = useCallback(
     (code: VoiceCode, note = "") => {
       const line = `${note ? `${note} ` : ""}${voiceReason(code)}`;
+      if (code === "mic-temporary" || code === "mic-blocked-again") setMicHint({ line: voiceReason(code), url: micSettingsUrl(browserInfo) });
       if (import.meta.env.DEV) console.info(`[glance] voice error "${code}" (${failureKind(code)}) in ${browserInfo.name} ${browserInfo.version}`);
       g.setOrb({ state: "idle", line, meta: KIND_META[failureKind(code)] });
     },
@@ -213,6 +216,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
     if (listener.current) return;
     hush();
     setHeard("");
+    setMicHint(null);
     setListening(true);
     g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
     let failed = false;
@@ -277,5 +281,5 @@ export function useAssistant(opts: AssistantOptions = {}) {
 
   const stopListening = useCallback(() => listener.current?.stop(), []);
 
-  return { card, setCard, heard, listening, decision, run, startListening, stopListening, voiceFailed, timing };
+  return { card, setCard, heard, listening, decision, run, startListening, stopListening, voiceFailed, timing, micHint, clearMicHint: () => setMicHint(null) };
 }

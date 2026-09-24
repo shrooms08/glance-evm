@@ -95,6 +95,8 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           {assistant.listening && assistant.heard ? <span className="g-transcript">“{assistant.heard}”</span> : meta ? <span className="g-data">{meta}</span> : null}
         </div>
 
+        {assistant.micHint && <MicHint hint={assistant.micHint} onDismiss={assistant.clearMicHint} />}
+
         {g.chainTrouble && !g.offline ? (
           <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
             <span className="g-ui">The Robinhood Chain testnet isn't responding right now. Trying again…</span>
@@ -240,6 +242,33 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         </button>
         <button className="g-btn g-btn-ghost" onClick={g.openSettings}>
           Settings
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The browser's microphone grant ran out: one plain line, the address to copy, never another prompt. */
+function MicHint({ hint, onDismiss }: { hint: { line: string; url: string }; onDismiss(): void }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
+      <span className="g-body">{hint.line}</span>
+      <div className="g-row" style={{ flexWrap: "wrap" }}>
+        <button
+          className="g-btn"
+          onClick={() =>
+            void navigator.clipboard.writeText(hint.url).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            )
+          }
+        >
+          {copied ? "Copied" : "Copy the address"}
+        </button>
+        <span className="g-data">{hint.url}</span>
+        <button className="g-btn g-btn-ghost" onClick={onDismiss}>
+          Dismiss
         </button>
       </div>
     </div>

@@ -11,10 +11,12 @@ import { Orb, type OrbState } from "../../components/Orb";
 import { api } from "../../lib/api";
 import { hush, speak, startVoice, type VoiceSession } from "../../lib/voiceClient";
 import { diagnose, requestMic, type VoiceDiagnostics } from "../../lib/voiceDiagnostics";
+import { markVoiceEnabled, voiceState, type VoiceState } from "../../lib/voicePrefs";
 import { reasonFor, type VoiceCode } from "../../lib/voiceReasons";
 
 export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
+  const [stored, setStored] = useState<VoiceState | null>(null);
   const [asking, setAsking] = useState(false);
   const [orb, setOrb] = useState<OrbState>("idle");
   const [line, setLine] = useState("");
@@ -23,8 +25,9 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const markUrl = browser.runtime.getURL("/glance-mark.png");
 
   const refresh = useCallback(async () => {
-    const [d, s] = await Promise.all([diagnose(), api.voiceStatus()]);
+    const [d, s, v] = await Promise.all([diagnose(), api.voiceStatus(), voiceState.getValue()]);
     setDiag(d);
+    setStored(v);
     setServer(
       s.ok
         ? { ...s.data, ok: s.data.available.transcription, reachable: true }
@@ -39,10 +42,16 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
 
   const enable = async () => {
     setAsking(true);
-    await requestMic();
+    // Granted here, the permission belongs to Glance's own origin: the offscreen document reuses it without asking.
+    if ((await requestMic()) === "granted") await markVoiceEnabled();
     setAsking(false);
     await refresh();
   };
+
+  // Opened by Glance because voice needed enabling (at most once per browser session): go straight to the button.
+  useEffect(() => {
+    if (location.hash === "#voice") document.getElementById("voice")?.scrollIntoView({ block: "center" });
+  }, []);
 
   const reason = (code: VoiceCode) => (diag ? reasonFor(code, diag.browser) : code);
 
@@ -88,7 +97,9 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
     });
   };
 
-  const granted = diag?.micPermission === "granted";
+  // "Voice enabled" once the user turned it on and the browser hasn't blocked it; a "prompt" answer from the
+  // permissions API alone doesn't undo that (Brave can report "prompt" while the mic works).
+  const granted = diag?.micPermission === "granted" || (Boolean(stored?.on) && diag?.micPermission !== "denied");
   const blocked = diag?.micPermission === "denied";
   const status = !diag
     ? ""
@@ -109,7 +120,7 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
           Voice
         </h2>
         <div className="g-row" style={{ gap: 12 }}>
-          <button className="g-btn g-btn-primary" onClick={() => void enable()} disabled={asking || granted}>
+          <button className="g-btn g-btn-primary" onClick={() => void enable()} disabled={asking || diag?.micPermission === "granted"}>
             {granted ? "Voice enabled" : asking ? "Waiting for your answer…" : "Enable voice"}
           </button>
           <span className="g-meta" role="status">

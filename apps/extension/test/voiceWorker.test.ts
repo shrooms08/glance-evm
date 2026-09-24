@@ -91,7 +91,10 @@ interface Setup {
   status?: { transcription: boolean; speech: boolean; stream: boolean } | "unreachable";
   command?: object | "fail";
   transcribe?: object | "fail";
+  /** What the background answers for a microphone failure. */
   blocker?: string | null;
+  /** getUserMedia fails with this DOMException name. */
+  mic?: string;
   listen?: (h: ListenHandlers) => void;
 }
 
@@ -129,14 +132,18 @@ function setup(o: Setup = {}) {
   const deps: WorkerDeps = {
     fetch: fetchFn as unknown as typeof fetch,
     WebSocket: FakeWS as never,
-    getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) as unknown as MediaStream,
+    getUserMedia: async () => {
+      if (o.mic) throw new DOMException("mic", o.mic);
+      return { getTracks: () => [{ stop() {} }] } as unknown as MediaStream;
+    },
     capturePcm: async (_stream, onChunk) => {
       const c = new FakeCapture();
       c.onChunk = onChunk;
       return c;
     },
     createAudio: () => new FakeAudio() as unknown as HTMLAudioElement,
-    micBlocker: async () => (o.blocker ?? null) as never,
+    micFailed: vi.fn(async () => (o.blocker ?? "mic-denied") as never),
+    micWorked: vi.fn(),
     listen: listen as never,
     speakLocally,
     emit: (e) => events.push(e),
@@ -144,7 +151,7 @@ function setup(o: Setup = {}) {
   };
   const worker = new VoiceWorker(deps);
   const types = () => events.filter((e): e is VoiceEvent => e.kind === "voice:event").map((e) => e.type);
-  return { worker, events, requests, types, listen, speakLocally, advance: (ms: number) => (clock += ms) };
+  return { worker, deps, events, requests, types, listen, speakLocally, advance: (ms: number) => (clock += ms) };
 }
 
 beforeEach(() => {
@@ -255,11 +262,22 @@ describe("voice worker: the server path", () => {
     expect(t.types().at(-1)).toBe("end");
   });
 
-  it("never records without the microphone permission, and says so", async () => {
-    const t = setup({ blocker: "mic-not-enabled" });
-    await t.worker.start("s6", "en-US", API, {});
+  it("tries the microphone straight away: when it opens, no Enable prompt, and it's remembered as working", async () => {
+    const t = setup();
+    void t.worker.start("s6", "en-US", API, {});
+    await flush();
+    expect(t.deps.micFailed).not.toHaveBeenCalled();
+    expect(t.deps.micWorked).toHaveBeenCalledTimes(1);
+    expect(t.events.some((e) => e.kind === "voice:event" && e.type === "error")).toBe(false);
+  });
+
+  it("only a real getUserMedia failure says anything, in the words the background chose", async () => {
+    const t = setup({ mic: "NotAllowedError", blocker: "mic-not-enabled" });
+    await t.worker.start("s7", "en-US", API, {});
+    expect(t.deps.micFailed).toHaveBeenCalledWith("NotAllowedError");
     expect(t.events).toContainEqual(expect.objectContaining({ type: "error", code: "mic-not-enabled" }));
     expect(t.types().at(-1)).toBe("end");
+    expect(t.deps.micWorked).not.toHaveBeenCalled();
   });
 });
 

@@ -3,6 +3,8 @@
  * It never holds a key and never signs: trades are signed by the API's agent key, which the vault bounds on chain.
  */
 import { browser } from "wxt/browser";
+
+import { markMicWorked, onMicFailure } from "../lib/voicePrefs";
 import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
@@ -187,6 +189,16 @@ export default defineBackground(() => {
           if (existing?.length) await browser.runtime.sendMessage({ kind: "offscreen:warm", api: await apiBase() } satisfies OffscreenRequest).catch(() => {});
           else await fetch(`${await apiBase()}/voice/warm`, { method: "POST" }).catch(() => {});
         })();
+        return undefined;
+      case "voice:mic-failed":
+        // What to show for a microphone failure, from what Glance remembers (lib/voicePrefs.ts). The settings page
+        // opens by itself at most once per browser session.
+        return onMicFailure(message.name).then(async (d) => {
+          if (d.openSetup) await browser.tabs.create({ url: browser.runtime.getURL("/options.html#voice") }).catch(() => {});
+          return d.code;
+        });
+      case "voice:mic-worked":
+        void markMicWorked().catch(() => {});
         return undefined;
       case "voice:hush":
         void browser.runtime.sendMessage({ kind: "offscreen:hush" } satisfies OffscreenRequest).catch(() => {});

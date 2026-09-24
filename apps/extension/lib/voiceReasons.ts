@@ -55,6 +55,8 @@ export type VoiceCode =
   | "no-recognition" // the browser build has no SpeechRecognition
   | "mic-not-enabled" // Glance hasn't been granted the microphone yet (permission "prompt")
   | "mic-denied" // the user blocked the microphone for Glance
+  | "mic-temporary" // it worked before, now it's refused: the browser's grant was only temporary (shown once a session)
+  | "mic-blocked-again" // the same, again in this session: a short line, never another prompt
   | "no-mic" // no audio input device
   | "offscreen-failed" // the extension could not start its voice worker
   | "network" // recognition started but its speech service is unreachable
@@ -86,6 +88,8 @@ export function failureKind(code: VoiceCode): VoiceFailureKind {
     case "mic-denied":
     case "not-allowed":
     case "mic-not-enabled":
+    case "mic-temporary":
+    case "mic-blocked-again":
       return "mic-denied";
     case "no-mic":
     case "audio-capture":
@@ -107,6 +111,10 @@ export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
       return `This ${browser.name === "Other" ? "browser" : `${browser.name} build`} has no speech recognition. Google Chrome has it. Type instead.`;
     case "mic-not-enabled":
       return "I need microphone access. Click “Enable voice” in Glance's settings, then try again.";
+    case "mic-temporary":
+      return micTemporaryLine(browser);
+    case "mic-blocked-again":
+      return `The mic still isn't allowed. Set Glance to Allow at ${micSettingsUrl(browser)}. You can type meanwhile.`;
     case "mic-denied":
     case "not-allowed":
       return "The microphone is blocked for Glance. Allow it for this extension in your browser's settings, then click “Enable voice” in Glance's settings.";
@@ -139,4 +147,17 @@ export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
     default:
       return "Voice stopped unexpectedly. Type your request instead.";
   }
+}
+
+/** Where the browser's own microphone setting lives, for the "only allowed for a while" line. */
+export function micSettingsUrl(browser: Pick<BrowserInfo, "name">): string {
+  if (browser.name === "Brave") return "brave://settings/content/microphone";
+  if (browser.name === "Microsoft Edge") return "edge://settings/content/microphone";
+  return "chrome://settings/content/microphone";
+}
+
+/** The mic worked before and now it's refused: the browser's grant was temporary. */
+export function micTemporaryLine(browser: Pick<BrowserInfo, "name">): string {
+  const name = browser.name === "Other" ? "Your browser" : browser.name;
+  return `${name} only allowed the mic for a while. Open ${micSettingsUrl(browser)} and set Glance to Allow.`;
 }
