@@ -113,6 +113,9 @@ string, and `formatted` is for display.
 
 ### `GET /health`
 
+In production (`NODE_ENV=production`) this is the public view: `ok`, the chain, the block, `versions` and the feeds'
+ages. The full view below needs `?admin=<ADMIN_TOKEN>`; development always shows it.
+
 ```sh
 curl localhost:8790/health
 ```
@@ -302,6 +305,16 @@ curl 'localhost:8790/quote?vault=0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D&symb
 
 ### `POST /trade`
 
+Signed by a linked browser session (headers `x-glance-session`, `x-glance-signature`, `x-glance-deadline`,
+`x-glance-nonce`), or for an open demo vault. Otherwise 401 `SESSION_REQUIRED`, `SESSION_EXPIRED`, `BAD_SIGNATURE` or
+`REPLAYED`, each with a sentence the extension shows. See [docs/SECURITY.md](../../docs/SECURITY.md).
+
+### `POST /session/link`, `POST /session/revoke`, `GET /session/status`, `GET /session/list`
+
+The vault owner's EIP-712 signature links or unlinks a browser (the signer must be `vault.owner()` on chain). Status
+and list are what the extension and the console's "Linked browsers" card read. `make link-demo-session SESSION=0x…`
+links a browser to the demo vault with the deployer key, for recording day.
+
 The body is `{ vault, symbol, side, amount, slippageBps? }`. The server runs the preflight first. If a guard would
 stop the trade, it answers 422 with the guard and sends nothing. Otherwise it signs with the agent key, sends the
 transaction, waits for the receipt, and returns the fill and the resulting balances.
@@ -364,10 +377,19 @@ VOICE_PROVIDERS=fake PORT=8797 pnpm --filter api dev   # simulated providers, to
 
 - **Validation:** every input is checked with zod; addresses, tickers and decimal strings are strict. `/resolve`
   text is capped at 20,000 characters.
-- **CORS:** allows only the origins in `CORS_ORIGINS` (for example `chrome-extension://<id>`), plus
-  `http://localhost:*` outside production.
-- **Rate limits:** per IP, 120 requests a minute overall and 10 a minute on `/trade`. Both are configurable.
-  `X-Forwarded-For` is trusted only with `TRUST_PROXY=true`.
+- **Signed trades:** `POST /trade` needs a request signed by a browser session the vault's owner linked (EIP-712), or
+  one of the open demo vaults (`OPEN_DEMO_VAULTS`, 10 trades an hour per visitor). See
+  [docs/SECURITY.md](../../docs/SECURITY.md).
+- **CORS:** allows only the origins in `CORS_ORIGINS`: by default the extension's fixed ID and the console at
+  `http://localhost:3000`. **CORS isn't authentication.** Anything outside a browser ignores it, which is why trades
+  are signed and the paid endpoints are limited and capped.
+- **Rate limits:** per IP, 120 requests a minute overall and 10 a minute on `/trade`, plus a limit for each paid group
+  (resolve, why, Show me, chart, portfolio, voice, session). When a request names a browser session, the same limit
+  also applies per session. All are configurable. `X-Forwarded-For` is trusted only with `TRUST_PROXY=true`.
+- **Daily voice caps:** 1,800 seconds of speech-to-text and 60,000 characters of speech a day. Past them: "Voice is
+  resting for today. You can still type." Pre-recorded lines don't count.
+- **Size:** JSON bodies are at most 64 KB and audio at most 30 seconds; larger is 413.
+- **`/health`:** in production, only ok, chain, block, versions and feed ages, unless `?admin=<ADMIN_TOKEN>`.
 - **Logging:** method, path, status and time only. Request bodies and keys are never logged.
 
 ## Tests

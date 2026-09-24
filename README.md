@@ -97,6 +97,10 @@ make weekend                 # back-date the stand-in feeds to demo the closed-m
 state, quotes trades with an on-chain preflight, and places agent trades. Every contract error comes back as a sentence
 the assistant can say. See [apps/api/README.md](apps/api/README.md).
 
+Only a browser the vault's owner has linked (by signature, in the console) can ask the agent to trade, and every trade
+request is signed. The paid voice and Claude endpoints are rate-limited and capped per day. See
+[docs/SECURITY.md](docs/SECURITY.md) for the threat, the design and the demo vault exception.
+
 ```sh
 pnpm install
 pnpm --filter api dev       # http://localhost:8790
