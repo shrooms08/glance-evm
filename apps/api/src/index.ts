@@ -15,8 +15,9 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   console.log(`  deployment ${config.DEPLOYMENT_FILE}`);
   console.log(`  agent key ${ctx.signer ? `loaded (${ctx.signer.account.address})` : "not loaded: /trade disabled"}`);
   const llm = ctx.llmBudget.status();
-  console.log(`  LLM resolver fallback ${ctx.llm ? `on (${ctx.llmModels.resolver})` : "off"}`);
+  console.log(`  LLM company lookup ${ctx.llm ? `on (${ctx.llmModels.resolver}, once per glance, names cached 7 days)` : "off"}`);
   console.log(`  LLM budget: ${llm.usedToday}/${llm.dailyLimit} Claude calls used today (UTC)${llm.paused ? `, paused until ${llm.pausedUntil}` : ""}`);
+  console.log(`  LLM budgets per day: ${Object.entries(llm.byPurpose).map(([p, b]) => `${p} ${b.used}/${b.limit}`).join(", ")}`);
   // Which voice providers are active. Names and models only: keys are never logged.
   console.log(`  voice transcription: ${ctx.voice.status.transcription}`);
   console.log(`  voice speech:        ${ctx.voice.status.speech}`);

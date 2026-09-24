@@ -2,7 +2,9 @@
  * Portfolio: average cost from the vault's own trade events, in bigint; transfers in at zero cost; an incremental event
  * cache; and the same 503 / 404 split as /vault.
  */
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { ContractFunctionZeroDataError, HttpRequestError, type Address, type Hex } from "viem";
 import { describe, expect, it, vi } from "vitest";
@@ -10,8 +12,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
-import { averageCost, buildPortfolio, findDeployBlock, portfolioSentence, reconcile, replay, VaultEventCache, type EventSource, type TradeEvent } from "../../src/portfolio.js";
+import { averageCost, buildPortfolio, findDeployBlock, portfolioSentence, PortfolioStore, reconcile, replay, VaultEventCache, type EventSource, type TradeEvent } from "../../src/portfolio.js";
 import { RPC_TROUBLE_MESSAGE } from "../../src/rpc.js";
+import { vaultDeployBlock } from "../../src/services.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" }), () => {});
@@ -113,6 +116,90 @@ describe("incremental event cache", () => {
       [101n, 120n],
     ]);
     expect(source.deployBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a restart: the deploy block, the last block read and the parsed trades come back from the file", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "glance-portfolio-")), "portfolio-46630.json");
+    let latest = 100n;
+    const reads: Array<[bigint, bigint]> = [];
+    const source = (): EventSource => ({
+      latestBlock: async () => latest,
+      deployBlock: vi.fn(async () => 40n),
+      events: async (_v, from, to) => {
+        reads.push([from, to]);
+        return from <= 50n && 50n <= to ? [buy(10_000_000n, E18)] : [];
+      },
+    });
+    const first = new VaultEventCache(source(), new PortfolioStore(file));
+    const before = await first.get(VAULT);
+    first.store.set(VAULT, { ...first.store.get(VAULT)!, usdg: { address: USDG, decimals: 6 } });
+
+    latest = 130n; // restarted: a new cache on the same file
+    const s2 = source();
+    const second = new VaultEventCache(s2, new PortfolioStore(file));
+    const after = await second.get(VAULT);
+    expect(after).toEqual(before); // bigints and all
+    expect(s2.deployBlock).not.toHaveBeenCalled();
+    expect(reads).toEqual([
+      [40n, 100n],
+      [101n, 130n], // only the blocks since the last read
+    ]);
+    expect(second.store.get(VAULT)).toMatchObject({ deployBlock: 40n, scannedTo: 130n, usdg: { address: USDG, decimals: 6 } });
+    expect(readFileSync(file, "utf8")).toContain('"deployBlock":"40n"');
+  });
+
+  it("a vault read before refreshes in one round trip (head and logs together), falling back when that fails", async () => {
+    const latestBlock = vi.fn(async () => 200n);
+    const since = vi.fn(async (_v: Address, from: bigint) => ({ to: 150n, events: from <= 120n ? [buy(1_000_000n, E18)] : [] }));
+    const events = vi.fn(async () => [] as TradeEvent[]);
+    const store = new PortfolioStore(null);
+    store.set(VAULT, { deployBlock: 40n, scannedTo: 100n, events: [] });
+    const cache = new VaultEventCache({ latestBlock, deployBlock: vi.fn(async () => 40n), events, since }, store);
+    expect(await cache.get(VAULT)).toHaveLength(1);
+    expect(since).toHaveBeenCalledWith(VAULT, 101n);
+    expect(latestBlock).not.toHaveBeenCalled();
+    expect(store.get(VAULT)!.scannedTo).toBe(150n);
+    since.mockRejectedValueOnce(new Error("range too long"));
+    expect(await cache.get(VAULT)).toHaveLength(1);
+    expect(events).toHaveBeenCalledWith(VAULT, 151n, 200n);
+  });
+
+  it("an address that isn't a vault is never scanned or stored", async () => {
+    const source: EventSource = { latestBlock: async () => 10n, deployBlock: vi.fn(async () => 1n), events: vi.fn(async () => []) };
+    const events = new VaultEventCache(source);
+    const notAVault = Object.assign(new Error("no vault"), { status: 404 });
+    await expect(
+      buildPortfolio(
+        {
+          readVault: async () => Promise.reject(notAVault),
+          readPrice: async () => ({ price: 1n, decimals: 8, ageSeconds: 1, state: "OPEN" as const }),
+          balanceOf: async () => 0n,
+          events,
+          now: async () => 0,
+        },
+        ctx,
+        VAULT,
+      ),
+    ).rejects.toBe(notAVault);
+    expect(source.events).not.toHaveBeenCalled();
+    expect(events.store.get(VAULT)).toBeUndefined();
+  });
+
+  it("takes a vault's deploy block from the factories' VaultCreated event, else searches once", async () => {
+    const getLogs = vi.fn(async (q: { address: Address[]; args: { vault: Address }; fromBlock: bigint }) =>
+      q.fromBlock === 125_169_755n ? [{ blockNumber: 125_400_000n }] : [],
+    );
+    const getCode = vi.fn(async () => "0x6080" as Hex);
+    const c = { ...ctx, client: { ...ctx.client, getLogs, getCode } } as unknown as typeof ctx;
+    expect(await vaultDeployBlock(c, VAULT, 126_000_000n)).toBe(125_400_000n);
+    const q = getLogs.mock.calls[0]![0];
+    expect(q.address.map((a) => a.toLowerCase())).toEqual([ctx.deployment.factory.address.toLowerCase(), ctx.deployment.factoryV2!.address.toLowerCase()]);
+    expect(q.args).toEqual({ vault: VAULT });
+    expect(getCode).not.toHaveBeenCalled();
+    // Not from a factory (the demo vaults): the one-time search on the code.
+    getLogs.mockImplementation(async () => []);
+    expect(await vaultDeployBlock(c, VAULT, 126_000_000n)).toBe(BigInt(ctx.deployment.blockNumber)); // code at the floor already
+    expect(getCode).toHaveBeenCalled();
   });
 
   it("finds the deploy block by binary search on the code, or falls back to the floor", async () => {

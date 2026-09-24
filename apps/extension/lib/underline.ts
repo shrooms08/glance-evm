@@ -3,8 +3,13 @@
  * read-only, sent to POST /resolve, and the returned offsets are drawn with the CSS Custom Highlight API. Layout,
  * selection, copy and the page's own scripts are unaffected. Re-runs on DOM changes, debounced, with a per-chunk cache
  * so an unchanged article is never re-sent.
+ *
+ * Passive scans (page load, DOM changes) use the dictionary only: /resolve never calls Claude. Only a glance (Option+G,
+ * the orb, or the panel opening on this page) may ask Claude, with one request carrying every unresolved candidate
+ * name on the page (POST /resolve/names). Names it confirms are underlined from then on, by later scans too.
  */
 import { api } from "./api";
+import { companyCandidates, occurrences } from "./candidates";
 import { log } from "./log";
 import { chunks, collectText, rangeFor } from "./pageText";
 import { focusRule, fontFaces, highlightRule, isLightColor } from "./tokens";
@@ -46,6 +51,11 @@ export class Underliner {
   private lastScan = 0;
   private scanning = false;
   private listeners = new Set<(mentions: Mention[]) => void>();
+  /** Names Claude confirmed on this page (name -> symbol), and every name already asked (lowercased). */
+  private named = new Map<string, string>();
+  private asked = new Set<string>();
+  /** The last scan's text and dictionary matches, for picking a glance's candidates. */
+  private last: { text: string; matched: Array<{ start: number; end: number }> } = { text: "", matched: [] };
 
   constructor(private readonly exclude: Element) {}
 
@@ -100,6 +110,11 @@ export class Underliner {
     try {
       const collected = collectText(document.body, { exclude: this.exclude });
       const found: Mention[] = [];
+      const matched: Array<{ start: number; end: number }> = [];
+      const add = (symbol: string, start: number, end: number) => {
+        const range = rangeFor(document, collected.segments, start, end);
+        if (range && !range.collapsed && range.toString().trim()) found.push({ symbol, range });
+      };
       for (const chunk of chunks(collected)) {
         let matches = this.cache.get(chunk.text);
         if (!matches) {
@@ -112,16 +127,43 @@ export class Underliner {
           this.cache.set(chunk.text, matches);
         }
         for (const m of matches) {
-          const range = rangeFor(document, collected.segments, chunk.offset + m.start, chunk.offset + m.end);
-          if (range && !range.collapsed && range.toString().trim()) found.push({ symbol: m.symbol, range });
+          matched.push({ start: chunk.offset + m.start, end: chunk.offset + m.end });
+          add(m.symbol, chunk.offset + m.start, chunk.offset + m.end);
         }
       }
+      // Names a glance confirmed: found locally, no request.
+      for (const [name, symbol] of this.named) {
+        for (const o of occurrences(collected.text, name)) {
+          if (matched.some((m) => o.start < m.end && o.end > m.start)) continue;
+          add(symbol, o.start, o.end);
+        }
+      }
+      this.last = { text: collected.text, matched };
       this.mentions = found;
       registry()?.set(HIGHLIGHT, new Highlight(...found.map((m) => m.range)));
       for (const cb of this.listeners) cb(found);
     } finally {
       this.scanning = false;
     }
+  }
+
+  /**
+   * A glance: rescan, then ask about the page's unresolved candidate names in ONE request (none if there are no new
+   * ones), and underline the names that turn out to be listed companies.
+   */
+  async glance() {
+    await this.scan();
+    const candidates = companyCandidates(this.last.text, this.last.matched, this.asked);
+    if (candidates.length === 0) return;
+    for (const c of candidates) this.asked.add(c.toLowerCase());
+    const res = await api.resolveNames(candidates);
+    if (!res.ok) {
+      log("resolve names failed", res.code);
+      return;
+    }
+    if (res.data.names.length === 0) return;
+    for (const n of res.data.names) this.named.set(n.name, n.symbol);
+    await this.scan();
   }
 
   /** The mention under a viewport point, if any. */

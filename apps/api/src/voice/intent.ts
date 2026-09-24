@@ -276,7 +276,7 @@ export function createClaudeIntent(
     model,
     async classify(transcript, context) {
       // Over the daily limit, or paused after a budget error: the caller uses the rules parser instead.
-      if (opts.budget && !opts.budget.tryAcquire()) throw new Error("LLM budget: using rules");
+      if (opts.budget && !opts.budget.tryAcquire("intent")) throw new Error("LLM budget: using rules");
       let response;
       try {
         response = await client.messages.create({

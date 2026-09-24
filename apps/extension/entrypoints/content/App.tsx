@@ -125,7 +125,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         setDocked(msg.open);
       }
       if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
-      if (msg.kind === "page:scan") return underliner.scan().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
+      if (msg.kind === "page:scan") return underliner.glance().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
       // The side panel is placing a buy: this page, and the sentence that named the company (kept in this browser).
       if (msg.kind === "page:context") return Promise.resolve(pageContextFor(msg.symbol)) as never;
@@ -139,7 +139,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const glance = useCallback(async () => {
     // Mid dock or undock: the orb isn't back yet, so nothing opens until it has reformed.
     if (dockAnim) return;
-    await underliner.scan();
+    await underliner.glance();
     const found = companiesFrom(underliner.current(), g.catalog);
     if (docked) {
       void send({ kind: "assistant:glance", reply: { host, companies: found } } satisfies AssistantMessage).catch(() => {});

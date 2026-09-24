@@ -36,11 +36,12 @@ function SidePanel() {
     return () => port?.disconnect();
   }, []);
 
-  const refreshPage = useCallback(async () => {
+  /** What the active tab has found. `kind` "page:scan" is a glance (may ask Claude once); "page:matches" never is. */
+  const refreshPage = useCallback(async (kind: "page:matches" | "page:scan" = "page:matches") => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (tab?.id === undefined) return;
     try {
-      const reply = (await browser.tabs.sendMessage(tab.id, { kind: "page:matches" })) as PageMatchesReply | undefined;
+      const reply = (await browser.tabs.sendMessage(tab.id, { kind })) as PageMatchesReply | undefined;
       setPage(reply ?? { host: "", companies: [] });
     } catch {
       setPage({ host: "", companies: [] }); // browser pages and the Web Store have no content script
@@ -48,8 +49,9 @@ function SidePanel() {
   }, []);
 
   useEffect(() => {
-    void refreshPage();
-    const timer = setInterval(refreshPage, 5_000);
+    // Opening the panel on a page is a glance; the refreshes after it are passive.
+    void refreshPage("page:scan");
+    const timer = setInterval(() => void refreshPage(), 5_000);
     const onActivated = () => void refreshPage();
     browser.tabs.onActivated.addListener(onActivated);
     return () => {

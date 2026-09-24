@@ -3,13 +3,15 @@
  *
  *   models   claude-haiku-4-5 by default for everything. A model name containing "opus" is refused at startup (one
  *            warning line, Haiku used instead) unless ALLOW_OPUS=1.
- *   cap      LLM_DAILY_CALL_LIMIT calls per UTC day across the whole API (default 150), counted before each call is
- *            sent and persisted, so a restart doesn't reset it. At the limit, callers use the dictionary resolver and
- *            the rules intent parser: the user never sees an error.
- *   pause    An Anthropic 401, 402 or 429, or a "credit balance" error, pauses Claude for an hour (same fallback).
- *   cache    /resolve answers are cached for 24 hours by normalized text, including "no listed company" answers, in
- *            memory and in RESOLVER_CACHE_FILE, so the same text is never sent twice in a day, even across restarts.
- *            Keys are SHA-256 hashes: page text is never written to disk.
+ *   cap      LLM_DAILY_CALL_LIMIT calls per UTC day across the whole API (default 250), and under it a budget per
+ *            purpose (LLM_BUDGET_RESOLVER 40, LLM_BUDGET_INTENT 80, LLM_BUDGET_WHY 60, LLM_BUDGET_OTHER 70). Each call
+ *            is counted, with its purpose, before it's sent, and persisted, so a restart doesn't reset it. When one
+ *            purpose runs out only that purpose falls back (resolver to the dictionary, intent to the rules, why to
+ *            headlines only); the others keep working. The user never sees an error.
+ *   pause    An Anthropic 401, 402 or 429, or a "credit balance" error, pauses Claude for an hour (same fallbacks).
+ *   cache    Company lookups are cached for 7 days per candidate name, including "not listed" answers, in memory and
+ *            in RESOLVER_CACHE_FILE, so the same name never costs twice, even across restarts. Keys are SHA-256
+ *            hashes: nothing from a page is written to disk as text.
  *   logs     One line per call: purpose, model, input and output tokens. Never the key, the prompt, page text or audio.
  */
 import { createHash } from "node:crypto";
@@ -20,7 +22,7 @@ export const HAIKU = "claude-haiku-4-5";
 /** Small answers only: the resolver's JSON and the intent's tool call both fit well within this. */
 export const MAX_OUTPUT_TOKENS = 256;
 export const PAUSE_MS = 60 * 60 * 1000;
-export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const NAME_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type Log = (line: string) => void;
 
@@ -45,36 +47,59 @@ export function isBudgetError(err: unknown): boolean {
 
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
+/** What a Claude call is for. Each has its own daily budget under the total; "other" is kept for new features. */
+export const PURPOSES = ["resolver", "intent", "why", "other"] as const;
+export type Purpose = (typeof PURPOSES)[number];
+
+export interface BudgetLimits {
+  /** Every purpose together (LLM_DAILY_CALL_LIMIT). */
+  total: number;
+  perPurpose: Record<Purpose, number>;
+}
+
+const zeroes = (): Record<Purpose, number> => ({ resolver: 0, intent: 0, why: 0, other: 0 });
+
 interface UsageFile {
   day: string;
+  /** Every call today, whatever it was for (older files only have this). */
   used: number;
+  byPurpose: Record<Purpose, number>;
   pausedUntil: number;
 }
 
 export interface BudgetStatus {
   dailyLimit: number;
   usedToday: number;
+  byPurpose: Record<Purpose, { used: number; limit: number }>;
   paused: boolean;
   pausedUntil: string | null;
 }
 
-/** The daily call counter and the pause switch, shared by every Claude caller. */
+/**
+ * The daily call counters and the pause switch, shared by every Claude caller. Each call names its purpose and counts
+ * against that purpose's budget and the total; when a purpose runs out only that purpose falls back.
+ */
 export class LlmBudget {
+  readonly limits: BudgetLimits;
   private usage: UsageFile;
-  private announcedLimitFor: string | null = null;
+  private announcedLimit = new Set<string>();
   private announcedPauseUntil = 0;
 
   constructor(
-    readonly dailyLimit: number,
+    limits: number | BudgetLimits,
     private readonly file: string | null,
     private readonly log: Log = (l) => console.log(l),
     private readonly now: () => number = () => Date.now(),
   ) {
-    this.usage = { day: utcDay(this.now()), used: 0, pausedUntil: 0 };
+    // A bare number is a total with no per-purpose split (every purpose may use all of it).
+    this.limits = typeof limits === "number" ? { total: limits, perPurpose: { resolver: limits, intent: limits, why: limits, other: limits } } : limits;
+    this.usage = { day: utcDay(this.now()), used: 0, byPurpose: zeroes(), pausedUntil: 0 };
     if (file) {
       try {
         const saved = JSON.parse(readFileSync(file, "utf8")) as Partial<UsageFile>;
-        this.usage = { day: String(saved.day ?? this.usage.day), used: Number(saved.used ?? 0), pausedUntil: Number(saved.pausedUntil ?? 0) };
+        const byPurpose = zeroes();
+        for (const p of PURPOSES) byPurpose[p] = Number(saved.byPurpose?.[p] ?? 0);
+        this.usage = { day: String(saved.day ?? this.usage.day), used: Number(saved.used ?? 0), byPurpose, pausedUntil: Number(saved.pausedUntil ?? 0) };
       } catch {
         // no file yet, or unreadable: start from zero
       }
@@ -82,9 +107,13 @@ export class LlmBudget {
     this.rollOver();
   }
 
+  get dailyLimit(): number {
+    return this.limits.total;
+  }
+
   private rollOver() {
     const today = utcDay(this.now());
-    if (this.usage.day !== today) this.usage = { ...this.usage, day: today, used: 0 };
+    if (this.usage.day !== today) this.usage = { ...this.usage, day: today, used: 0, byPurpose: zeroes() };
   }
 
   private save() {
@@ -92,11 +121,19 @@ export class LlmBudget {
     writeJsonAtomic(this.file, this.usage);
   }
 
+  private announce(key: string, line: string) {
+    const k = `${this.usage.day}:${key}`;
+    if (this.announcedLimit.has(k)) return;
+    this.announcedLimit.add(k);
+    this.log(line);
+  }
+
   /**
-   * Counts one call and returns true if it may be sent; false (with one log line per day or per pause) when the daily
-   * limit is reached or Claude is paused. Callers then use the dictionary or the rules.
+   * Counts one call for `purpose` and returns true if it may be sent; false (with one log line per day, per purpose, or
+   * per pause) when that purpose's budget or the total is used up, or Claude is paused. Callers then use their fallback:
+   * the dictionary, the rules, or headlines only.
    */
-  tryAcquire(): boolean {
+  tryAcquire(purpose: Purpose = "other"): boolean {
     this.rollOver();
     const now = this.now();
     if (now < this.usage.pausedUntil) {
@@ -106,14 +143,16 @@ export class LlmBudget {
       }
       return false;
     }
-    if (this.usage.used >= this.dailyLimit) {
-      if (this.announcedLimitFor !== this.usage.day) {
-        this.announcedLimitFor = this.usage.day;
-        this.log("[llm] LLM daily limit reached, using rules");
-      }
+    if (this.usage.used >= this.limits.total) {
+      this.announce("total", "[llm] LLM daily limit reached, using rules");
+      return false;
+    }
+    if (this.usage.byPurpose[purpose] >= this.limits.perPurpose[purpose]) {
+      this.announce(purpose, `[llm] ${purpose} budget reached (${this.limits.perPurpose[purpose]} today), ${FALLBACK[purpose]}`);
       return false;
     }
     this.usage.used += 1;
+    this.usage.byPurpose[purpose] += 1;
     this.save();
     return true;
   }
@@ -132,14 +171,25 @@ export class LlmBudget {
   status(): BudgetStatus {
     this.rollOver();
     const paused = this.now() < this.usage.pausedUntil;
+    const byPurpose = {} as BudgetStatus["byPurpose"];
+    for (const p of PURPOSES) byPurpose[p] = { used: this.usage.byPurpose[p], limit: this.limits.perPurpose[p] };
     return {
-      dailyLimit: this.dailyLimit,
+      dailyLimit: this.limits.total,
       usedToday: this.usage.used,
+      byPurpose,
       paused,
       pausedUntil: paused ? new Date(this.usage.pausedUntil).toISOString() : null,
     };
   }
 }
+
+/** What each purpose falls back to when its budget is used up. */
+const FALLBACK: Record<Purpose, string> = {
+  resolver: "using the dictionary",
+  intent: "using rules",
+  why: "headlines only",
+  other: "skipped",
+};
 
 /** One line per Claude call: what for, which model, tokens in and out. Nothing else. */
 export function logUsage(log: Log, purpose: string, model: string, usage: { input_tokens?: number; output_tokens?: number } | undefined) {
@@ -147,34 +197,47 @@ export function logUsage(log: Log, purpose: string, model: string, usage: { inpu
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Resolver cache
+// Company-name cache
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** What Claude said about a text: the catalog mentions (symbol and the exact quote); empty means "no listed company". */
-export interface CachedAnswer {
-  mentions: Array<{ symbol: string; quote: string }>;
+/** What Claude said about one candidate name: a catalog symbol, or null for "not a listed company". */
+export type NameAnswer = string | null;
+
+/**
+ * "  The Tesla\n Inc's " and "tesla inc" are the same question: lowercase, whitespace collapsed, a leading "the", a
+ * possessive and trailing punctuation dropped.
+ */
+export function normalizeName(name: string): string {
+  return name
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^the /, "")
+    .replace(/[\s.,;:!?]+$/, "")
+    .replace(/['’]s$/, "")
+    .trim();
 }
 
-interface CacheFile {
-  entries: Record<string, { at: number; mentions: Array<{ symbol: string; quote: string }> }>;
+interface NameCacheFile {
+  entries: Record<string, { at: number; symbol: NameAnswer }>;
 }
 
-/** Lowercase, whitespace collapsed, trimmed: "  Tesla\n Inc " and "tesla inc" are the same question. */
-export function normalizeForCache(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-export class ResolverCache {
-  private entries: CacheFile["entries"] = {};
+/**
+ * Claude's answer per candidate name, "not listed" included, for 7 days, in memory and in a file under the gitignored
+ * .cache dir, so the same name never costs twice (restarts included). Keys are SHA-256 hashes of the normalized name.
+ */
+export class NameCache {
+  private entries: NameCacheFile["entries"] = {};
 
   constructor(
     private readonly file: string | null,
     private readonly now: () => number = () => Date.now(),
-    private readonly max = 5_000,
+    private readonly max = 20_000,
   ) {
     if (!file) return;
     try {
-      const saved = JSON.parse(readFileSync(file, "utf8")) as Partial<CacheFile>;
+      const saved = JSON.parse(readFileSync(file, "utf8")) as Partial<NameCacheFile>;
       this.entries = saved.entries ?? {};
       this.prune();
     } catch {
@@ -182,12 +245,12 @@ export class ResolverCache {
     }
   }
 
-  private key(text: string): string {
-    return createHash("sha256").update(normalizeForCache(text)).digest("hex");
+  private key(name: string): string {
+    return createHash("sha256").update(normalizeName(name)).digest("hex");
   }
 
   private prune() {
-    const cutoff = this.now() - CACHE_TTL_MS;
+    const cutoff = this.now() - NAME_CACHE_TTL_MS;
     for (const [k, v] of Object.entries(this.entries)) if (v.at <= cutoff) delete this.entries[k];
     const keys = Object.keys(this.entries);
     if (keys.length > this.max) {
@@ -198,16 +261,19 @@ export class ResolverCache {
     }
   }
 
-  get(text: string): CachedAnswer | null {
-    const hit = this.entries[this.key(text)];
-    if (!hit || hit.at <= this.now() - CACHE_TTL_MS) return null;
-    return { mentions: hit.mentions };
+  /** The cached answer, or undefined when this name hasn't been asked in the last 7 days. */
+  get(name: string): NameAnswer | undefined {
+    const hit = this.entries[this.key(name)];
+    if (!hit || hit.at <= this.now() - NAME_CACHE_TTL_MS) return undefined;
+    return hit.symbol;
   }
 
-  set(text: string, answer: CachedAnswer) {
-    this.entries[this.key(text)] = { at: this.now(), mentions: answer.mentions };
+  /** Stores several answers with one file write. */
+  setMany(answers: ReadonlyArray<[name: string, symbol: NameAnswer]>) {
+    const at = this.now();
+    for (const [name, symbol] of answers) this.entries[this.key(name)] = { at, symbol };
     this.prune();
-    if (this.file) writeJsonAtomic(this.file, { entries: this.entries } satisfies CacheFile);
+    if (this.file) writeJsonAtomic(this.file, { entries: this.entries } satisfies NameCacheFile);
   }
 
   get size(): number {

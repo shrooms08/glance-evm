@@ -10,7 +10,7 @@ import { chainFor, createChainClient } from "./chain.js";
 import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
-import { chooseModel, LlmBudget, ResolverCache, type Log } from "./llmBudget.js";
+import { chooseModel, LlmBudget, NameCache, type BudgetLimits, type Log } from "./llmBudget.js";
 import { TtlCache } from "./ttlCache.js";
 import { createFinnhub, createWhySummarizer, NEWS_TTL_MS, SUMMARY_TTL_MS, type NewsClient, type Summarizer, type WhyAnswer } from "./why.js";
 import { RefusalLog } from "./refusals.js";
@@ -43,12 +43,14 @@ export interface AppContext {
   why: { news: NewsClient | null; summarizer: Summarizer | null; summaries: TtlCache<Omit<WhyAnswer, "cached">> };
   /** Trades the guards refused before anything was sent (see src/refusals.ts). */
   refusals: RefusalLog;
+  /** The gitignored .cache dir for persisted caches (portfolio events, news, names); null keeps them in memory (tests). */
+  cacheDir: string | null;
 }
 
 /** The resolver cache and the call counter: files under LLM_CACHE_DIR by default; memory only in tests or when "". */
 export function llmFiles(config: Config): { cache: string | null; usage: string | null } {
   const set = config.RESOLVER_CACHE_FILE;
-  const cache = set !== undefined ? set.trim() || null : config.NODE_ENV === "test" ? null : join(config.LLM_CACHE_DIR, "resolver.json");
+  const cache = set !== undefined ? set.trim() || null : config.NODE_ENV === "test" ? null : join(config.LLM_CACHE_DIR, "resolver-names.json");
   return { cache, usage: cache ? join(dirname(cache), "llm-usage.json") : null };
 }
 
@@ -65,7 +67,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
   const files = llmFiles(config);
   const cacheDir = files.cache ? dirname(files.cache) : null;
   const anthropicKey = looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? undefined : config.ANTHROPIC_API_KEY;
-  const budget = new LlmBudget(config.LLM_DAILY_CALL_LIMIT, files.usage, log);
+  const budget = new LlmBudget(budgetLimits(config), files.usage, log);
   return {
     config,
     deployment,
@@ -79,7 +81,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       model: models.resolver,
       catalog: catalog.text,
       budget,
-      cache: new ResolverCache(files.cache),
+      cache: new NameCache(files.cache),
       log,
     }),
     desks: desksOf(deployment),
@@ -92,6 +94,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       : createClaudeIntent(config.ANTHROPIC_API_KEY, models.intent, catalog.entries, 3_000, { budget, log }),
     llmBudget: budget,
     llmModels: models,
+    cacheDir,
     why: {
       news: config.FINNHUB_API_KEY
         ? createFinnhub({ apiKey: config.FINNHUB_API_KEY, cache: new TtlCache(cacheDir ? join(cacheDir, "finnhub.json") : null, NEWS_TTL_MS) })
@@ -99,6 +102,14 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       summarizer: createWhySummarizer({ apiKey: anthropicKey, model: models.why, budget, log }),
       summaries: new TtlCache(cacheDir ? join(cacheDir, "why.json") : null, SUMMARY_TTL_MS),
     },
+  };
+}
+
+/** The total and the per-purpose daily budgets, from the environment. */
+export function budgetLimits(config: Config): BudgetLimits {
+  return {
+    total: config.LLM_DAILY_CALL_LIMIT,
+    perPurpose: { resolver: config.LLM_BUDGET_RESOLVER, intent: config.LLM_BUDGET_INTENT, why: config.LLM_BUDGET_WHY, other: config.LLM_BUDGET_OTHER },
   };
 }
 

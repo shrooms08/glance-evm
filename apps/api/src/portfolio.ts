@@ -13,8 +13,12 @@
  * Prices are the vault's own oracle feeds, as for every other Glance number.
  *
  * Events are cached per vault and read incrementally: from the vault's deploy block the first time, then only the
- * blocks since the last read.
+ * blocks since the last read. The cache is persisted (PortfolioStore, under the gitignored .cache dir), with the
+ * vault's deploy block and its immutable USDG address and decimals, so a restart doesn't pay for the first read again.
  */
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
 import { getAddress, type Address, type Hex } from "viem";
 
 import { formatSignedPercent, formatSignedUsd, formatUsd, signedBps, tokenValueInUsdg } from "@glance/core/format";
@@ -100,41 +104,110 @@ export interface EventSource {
   deployBlock(vault: Address, latest: bigint): Promise<bigint>;
   /** The vault's trade events in [from, to]. */
   events(vault: Address, from: bigint, to: bigint): Promise<TradeEvent[]>;
+  /**
+   * Optional: the vault's trade events from `from` up to the chain head, with the head, in one round trip (the head and
+   * the logs in one batch). Used for a vault already read once; may throw (e.g. a range too long), and then `events`
+   * is used instead.
+   */
+  since?(vault: Address, from: bigint): Promise<{ to: bigint; events: TradeEvent[] }>;
+}
+
+/** What's kept per vault: where it starts, how far it's been read, its trades, and its (immutable) USDG. */
+export interface VaultRecord {
+  deployBlock: bigint;
+  scannedTo: bigint;
+  events: TradeEvent[];
+  usdg?: { address: Address; decimals: number };
+}
+
+/**
+ * The persisted side of the event cache: one JSON file (bigints as strings), rewritten atomically after each change.
+ * Memory only when `file` is null (tests).
+ */
+export class PortfolioStore {
+  private vaults: Record<string, VaultRecord> = {};
+
+  constructor(private readonly file: string | null) {
+    if (!file) return;
+    try {
+      const saved = JSON.parse(readFileSync(file, "utf8"), (_k, v) => (typeof v === "string" && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v)) as { vaults?: Record<string, VaultRecord> };
+      this.vaults = saved.vaults ?? {};
+    } catch {
+      this.vaults = {};
+    }
+  }
+
+  get(vault: Address): VaultRecord | undefined {
+    return this.vaults[vault.toLowerCase()];
+  }
+
+  set(vault: Address, record: VaultRecord) {
+    this.vaults[vault.toLowerCase()] = record;
+    if (!this.file) return;
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      const tmp = join(dirname(this.file), `.${Date.now()}-${process.pid}.tmp`);
+      writeFileSync(tmp, JSON.stringify({ vaults: this.vaults }, (_k, v) => (typeof v === "bigint" ? `${v}n` : v)));
+      renameSync(tmp, this.file);
+    } catch {
+      // best effort: memory still holds it
+    }
+  }
 }
 
 /** Per vault: its deploy block, the last block read, and every trade event so far. Reads only what's new. */
 export class VaultEventCache {
-  private entries = new Map<string, { scannedTo: bigint; events: TradeEvent[] }>();
   private inflight = new Map<string, Promise<TradeEvent[]>>();
 
-  constructor(private readonly source: EventSource) {}
+  constructor(
+    private readonly source: EventSource,
+    readonly store: PortfolioStore = new PortfolioStore(null),
+  ) {}
 
   async get(vault: Address): Promise<TradeEvent[]> {
     const key = vault.toLowerCase();
     const running = this.inflight.get(key);
     if (running) return running;
-    const p = this.refresh(vault, key).finally(() => this.inflight.delete(key));
+    const p = this.refresh(vault).finally(() => this.inflight.delete(key));
     this.inflight.set(key, p);
     return p;
   }
 
-  private async refresh(vault: Address, key: string): Promise<TradeEvent[]> {
+  private async refresh(vault: Address): Promise<TradeEvent[]> {
+    const known = this.store.get(vault);
+    if (known && this.source.since) {
+      try {
+        const { to, events: fresh } = await this.source.since(vault, known.scannedTo + 1n);
+        if (to <= known.scannedTo) return known.events; // no block since the last read
+        const events = [...known.events, ...fresh];
+        this.store.set(vault, { ...this.store.get(vault)!, scannedTo: to, events });
+        return events;
+      } catch {
+        // fall back to the chunked read below
+      }
+    }
     const latest = await this.source.latestBlock();
-    const known = this.entries.get(key);
-    const from = known ? known.scannedTo + 1n : await this.source.deployBlock(vault, latest);
-    if (from > latest) return known?.events ?? [];
+    const deployBlock = known?.deployBlock ?? (await this.source.deployBlock(vault, latest));
+    const from = known ? known.scannedTo + 1n : deployBlock;
+    if (from > latest) {
+      if (!known) this.store.set(vault, { deployBlock, scannedTo: deployBlock - 1n, events: [] });
+      return known?.events ?? [];
+    }
     const fresh = await this.source.events(vault, from, latest);
     const events = [...(known?.events ?? []), ...fresh];
-    this.entries.set(key, { scannedTo: latest, events });
+    // Merged with what's stored now (the vault's USDG may have been saved while this read ran).
+    this.store.set(vault, { ...this.store.get(vault), deployBlock, scannedTo: latest, events });
     return events;
   }
 }
 
 /**
- * The block a vault was deployed in, by binary search on its code (so a vault created long after the deployment is
- * read from its own first block). Falls back to `floor` if the RPC can't answer for past blocks.
+ * The block a vault was deployed in, by a search on its code (so a vault created long after the deployment is read from
+ * its own first block). Each round probes `fanout` blocks at once (one RPC batch), narrowing the range `fanout + 1`
+ * times per round trip: about 5 round trips for 400k blocks instead of 19. Falls back to `floor` if the RPC can't
+ * answer for past blocks.
  */
-export async function findDeployBlock(getCode: (block: bigint) => Promise<Hex | undefined>, floor: bigint, latest: bigint): Promise<bigint> {
+export async function findDeployBlock(getCode: (block: bigint) => Promise<Hex | undefined>, floor: bigint, latest: bigint, fanout = 16): Promise<bigint> {
   const has = async (b: bigint) => {
     const code = await getCode(b);
     return Boolean(code && code !== "0x");
@@ -142,12 +215,21 @@ export async function findDeployBlock(getCode: (block: bigint) => Promise<Hex | 
   try {
     let lo = floor;
     let hi = latest;
-    if (!(await has(hi))) return floor;
-    if (await has(lo)) return lo;
+    const [atLo, atHi] = await Promise.all([has(lo), has(hi)]);
+    if (!atHi) return floor;
+    if (atLo) return lo;
+    // Invariant: no code at lo, code at hi.
     while (hi - lo > 1n) {
-      const mid = (lo + hi) / 2n;
-      if (await has(mid)) hi = mid;
-      else lo = mid;
+      const span = hi - lo;
+      const n = BigInt(fanout) < span - 1n ? BigInt(fanout) : span - 1n;
+      const probes = Array.from({ length: Number(n) }, (_, i) => lo + (span * BigInt(i + 1)) / (n + 1n));
+      const found = await Promise.all(probes.map(has));
+      const firstWith = found.indexOf(true);
+      if (firstWith === -1) lo = probes.at(-1)!;
+      else {
+        hi = probes[firstWith]!;
+        if (firstWith > 0) lo = probes[firstWith - 1]!;
+      }
     }
     return hi;
   } catch {
@@ -173,14 +255,30 @@ export interface PortfolioDeps {
 
 export async function buildPortfolio(deps: PortfolioDeps, ctx: Pick<AppContext, "catalog">, vaultParam: string) {
   const vault = getAddress(vaultParam);
-  const v = await deps.readVault(vault); // 404 NOT_A_VAULT / 503 RPC_UNAVAILABLE come from here, as for /vault
+  // One parallel wave: the vault (its USDG is immutable, so it comes from the store once known), its events, the time,
+  // and every stock's balance and price. Only the USDG balance waits for the vault's USDG address.
+  const vaultP = deps.readVault(vault);
+  const stocksP = Promise.all(ctx.catalog.entries.map((stock) => Promise.all([deps.balanceOf(stock.token, vault), deps.readPrice(stock.symbol, vault)])));
+  let v: Awaited<typeof vaultP>, events: TradeEvent[], usdgBalance: bigint, now: number, stockReads: Awaited<typeof stocksP>;
+  try {
+    [v, events, usdgBalance, now, stockReads] = await Promise.all([
+      vaultP,
+      // After the vault check, so an address that isn't a vault never starts a scan (or lands in the store).
+      vaultP.then(() => deps.events.get(vault)),
+      vaultP.then((x) => deps.balanceOf(x.usdg, vault)),
+      deps.now(),
+      stocksP,
+    ]);
+  } catch (err) {
+    await vaultP; // 404 NOT_A_VAULT / 503 RPC_UNAVAILABLE come from here, as for /vault, whichever read failed first
+    throw err;
+  }
   const d = v.usdgDecimals;
-  const [events, usdgBalance, now] = await Promise.all([deps.events.get(vault), deps.balanceOf(v.usdg, vault), deps.now()]);
   const holdings = replay(events);
 
   const rows = await Promise.all(
-    ctx.catalog.entries.map(async (stock) => {
-      const [balance, price] = await Promise.all([deps.balanceOf(stock.token, vault), deps.readPrice(stock.symbol, vault)]);
+    ctx.catalog.entries.map(async (stock, i) => {
+      const [balance, price] = stockReads[i]!;
       const h = reconcile(holdings.get(stock.token.toLowerCase()) ?? empty(), balance);
       const value = tokenValueInUsdg(h.qty, stock.tokenDecimals, price.price, price.decimals, d);
       const unrealized = value - h.costBasis;

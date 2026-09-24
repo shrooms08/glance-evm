@@ -3,6 +3,7 @@
  * agent trades. Every amount stays a bigint in its token's decimals until it is formatted for display.
  */
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   decodeEventLog,
@@ -14,11 +15,11 @@ import {
   type Log,
 } from "viem";
 
-import { erc20Abi, glanceVaultAbi, stockDeskAbi, testPriceFeedAbi } from "./abi.generated.js";
+import { erc20Abi, glanceVaultAbi, glanceVaultFactoryAbi, stockDeskAbi, testPriceFeedAbi } from "./abi.generated.js";
 import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
 import { primaryVault } from "./deployment.js";
-import { buildPortfolio, findDeployBlock, toTradeEvents, VaultEventCache } from "./portfolio.js";
+import { buildPortfolio, findDeployBlock, PortfolioStore, toTradeEvents, VaultEventCache } from "./portfolio.js";
 import { explainMove, type FeedMove, type WhyAnswer } from "./why.js";
 import { onChainRefusals } from "./refusals.js";
 import { glanceFactories } from "@glance/core/factories";
@@ -181,6 +182,11 @@ async function getVaultLogs(ctx: AppContext, vault: Address, fromBlock: bigint, 
     const end = start + LOG_CHUNK_BLOCKS - 1n < toBlock ? start + LOG_CHUNK_BLOCKS - 1n : toBlock;
     logs.push(...(await ctx.client.getLogs({ address: vault, fromBlock: start, toBlock: end })));
   }
+  return decodeVaultLogs(ctx, logs);
+}
+
+/** Decodes a vault's raw logs (skipping any that aren't GlanceVault events), with their block times. */
+async function decodeVaultLogs(ctx: AppContext, logs: Log[]): Promise<DecodedLog[]> {
   // Robinhood Chain's RPC sends a blockTimestamp field on logs, but as 0x0, so the times come from the blocks.
   await blockTimes(ctx, logs.map((l) => l.blockNumber).filter((n): n is bigint => n !== null));
   const out: DecodedLog[] = [];
@@ -891,9 +897,12 @@ async function feedStatus(ctx: AppContext, latest: bigint, now: number) {
   );
 }
 
-/** Claude's budget for /health: the models in use (null where Claude is off), the daily limit, calls used, paused. */
+/**
+ * Claude's budget for /health: the models in use (null where Claude is off), the total limit and calls used, the same
+ * per purpose, and whether Claude is paused.
+ */
 export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmModels" | "llmBudget"> & { why?: AppContext["why"] }) {
-  const { dailyLimit, usedToday, paused } = ctx.llmBudget.status();
+  const { dailyLimit, usedToday, byPurpose, paused } = ctx.llmBudget.status();
   return {
     models: {
       resolver: ctx.llm ? ctx.llmModels.resolver : null,
@@ -902,6 +911,7 @@ export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmMode
     },
     dailyLimit,
     usedToday,
+    byPurpose: Object.fromEntries(Object.entries(byPurpose).map(([p, b]) => [p, { usedToday: b.used, limit: b.limit }])) as Record<keyof typeof byPurpose, { usedToday: number; limit: number }>,
     paused,
   };
 }
@@ -953,27 +963,68 @@ export async function healthView(ctx: AppContext) {
 // Portfolio
 // ---------------------------------------------------------------------------
 
-/** One incremental event cache per running API (per context, so tests stay isolated). */
+/** One incremental event cache per running API (per context, so tests stay isolated), persisted under .cache. */
 const portfolioCaches = new WeakMap<AppContext, VaultEventCache>();
-function portfolioEvents(ctx: AppContext): VaultEventCache {
+export function portfolioEvents(ctx: AppContext): VaultEventCache {
   let cache = portfolioCaches.get(ctx);
   if (!cache) {
-    cache = new VaultEventCache({
-      latestBlock: () => ctx.client.getBlockNumber({ cacheTime: 0 }),
-      deployBlock: (vault, latest) =>
-        findDeployBlock((blockNumber) => ctx.client.getCode({ address: vault, blockNumber }), BigInt(ctx.deployment.blockNumber), latest),
-      events: async (vault, from, to) => toTradeEvents(await getVaultLogs(ctx, vault, from, to)),
-    });
+    cache = new VaultEventCache(
+      {
+        latestBlock: async () => (await chainNow(ctx)).number,
+        deployBlock: (vault, latest) => vaultDeployBlock(ctx, vault, latest),
+        events: async (vault, from, to) => toTradeEvents(await getVaultLogs(ctx, vault, from, to)),
+        // The head and the new logs in one batch; logs past that head are left for the next read.
+        since: async (vault, from) => {
+          const [head, logs] = await Promise.all([chainNow(ctx), ctx.client.getLogs({ address: vault, fromBlock: from, toBlock: "latest" })]);
+          const upTo = logs.filter((l) => l.blockNumber !== null && l.blockNumber <= head.number);
+          return { to: head.number, events: toTradeEvents(await decodeVaultLogs(ctx, upTo)) };
+        },
+      },
+      new PortfolioStore(ctx.cacheDir ? join(ctx.cacheDir, `portfolio-${ctx.deployment.chainId}.json`) : null),
+    );
     portfolioCaches.set(ctx, cache);
   }
   return cache;
 }
 
+const vaultCreatedEvent = glanceVaultFactoryAbi.find((i) => i.type === "event" && i.name === "VaultCreated") as Extract<
+  (typeof glanceVaultFactoryAbi)[number],
+  { type: "event"; name: "VaultCreated" }
+>;
+
+/**
+ * Where a vault's history starts: the block of its VaultCreated event, from either factory (V2 vaults from the V2
+ * factory, V1 vaults from the original), found by one filtered log query per 2M blocks. A vault made outside a factory
+ * (the demo vaults) falls back to a one-time binary search on its code. Either way the answer is stored with the vault.
+ */
+export async function vaultDeployBlock(ctx: AppContext, vault: Address, latest: bigint): Promise<bigint> {
+  const floor = BigInt(ctx.deployment.blockNumber);
+  const factories = glanceFactories(ctx.deployment).map((f) => f.address);
+  const ranges: Array<[bigint, bigint]> = [];
+  for (let start = floor; start <= latest; start += LOG_CHUNK_BLOCKS) ranges.push([start, start + LOG_CHUNK_BLOCKS - 1n < latest ? start + LOG_CHUNK_BLOCKS - 1n : latest]);
+  try {
+    const found = await Promise.all(
+      ranges.map(([fromBlock, toBlock]) => ctx.client.getLogs({ address: factories, event: vaultCreatedEvent, args: { vault }, fromBlock, toBlock })),
+    );
+    const first = found.flat().find((l) => l.blockNumber !== null);
+    if (first?.blockNumber != null) return first.blockNumber;
+  } catch {
+    // fall through to the search
+  }
+  return findDeployBlock((blockNumber) => ctx.client.getCode({ address: vault, blockNumber }), floor, latest);
+}
+
 export async function portfolioView(ctx: AppContext, vaultParam: string) {
-  return buildPortfolio(
+  const events = portfolioEvents(ctx);
+  let usdg: { address: Address; decimals: number } | null = null;
+  const view = await buildPortfolio(
     {
+      // The vault's USDG and its decimals are immutable: read once, then kept with the vault's events.
       readVault: async (vault) => {
+        const known = events.store.get(vault)?.usdg;
+        if (known) return { usdg: known.address, usdgDecimals: known.decimals };
         const v = await readVaultCore(ctx, vault);
+        usdg = { address: v.usdg, decimals: v.usdgDecimals };
         return { usdg: v.usdg, usdgDecimals: v.usdgDecimals };
       },
       readPrice: async (symbol, vault) => {
@@ -981,12 +1032,16 @@ export async function portfolioView(ctx: AppContext, vaultParam: string) {
         return { price: p.price, decimals: p.decimals, ageSeconds: p.ageSeconds, state: p.state };
       },
       balanceOf: (token, holder) => ctx.client.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [holder] }),
-      events: portfolioEvents(ctx),
+      events,
       now: () => latestTimestamp(ctx),
     },
     ctx,
     vaultParam,
   );
+  // Read from the chain this time: kept with the vault's events from now on.
+  const record = events.store.get(view.vault);
+  if (usdg && record) events.store.set(view.vault, { ...record, usdg });
+  return view;
 }
 
 // ---------------------------------------------------------------------------

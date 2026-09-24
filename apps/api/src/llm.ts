@@ -1,29 +1,40 @@
 /**
- * Optional LLM fallback for /resolve, used only when ANTHROPIC_API_KEY is set AND the dictionary found nothing.
- * The service works fully without it.
+ * Optional Claude lookup for company names the dictionary didn't know, used only when ANTHROPIC_API_KEY is set. The
+ * service works fully without it.
  *
- * Claude is asked which of the catalog companies the text refers to and the exact wording used. Its answer is never
- * trusted as-is: every quote must appear verbatim in the input (we compute the offsets ourselves), and only catalog
- * symbols are accepted, so a hallucinated match cannot reach the extension.
+ * Called once per glance (the user pressed Option+G or opened the panel on a page), never on a passive page load: the
+ * extension sends every unresolved candidate name on the page in one request (POST /resolve/names), and they all go to
+ * Claude in one call. Only names that look like company names are asked (proper nouns, not common words), at most
+ * MAX_NAMES per call, deduplicated.
  *
- * Every call is budgeted (src/llmBudget.ts): answers are cached for 24h by normalized text (a "no company" answer
- * too), calls count against the daily limit, and a budget error pauses Claude. When Claude can't be asked, the answer
- * is the dictionary's: no matches, never an error.
+ * Claude answers by index with catalog symbols only, so a hallucinated company cannot reach the extension. Every answer
+ * is cached for 7 days per normalized name, "not listed" included (src/llmBudget.ts), and every call counts against the
+ * resolver's own daily budget. When Claude can't be asked, uncached names answer null: the dictionary's result stands.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import type { CatalogText } from "./catalog.js";
-import { logUsage, MAX_OUTPUT_TOKENS, type CachedAnswer, type LlmBudget, type Log, type ResolverCache } from "./llmBudget.js";
-import type { ResolvedMatch } from "./resolver.js";
+import { logUsage, MAX_OUTPUT_TOKENS, normalizeName, type LlmBudget, type Log, type NameAnswer, type NameCache } from "./llmBudget.js";
+
+/** Candidate names per glance: enough for a long article, small enough for one short call. */
+export const MAX_NAMES = 40;
 
 const LlmAnswer = z.object({
-  mentions: z.array(z.object({ symbol: z.string(), quote: z.string() })),
+  listed: z.array(z.object({ index: z.number().int(), symbol: z.string() })),
 });
+
+export interface NameResolution {
+  name: string;
+  /** The catalog symbol, or null: not a listed company (or not asked, when Claude is off or over budget). */
+  symbol: string | null;
+  source: "cache" | "llm" | "none";
+}
 
 export interface LlmResolver {
   readonly model: string;
-  resolve(text: string): Promise<ResolvedMatch[]>;
+  /** Resolves candidate names with at most one Claude call. Names that don't look like companies are dropped. */
+  resolveNames(names: readonly string[]): Promise<NameResolution[]>;
 }
 
 /** The part of the Anthropic client we use (so tests can stand in for it without the network). */
@@ -36,9 +47,52 @@ export interface LlmResolverOptions {
   model: string;
   catalog: readonly CatalogText[];
   budget: LlmBudget;
-  cache: ResolverCache;
+  cache: NameCache;
   log?: Log;
   client?: MessagesClient;
+}
+
+/** Words that start sentences, headings and bylines but never name a company on their own. */
+const NOT_NAMES = new Set(
+  (
+    "a an and are as at be but by for from he her his how i if in is it its me my no not of on or our she so that the their them then there " +
+    "these they this those to up us was we what when where which who why will with you your yes new more most " +
+    "monday tuesday wednesday thursday friday saturday sunday january february march april may june july august september " +
+    "october november december today yesterday tomorrow read share follow subscribe sign log login menu home news search " +
+    "photo video getty images reuters ap bloomberg advertisement contact about privacy terms cookie cookies"
+  ).split(" "),
+);
+
+/**
+ * True when `name` could be a company name: 2 to 60 characters, at most 6 words, starting with a capital letter or a
+ * digit, made of letters, digits and & . , ' - only, and not a common word or date.
+ */
+export function looksLikeCompanyName(name: string): boolean {
+  const n = name.replace(/\s+/g, " ").trim();
+  if (n.length < 2 || n.length > 60) return false;
+  if (!/^[\p{Lu}\d][\p{L}\p{N}&.,'’\- ]*$/u.test(n)) return false;
+  const words = n.split(" ");
+  if (words.length > 6) return false;
+  if (!/\p{L}/u.test(n)) return false;
+  const norm = normalizeName(n);
+  if (norm.length < 2 || NOT_NAMES.has(norm)) return false;
+  return true;
+}
+
+/** Candidates worth asking about: company-like, deduplicated by normalized name, at most MAX_NAMES (first seen first). */
+export function selectCandidates(names: readonly string[], max = MAX_NAMES): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of names) {
+    const name = raw.replace(/\s+/g, " ").trim();
+    if (!looksLikeCompanyName(name)) continue;
+    const key = normalizeName(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function createLlmResolver(o: LlmResolverOptions): LlmResolver | null {
@@ -48,74 +102,74 @@ export function createLlmResolver(o: LlmResolverOptions): LlmResolver | null {
   const companies = o.catalog.map((c) => `${c.symbol}: ${c.legalName}`).join("\n");
   const symbols = new Set(o.catalog.map((c) => c.symbol));
   const system =
-    "You identify which listed companies a piece of web text refers to, for a stock-trading browser extension. " +
-    "Only report a company when the text clearly refers to the company itself (by name, product line, ticker, or an " +
-    "unambiguous description such as 'the EV maker led by Elon Musk'). Do not report a company for a coincidental " +
-    "word, a person, a place or a unit of measurement. Copy each quote exactly as it appears in the text. If nothing " +
-    `refers to these companies, return an empty list.\n\nCompanies:\n${companies}`;
+    "You match names found on a web page to listed companies, for a stock-trading browser extension. You get a " +
+    "numbered list of names. Report a name only when it clearly refers to one of the companies below (its name, a " +
+    "brand or product line it owns, or its ticker). Never for a person, a place, an unrelated company or a common word. " +
+    `Leave every other name out. If none match, return an empty list.\n\nCompanies:\n${companies}`;
   const tool = {
-    name: "report_mentions",
-    description: "Report the catalog companies the text refers to (an empty list if none).",
+    name: "report_listed",
+    description: "Report which numbered names refer to a catalog company (an empty list if none).",
     input_schema: {
       type: "object" as const,
       properties: {
-        mentions: {
+        listed: {
           type: "array",
           items: {
             type: "object",
             properties: {
-              symbol: { type: "string", description: "Ticker of the catalog company referred to" },
-              quote: { type: "string", description: "The exact words from the text that refer to it, copied verbatim" },
+              index: { type: "integer", description: "The name's number in the list" },
+              symbol: { type: "string", description: "Ticker of the catalog company it refers to" },
             },
-            required: ["symbol", "quote"],
+            required: ["index", "symbol"],
           },
         },
       },
-      required: ["mentions"],
+      required: ["listed"],
     },
-  };
-
-  const toMatches = (text: string, answer: CachedAnswer): ResolvedMatch[] => {
-    const matches: ResolvedMatch[] = [];
-    for (const { symbol, quote } of answer.mentions) {
-      if (!symbols.has(symbol) || quote.trim().length < 2) continue;
-      const start = text.indexOf(quote);
-      if (start < 0) continue; // not verbatim: drop it
-      matches.push({ symbol, text: quote, start, end: start + quote.length, alias: quote, kind: "name", source: "llm" });
-    }
-    return matches.sort((a, b) => a.start - b.start);
   };
 
   return {
     model: o.model,
-    async resolve(text: string): Promise<ResolvedMatch[]> {
-      const cached = o.cache.get(text);
-      if (cached) return toMatches(text, cached); // never the same text to Claude twice in 24h
-      if (!o.budget.tryAcquire()) return []; // daily limit or paused: the dictionary's answer stands
-
-      let response;
-      try {
-        response = await client.messages.create({
-          model: o.model,
-          max_tokens: MAX_OUTPUT_TOKENS,
-          system,
-          tools: [tool],
-          tool_choice: { type: "tool", name: tool.name },
-          messages: [{ role: "user", content: text }],
-        });
-      } catch (err) {
-        o.budget.failed(err);
-        throw err;
+    async resolveNames(names: readonly string[]): Promise<NameResolution[]> {
+      const candidates = selectCandidates(names);
+      const out = new Map<string, NameResolution>();
+      const ask: string[] = [];
+      for (const name of candidates) {
+        const hit = o.cache.get(name);
+        if (hit !== undefined) out.set(name, { name, symbol: hit, source: "cache" });
+        else ask.push(name);
       }
-      logUsage(log, "resolve", o.model, response.usage);
-      if (response.stop_reason === "refusal") return [];
-      const use = response.content.find((b) => b.type === "tool_use");
-      const parsed = LlmAnswer.safeParse(use && "input" in use ? use.input : null);
-      if (!parsed.success) return [];
-      // Keep only catalog symbols, and cache the answer even when it's empty ("not a listed stock").
-      const answer: CachedAnswer = { mentions: parsed.data.mentions.filter((m) => symbols.has(m.symbol)) };
-      o.cache.set(text, answer);
-      return toMatches(text, answer);
+      // Everything cached, or the resolver's budget is used up (or Claude is paused): the dictionary's answer stands.
+      if (ask.length > 0 && o.budget.tryAcquire("resolver")) {
+        let response;
+        try {
+          response = await client.messages.create({
+            model: o.model,
+            max_tokens: MAX_OUTPUT_TOKENS,
+            system,
+            tools: [tool],
+            tool_choice: { type: "tool", name: tool.name },
+            messages: [{ role: "user", content: ask.map((n, i) => `${i + 1}. ${n}`).join("\n") }],
+          });
+        } catch (err) {
+          o.budget.failed(err);
+          response = null; // a failed call answers "not asked": nothing cached, so the next glance may ask again
+        }
+        if (response) {
+          logUsage(log, "resolver", o.model, response.usage);
+          const use = response.stop_reason === "refusal" ? undefined : response.content.find((b) => b.type === "tool_use");
+          const parsed = LlmAnswer.safeParse(use && "input" in use ? use.input : null);
+          if (parsed.success) {
+            const bySymbol = new Map<number, string>();
+            for (const { index, symbol } of parsed.data.listed) if (symbols.has(symbol) && index >= 1 && index <= ask.length) bySymbol.set(index - 1, symbol);
+            // Every name asked gets an answer, "not listed" (null) included, and is never asked again for 7 days.
+            const answers = ask.map((name, i): [string, NameAnswer] => [name, bySymbol.get(i) ?? null]);
+            o.cache.setMany(answers);
+            for (const [name, symbol] of answers) out.set(name, { name, symbol, source: "llm" });
+          }
+        }
+      }
+      return candidates.map((name) => out.get(name) ?? { name, symbol: null, source: "none" });
     },
   };
 }

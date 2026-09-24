@@ -26,6 +26,8 @@ const side = z.enum(["buy", "sell"]);
 const slippageBps = z.coerce.number().int().min(0).max(1_000);
 
 const resolveBody = z.object({ text: z.string().min(1).max(MAX_RESOLVE_CHARS) });
+/** A glance's unresolved candidate names: the server keeps the first MAX_NAMES company-like ones. */
+const namesBody = z.object({ names: z.array(z.string().max(120)).max(200) });
 const quoteQuery = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() });
 const tradeBody = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() }).strict();
 const activityQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
@@ -84,6 +86,7 @@ export function createServerApp(ctx: AppContext) {
   );
   app.use("*", rateLimit({ limit: config.RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "all" }));
   app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
+  app.use("/resolve/names", rateLimit({ limit: 20, trustProxy: config.TRUST_PROXY, name: "names" }));
   app.use("/why/*", rateLimit({ limit: config.WHY_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "why" }));
   app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
 
@@ -97,20 +100,20 @@ export function createServerApp(ctx: AppContext) {
     }),
   );
 
+  // The dictionary only: this runs on every page load and DOM change, so it never calls Claude.
   app.post("/resolve", async (c) => {
     const { text } = parse(resolveBody, await jsonBody(c));
-    let matches = ctx.resolver.resolve(text);
-    let source: "dictionary" | "llm" | "none" = matches.length ? "dictionary" : "none";
-    if (matches.length === 0 && ctx.llm) {
-      try {
-        matches = await ctx.llm.resolve(text);
-        if (matches.length) source = "llm";
-      } catch {
-        // The fallback is optional: a failed or slow LLM call means "no matches", never an error.
-      }
-    }
+    const matches = ctx.resolver.resolve(text);
     const withEntries = matches.map((m) => ({ ...m, stock: ctx.catalog.bySymbol.get(m.symbol) }));
-    return send(c, { source, count: withEntries.length, matches: withEntries });
+    return send(c, { source: matches.length ? "dictionary" : "none", count: withEntries.length, matches: withEntries });
+  });
+
+  // Once per glance (Option+G, or the panel opening on a page): the page's unresolved candidate names, one Claude call.
+  app.post("/resolve/names", async (c) => {
+    const { names } = parse(namesBody, await jsonBody(c));
+    const answers = ctx.llm ? await ctx.llm.resolveNames(names).catch(() => []) : [];
+    const found = answers.filter((a) => a.symbol).map((a) => ({ ...a, stock: ctx.catalog.bySymbol.get(a.symbol!) }));
+    return send(c, { asked: answers.length, count: found.length, names: found });
   });
 
   app.get("/price/:symbol", async (c) => {

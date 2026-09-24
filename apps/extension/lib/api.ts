@@ -1,7 +1,7 @@
 /**
  * Typed API client for every extension surface. Calls go through the background service worker.
  */
-import type { Catalog, Health, Portfolio, Price, Quote, Resolve, Side, Trade, Vault, WhyMoved } from "./api-types";
+import type { Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
 import { send } from "./lifecycle";
 import { setChainStatus } from "./chainStatus";
 import type { ApiRequest, ApiResponse } from "./messages";
@@ -57,7 +57,10 @@ export const api = {
       "/voice/status",
     ),
   catalog: () => call<Catalog>("GET", "/catalog"),
+  /** The dictionary only: safe on every page load. */
   resolve: (text: string) => call<Resolve>("POST", "/resolve", { text }),
+  /** Claude, once per glance: the page's unresolved candidate names. */
+  resolveNames: (names: string[]) => call<ResolveNames>("POST", "/resolve/names", { names }),
   price: (symbol: string, vault?: string) => call<Price>("GET", `/price/${encodeURIComponent(symbol)}${vault ? `?${q({ vault })}` : ""}`),
   vault: (address: string) => call<Vault>("GET", `/vault/${address}`),
   portfolio: (address: string) => call<Portfolio>("GET", `/portfolio/${address}`),

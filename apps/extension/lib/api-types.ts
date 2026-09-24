@@ -95,8 +95,15 @@ export interface ResolvedMatch {
 }
 
 export interface Resolve {
-  source: "dictionary" | "llm" | "none";
+  source: "dictionary" | "none";
   matches: ResolvedMatch[];
+}
+
+/** POST /resolve/names: the candidate names that are listed companies (from Claude or its 7-day cache). */
+export interface ResolveNames {
+  asked: number;
+  count: number;
+  names: Array<{ name: string; symbol: string; source: "cache" | "llm" }>;
 }
 
 export interface Price {

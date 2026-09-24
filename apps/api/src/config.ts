@@ -47,10 +47,18 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === "1" || v?.toLowerCase() === "true"),
   /** Claude calls allowed per UTC day across the whole API; past it, the dictionary and the rules answer. */
-  LLM_DAILY_CALL_LIMIT: z.coerce.number().int().min(0).default(150),
+  LLM_DAILY_CALL_LIMIT: z.coerce.number().int().min(0).default(250),
   /**
-   * The resolver's 24h answer cache (JSON). The daily call counter is kept next to it (llm-usage.json). Default
-   * apps/api/.cache/resolver.json (gitignored); in tests, memory only unless set; empty for memory only.
+   * Daily budgets per purpose, under LLM_DAILY_CALL_LIMIT. When one runs out only that purpose falls back: the resolver
+   * to the dictionary, intent to the rules, why to headlines only. OTHER is kept for upcoming features ("Show me").
+   */
+  LLM_BUDGET_RESOLVER: z.coerce.number().int().min(0).default(40),
+  LLM_BUDGET_INTENT: z.coerce.number().int().min(0).default(80),
+  LLM_BUDGET_WHY: z.coerce.number().int().min(0).default(60),
+  LLM_BUDGET_OTHER: z.coerce.number().int().min(0).default(70),
+  /**
+   * The company-name cache (JSON, 7 days per name). The daily call counters are kept next to it (llm-usage.json).
+   * Default apps/api/.cache/resolver-names.json (gitignored); in tests, memory only unless set; empty for memory only.
    */
   RESOLVER_CACHE_FILE: z.string().optional(),
   /** Voice (see src/voice). Keys stay on the server; placeholder values count as unset. */

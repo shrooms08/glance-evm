@@ -119,7 +119,7 @@ export function createWhySummarizer(o: { apiKey?: string; model: string; budget:
   return {
     model: o.model,
     async summarize(input) {
-      if (!o.budget.tryAcquire()) return null;
+      if (!o.budget.tryAcquire("why")) return null;
       const numbered = input.headlines.map((h, i) => `[${i + 1}] ${h.title} (${h.site}, ${h.publishedAt.slice(0, 10)})`).join("\n");
       let response;
       try {

@@ -15,7 +15,10 @@ export type PanelMessage =
 
 export type PageMessage =
   | { kind: "page:matches" }
-  /** Option+G from the side panel: rescan the page now, then reply with what was found. */
+  /**
+   * A glance from the side panel (Option+G, or the panel opening): rescan the page, ask about its unresolved names
+   * (the one Claude lookup a glance may make), then reply with what was found.
+   */
   | { kind: "page:scan" }
   | { kind: "page:reveal"; symbol: string }
   /** The side panel is placing a buy: what page is it on, and which sentence named the company? (For the journal.) */
