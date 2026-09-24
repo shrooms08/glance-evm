@@ -176,6 +176,11 @@ const components = /* css */ `
 }
 .g-badge .g-dot { background: var(--g-guard); }
 
+/* ---------- First run: welcome and tour coach marks ---------- */
+.g-coach { z-index: 2147483647; box-shadow: 0 12px 32px var(--g-shadow); animation: g-in 180ms ease-out; pointer-events: auto; }
+.g-coach-ring { z-index: 2147483646; border: 2px solid var(--g-lime); border-radius: 10px; animation: g-glow 1.6s ease-in-out infinite; }
+.g-coach[data-motion="reduce"], .g-coach-ring[data-motion="reduce"] { animation: none; }
+
 /* ---------- Notices (offline, no vault) ---------- */
 .g-notice { padding: var(--g-s7); display: flex; flex-direction: column; gap: var(--g-s4); }
 .g-transcript { font-family: var(--g-mono); font-size: var(--g-data-size); color: var(--g-soft); }

@@ -1,7 +1,8 @@
 "use client";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRef, useState, type ReactNode } from "react";
 import type { Address, Hex } from "viem";
 import { useAccount } from "wagmi";
 
@@ -20,6 +21,7 @@ import { describeTxError } from "@/lib/txMessages";
 import { useOwnerTx } from "@/lib/useOwnerTx";
 import { readStartState, useStartState } from "@/lib/useSetupSnapshot";
 import { useDevMode, useHref } from "@/lib/vault";
+import { useExtensionInstalled } from "@/lib/extensionPresence";
 
 type RunMode = "setup" | "add-more";
 
@@ -228,13 +230,14 @@ export default function StartPage() {
 
         <Step n={5} title="Install the Glance extension" status={statuses.extension}>
           <p className="meta">
-            Build it with <code>pnpm --filter extension build</code> and load <code>apps/extension/.output/chrome-mv3</code> as an unpacked extension (Brave, Arc,
-            Chrome). In its settings, paste your vault&apos;s address. Then tap Option + G on any article.
-          </p>
-          <p className="meta">
-            {extension
-              ? "Detected on this page."
-              : "Not detected on this page yet. Already installed? Reload it on your browser's extensions page (brave://extensions or chrome://extensions): after an update the browser keeps running the old copy until you do. Then refresh this page. (This step isn't on chain.)"}
+            {extension ? (
+              "Detected in this browser."
+            ) : (
+              <>
+                About a minute, step by step for Chrome, Brave, Arc and Edge: <Link href="/install">Get Glance</Link>. This page notices by itself when it&apos;s
+                installed. (This step isn&apos;t on chain.)
+              </>
+            )}
           </p>
         </Step>
       </ol>
@@ -276,21 +279,4 @@ function Check({ ok, children }: { ok: boolean; children: ReactNode }) {
       <span>{children}</span>
     </li>
   );
-}
-
-/** The Glance extension marks the console page when it's installed (it looks for the glance-console meta tag). */
-function useExtensionInstalled(): boolean {
-  const [installed, setInstalled] = useState(false);
-  useEffect(() => {
-    const el = document.documentElement;
-    const check = () => setInstalled(el.dataset.glanceExtension === "installed");
-    const obs = new MutationObserver(check);
-    obs.observe(el, { attributes: true, attributeFilter: ["data-glance-extension"] });
-    const id = setTimeout(check, 0);
-    return () => {
-      obs.disconnect();
-      clearTimeout(id);
-    };
-  }, []);
-  return installed;
 }

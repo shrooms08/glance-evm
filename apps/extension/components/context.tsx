@@ -49,7 +49,8 @@ export interface Glance {
   setOrb(next: Partial<OrbLine> & { state: OrbState }): void;
   refreshVault(): Promise<void>;
   openSettings(): void;
-  openConsole(): void;
+  /** Opens a console page in a new tab ("" for the Dashboard, "/start" for Get started). */
+  openConsole(path?: string): void;
 }
 
 const Ctx = createContext<Glance | null>(null);
@@ -210,7 +211,7 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       setOrb,
       refreshVault,
       openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
-      openConsole: () => window.open(consoleLink, "_blank", "noopener"),
+      openConsole: (path = "") => window.open(`${consoleLink.replace(/\/+$/, "")}${path}`, "_blank", "noopener"),
     }),
     [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault],
   );

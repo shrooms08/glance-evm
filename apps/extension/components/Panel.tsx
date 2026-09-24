@@ -7,6 +7,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { keyLabel } from "../lib/hotkeys";
 import { isAddress } from "../lib/settings";
+import { isOpenDemoVault } from "../lib/linking";
+import { checklistRows, dismissChecklist } from "../lib/onboarding";
+import { Checklist, DemoNotice, EmptyPage } from "./Onboarding";
+import { useChecklist } from "./useChecklist";
 import type { PageContext } from "../lib/journal";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
@@ -54,6 +58,7 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
     if (autoFocusInput) input.current?.focus();
   }, [autoFocusInput]);
 
+  const checklistState = useChecklist();
   const idleLine = LINES.idle(voiceLabel);
   const cardSymbol = assistant.card?.kind === "company" ? assistant.card.symbol : null;
   const line = g.orb.state === "idle" && !g.orb.line ? idleLine : g.orb.line || idleLine;
@@ -112,12 +117,18 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         ) : !isAddress(g.vaultAddress) ? (
           <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
             <span className="g-ui">No vault yet</span>
-            <span className="g-meta">You can look up prices now. To trade, add your vault address in settings.</span>
-            <button className="g-btn" onClick={g.openSettings}>
-              Add your vault
+            <span className="g-meta">You can look up prices now. To trade, set up your own vault in the console.</span>
+            <button className="g-btn" onClick={() => g.openConsole("/start")}>
+              Set up my own vault
             </button>
           </div>
+        ) : isOpenDemoVault(g.vaultAddress) ? (
+          <DemoNotice onSetup={() => g.openConsole("/start")} />
         ) : null}
+
+        {checklistState && !checklistState.dismissed && <Checklist rows={checklistRows(checklistState, isAddress(g.vaultAddress) && !isOpenDemoVault(g.vaultAddress))} onDismiss={() => void dismissChecklist()} />}
+
+        {host && companies.length === 0 && !assistant.card && <EmptyPage />}
 
         {assistant.card?.kind === "company" && renderChart && layout === "tall" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s5)" }}>{renderChart(assistant.card.symbol)}</div>

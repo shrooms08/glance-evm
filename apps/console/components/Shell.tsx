@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 
 import { env } from "@/lib/env";
+import { useExtensionInstalled } from "@/lib/extensionPresence";
 import { trackInputModality } from "@/lib/inputModality";
 import { useTheme } from "@/lib/theme";
 import { useHref } from "@/lib/vault";
@@ -24,6 +25,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const href = useHref();
   const { theme, toggle } = useTheme();
+  const installed = useExtensionInstalled();
   // Focus rings for keyboard users only (see globals.css).
   useEffect(() => trackInputModality(), []);
   return (
@@ -49,6 +51,12 @@ export function Shell({ children }: { children: ReactNode }) {
               {n.label}
             </Link>
           ))}
+          {/* Until Glance is detected in this browser. */}
+          {!installed && (
+            <Link href="/install" className="nav-link text-accent" aria-current={pathname === "/install" ? "page" : undefined}>
+              Get Glance
+            </Link>
+          )}
         </nav>
       </header>
       <main className="main">{children}</main>

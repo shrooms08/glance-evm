@@ -13,7 +13,8 @@ import { speak } from "../lib/voiceClient";
 import type { Guard, Quote, Trade } from "../lib/api-types";
 import { recordTrade, type PageContext } from "../lib/journal";
 import { isAddress } from "../lib/settings";
-import { LINK_CODES, startLinking, waitForLink } from "../lib/linking";
+import { tick } from "../lib/onboarding";
+import { isOpenDemoVault, LINK_CODES, startLinking, waitForLink } from "../lib/linking";
 import { useGlance } from "./context";
 
 export type FlowStep =
@@ -93,6 +94,7 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
       setFlow({ step: "done", amount, quote, trade: res.data });
       // The headline journal (this browser only): where this buy came from, now that it's confirmed.
       void recordTrade(page, res.data, { symbol, amount, priceAtBuy: quote.price.value });
+      if (isOpenDemoVault(g.vaultAddress)) void tick("demoBuy"); // "Getting started": a demo buy
       const got = res.data.filled?.tokensOut?.formatted ?? symbol;
       g.setOrb({ state: "success", line: `Bought ${got} for $${amount}`, meta: `tx ${res.data.txHash.slice(0, 6)}…${res.data.txHash.slice(-4)}` });
       void g.refreshVault();

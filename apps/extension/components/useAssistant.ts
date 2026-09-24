@@ -20,6 +20,7 @@ import { hush, speak, startVoice, type VoiceSession } from "../lib/voiceClient";
 import type { FallbackReason, VoiceCommandContext, VoiceIntent, VoiceTiming } from "../lib/voiceMessages";
 import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
 import { useGlance } from "./context";
+import { tick } from "../lib/onboarding";
 import { spokenWhy } from "./Why";
 import { LINES } from "@glance/core/persona";
 import { VOICE_RESTING } from "@glance/core/session";
@@ -124,6 +125,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
     async (text: string, source: "typed" | "voice" = "typed") => {
       const cmd = parseCommand(text, g.catalog.map((s) => ({ symbol: s.symbol, aliases: s.aliases })));
       setHeard(text);
+      void tick("ask"); // "Getting started": asked Glance something
       switch (cmd.kind) {
         case "buy":
           setCard({ kind: "company", symbol: cmd.symbol, autoAmount: cmd.amount, key: ++seq.current });

@@ -29,7 +29,10 @@ import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
 import { requestCard } from "../../lib/chartPanel";
 import StockChart from "../../components/StockChart";
-import { useGreeting } from "../../components/useGreeting";
+import { greeted } from "../../components/useGreeting";
+import { Tour, Welcome } from "../../components/Onboarding";
+import { firstRun, prefersReducedMotion, tick, tourDone, tourSteps } from "../../lib/onboarding";
+import { GREETING, SPOKEN_GREETING } from "@glance/core/persona";
 import { api } from "../../lib/api";
 import { findQuote, nextSentence, revealRange } from "../../lib/anchor";
 import { pageMount } from "../../lib/chartLoader";
@@ -398,8 +401,42 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     return () => clearInterval(t);
   }, [panelOpen]);
 
-  // The first time the panel opens (ever, in this browser): the greeting, shown and said.
-  useGreeting(panelOpen);
+  // ---- first run: the welcome (once, shown and said), then the three-step tour (once, skippable) ----------------
+  const [onboard, setOnboard] = useState<{ phase: "welcome"; line: string } | { phase: "tour"; step: number } | null>(null);
+  const reducedMotion = prefersReducedMotion();
+  useEffect(() => {
+    void safely(async () => {
+      const [wasGreeted, toured] = await Promise.all([greeted.getValue(), tourDone.getValue()]);
+      const show = firstRun(wasGreeted, toured);
+      if (show === "welcome") {
+        await greeted.setValue(true);
+        const line = GREETING(keyLabel(g.glanceKey), keyLabel(g.voiceKey));
+        setOnboard({ phase: "welcome", line });
+        g.setOrb({ state: "idle", line, meta: "Hello" });
+        // Glance's own voice, pre-recorded for the default keys (only when voice replies are on).
+        void speak(SPOKEN_GREETING(g.glanceKey.toUpperCase(), g.voiceKey.toUpperCase()), g.voiceReplies, {
+          onStart: () => g.setOrb({ state: "speaking", line, meta: "Hello" }),
+          onEnd: () => g.setOrb({ state: "idle", line, meta: "Hello" }),
+        });
+      } else if (show === "tour") setOnboard({ phase: "tour", step: 0 });
+    }, Promise.resolve());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const endTour = () => {
+    setOnboard(null);
+    void safely(() => tourDone.setValue(true), Promise.resolve());
+  };
+  const steps = tourSteps(keyLabel(g.voiceKey));
+  const orbAnchor = { left: window.innerWidth - pos.right - orbTokens.floating, top: window.innerHeight - pos.bottom - orbTokens.floating, width: orbTokens.floating, height: orbTokens.floating };
+  const underlineAnchor = () => {
+    const r = mentions[0]?.range.getBoundingClientRect();
+    return r && r.width > 0 && r.bottom > 0 && r.top < window.innerHeight ? { left: r.left, top: r.top, width: r.width, height: r.height } : orbAnchor;
+  };
+
+  // "Getting started": hovered a company.
+  useEffect(() => {
+    if (hover) void tick("hover");
+  }, [hover]);
 
   // A voice buy or price question opens the panel to show its card.
   useEffect(() => {
@@ -623,6 +660,20 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           >
             <Orb state={g.orb.state} size={orbTokens.floating} markUrl={g.markUrl} />
           </button>
+          {onboard?.phase === "welcome" && !panelOpen && (
+            <Welcome line={onboard.line} anchor={orbAnchor} reducedMotion={reducedMotion} onTour={() => setOnboard({ phase: "tour", step: 0 })} onSkip={endTour} />
+          )}
+          {onboard?.phase === "tour" && !panelOpen && (
+            <Tour
+              step={onboard.step}
+              total={steps.length}
+              title={steps[onboard.step]!.title}
+              anchor={steps[onboard.step]!.anchor === "underline" ? underlineAnchor() : orbAnchor}
+              reducedMotion={reducedMotion}
+              onNext={() => (onboard.step + 1 < steps.length ? setOnboard({ phase: "tour", step: onboard.step + 1 }) : endTour())}
+              onSkip={endTour}
+            />
+          )}
         </>
       )}
 

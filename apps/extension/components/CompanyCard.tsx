@@ -132,6 +132,12 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
       {flow.step === "idle" || flow.step === "failed" ? (
         <div className="g-section">
           {flow.step === "failed" && <FailedNotice code={flow.code} message={flow.message} />}
+          {/* On the open demo vault: one tap to try it (a real testnet buy, inside the demo vault's limits). */}
+          {isOpenDemoVault(g.vaultAddress) && (
+            <button className="g-btn g-btn-primary" onClick={() => void start("10")} disabled={!price || price.marketState === "STALE"}>
+              Try a $10 demo buy
+            </button>
+          )}
           <div className="g-chips" role="group" aria-label="Amount to buy">
             {PRESETS.map((p) => (
               <button key={p} className="g-chip" onClick={() => void start(p)} disabled={!price || price.marketState === "STALE"}>
