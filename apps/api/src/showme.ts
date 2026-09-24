@@ -17,6 +17,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropicFetch } from "./anthropicHttp.js";
+import { relevantText, RELEVANT_MAX_CHARS } from "./showmeContext.js";
 
 import { GLANCE_FACTS, LINES, PERSONA } from "@glance/core/persona";
 import {
@@ -182,7 +183,8 @@ export function showMeSystem(symbols: readonly string[]): string {
 /** The user message: the question, then the page as a clearly delimited, untrusted block. */
 export function showMeUserText(input: ShowMeInput): string {
   const p = input.page ?? {};
-  const text = (p.text ?? "").slice(0, SHOWME_MAX_PAGE_CHARS);
+  // The paragraphs that bear on the question (about 2,500 tokens); the whole extract when nothing picks them out.
+  const text = relevantText(p.text ?? "", input.question, RELEVANT_MAX_CHARS, SHOWME_MAX_PAGE_CHARS).text;
   const parts = [`<question>${input.question.trim()}</question>`];
   if (input.lastGuard) parts.push(`<last_refusal>${input.lastGuard.message}</last_refusal>`);
   parts.push(`<surface>${input.surface === "console" ? "the Glance console" : "a web page"}</surface>`);

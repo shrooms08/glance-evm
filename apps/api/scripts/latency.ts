@@ -5,7 +5,7 @@
  *
  *   transcript     the final transcript arrives
  *   intent         /voice/command answers (rules or Claude)
- *   firstSentence  Show me only: the first complete sentence (streamed) or the whole answer (not streamed)
+ *   firstSentence  Show me only: the first complete sentence (--mode after: streamed) or the whole answer (before)
  *   ttsFirstByte   /voice/speak's first audio byte for the reply (the extension starts playing on it)
  *   card           "buy" only: the confirm card's /quote has answered
  *
@@ -30,7 +30,8 @@ const VAULT = arg("vault", "0xCafa07acA6c8B3efbF4638Fd49E7beB42a0D0113");
 export const CASES: Record<string, { say: string; kind: "simple" | "buy" | "showme" }> = {
   price: { say: "What's Tesla at?", kind: "simple" },
   portfolio: { say: "How am I doing?", kind: "simple" },
-  buy: { say: "Buy ten dollars of Tesla.", kind: "buy" },
+  // "Buy" first is often clipped by speech-to-text in the synthetic clip ("I $10 at Tesla"): a word before it.
+  buy: { say: "Please buy ten dollars of Tesla.", kind: "buy" },
   advice: { say: "Should I buy Tesla?", kind: "simple" },
   showme: { say: "Show me the key numbers in this article.", kind: "showme" },
 };
@@ -121,6 +122,31 @@ async function run(name: string): Promise<Record<string, number>> {
   const intent = (await cmd.json()) as { intent: string; reply: string; symbol: string | null; amount: string | null };
   t.intent = performance.now() - t0;
 
+  if ((intent.intent === "ask" || c.kind === "showme") && MODE !== "before") {
+    // Streamed: the first sentence is spoken as soon as it's written (the acknowledgment isn't counted).
+    const res = await fetch(`${API}/showme/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: text, surface: "page", page: { ...page, companies: ["TSLA"] } }),
+    });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    let first: string | null = null;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const m = /event: sentence\ndata: (.*)\n/.exec(buffer);
+      if (m && first === null) {
+        first = (JSON.parse(m[1]!) as { spoken: string }).spoken;
+        t.firstSentence = performance.now() - t0;
+        break;
+      }
+    }
+    void reader.cancel().catch(() => {});
+    t.ttsFirstByte = first ? await firstByte(`${API}/voice/speak?text=${encodeURIComponent(first)}`, t0) : Number.NaN;
+    return t;
+  }
   if (intent.intent === "ask" || c.kind === "showme") {
     const res = await fetch(`${API}/showme`, {
       method: "POST",

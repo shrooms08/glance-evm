@@ -20,7 +20,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropicFetch } from "./anthropicHttp.js";
 
 import type { MessagesClient } from "./llm.js";
-import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "./llmBudget.js";
+import { logUsage, type LlmBudget, type Log } from "./llmBudget.js";
 import { TtlCache } from "./ttlCache.js";
 
 export const NEWS_TTL_MS = 15 * 60 * 1000;
@@ -101,6 +101,9 @@ export interface Summarizer {
   summarize(input: SummaryInput): Promise<string | null>;
 }
 
+/** Two short sentences with citations. */
+export const WHY_MAX_OUTPUT_TOKENS = 200;
+
 export function createWhySummarizer(o: { apiKey?: string; model: string; budget: LlmBudget; log?: Log; client?: MessagesClient }): Summarizer | null {
   if (!o.apiKey && !o.client) return null;
   const log = o.log ?? ((l: string) => console.log(l));
@@ -129,7 +132,7 @@ export function createWhySummarizer(o: { apiKey?: string; model: string; budget:
       try {
         response = await client.messages.create({
           model: o.model,
-          max_tokens: MAX_OUTPUT_TOKENS,
+          max_tokens: WHY_MAX_OUTPUT_TOKENS,
           system,
           tools: [tool],
           tool_choice: { type: "tool", name: tool.name },

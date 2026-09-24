@@ -13,7 +13,7 @@ import { z } from "zod";
 
 import type { CatalogEntry } from "../catalog.js";
 import type { MessagesClient } from "../llm.js";
-import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "../llmBudget.js";
+import { logUsage, type LlmBudget, type Log } from "../llmBudget.js";
 import { PERSONA } from "@glance/core/persona";
 import { isAsk } from "@glance/core/showme";
 
@@ -82,7 +82,8 @@ const LEAD = "(?:(?:ok|okay|hey|glance|please|so|um|uh|can you|could you|would y
 /** The first verb, only when it opens the request: "buy ...", "please sell ...", "I'd like to buy ...". */
 function leadingVerb(t: string): "buy" | "sell" | null {
   const m = new RegExp(`^${LEAD}(buy|get|purchase|grab|pick up|sell|dump|unload)\\b`).exec(t);
-  if (!m) return null;
+  // Speech-to-text often writes "buy" as "by" ("by $10 of Tesla"): only in that exact shape, an amount then "of".
+  if (!m) return new RegExp(`^${LEAD}by \\$?[\\d.,]+( dollars?)? (worth )?of\\b`).test(t) ? "buy" : null;
   return ["sell", "dump", "unload"].includes(m[1]!) ? "sell" : "buy";
 }
 
@@ -110,6 +111,13 @@ export function findCompanies(text: string, catalog: readonly CatalogEntry[]): s
     if (at >= 0 && !hits.some((h) => h.symbol === row.symbol)) hits.push({ at, symbol: row.symbol });
   }
   return hits.sort((a, b) => a.at - b.at).map((h) => h.symbol);
+}
+
+/** The text with every catalog company's name taken out, spaces collapsed ("'s" is dropped everywhere: "what's" -> "what"). */
+function withoutCompanies(t: string, catalog: readonly CatalogEntry[]): string {
+  let rest = ` ${t.replace(/([a-z0-9])'s\b/g, "$1")} `;
+  for (const row of aliasTable(catalog)) rest = rest.split(` ${row.phrase} `).join(" ");
+  return rest.replace(/[.,!]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]): Intent {
@@ -153,6 +161,10 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
     (/^(?:what's|whats|what is|how's|hows|how is|where's|where is)\b.*\b(at|trading|doing|going for|worth|price)\b/.test(t) ||
       /\b(price of|quote for|quote on|how much is|price for|share price|stock price|price)\b/.test(t))
   ) {
+    return { ...base, intent: "price" };
+  }
+  // "What's Tesla?", "how's AMD?": just the company (speech-to-text often drops a short "at").
+  if (symbol && /^(?:what|whats|what is|how|hows|how is|what about)$/.test(withoutCompanies(t, catalog))) {
     return { ...base, intent: "price" };
   }
   return { ...base, symbol: null, intent: "unknown" };
@@ -304,7 +316,7 @@ export function createClaudeIntent(
       try {
         response = await client.messages.create({
           model,
-          max_tokens: MAX_OUTPUT_TOKENS,
+          max_tokens: INTENT_MAX_OUTPUT_TOKENS,
           system,
           tools: [tool],
           tool_choice: { type: "tool", name: tool.name },
@@ -324,13 +336,28 @@ export function createClaudeIntent(
   };
 }
 
-/** Claude when available, the rules otherwise (or when Claude fails or is slow); always validated. */
+/**
+ * What the rules decide on their own, with no Claude call: a clear command ("what's Tesla at?", "how am I doing?", "buy
+ * ten dollars of Tesla", "show me Tesla's chart") or a clear question for Show me. Explain and unknown need Claude's
+ * one-sentence reply (or its better reading of an unclear request).
+ */
+const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask"]);
+
+/** Max output for the intent tool call: the answer is four short fields. */
+export const INTENT_MAX_OUTPUT_TOKENS = 150;
+
+/**
+ * The rules first: when they're sure, that's the answer (fast, and no Claude call). Otherwise Claude when available,
+ * the rules again when it isn't (or fails, or is slow). Always validated.
+ */
 export async function understand(
   transcript: string,
   context: VoiceContext,
   catalog: readonly CatalogEntry[],
   model: IntentModel | null,
 ): Promise<Intent> {
+  const rules = validateIntent(rulesIntent(transcript, catalog), transcript, catalog);
+  if (RULES_DECIDE.has(rules.intent)) return rules;
   let raw: Intent | null = null;
   if (model) {
     try {
@@ -339,5 +366,5 @@ export async function understand(
       raw = null; // fall back to the rules: never an error for the user
     }
   }
-  return validateIntent(raw ?? rulesIntent(transcript, catalog), transcript, catalog);
+  return raw ? validateIntent(raw, transcript, catalog) : rules;
 }

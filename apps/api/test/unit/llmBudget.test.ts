@@ -215,7 +215,7 @@ describe("per-purpose budgets", () => {
       { name: "Globex", symbol: null, source: "none" },
     ]);
     expect(r.create).toHaveBeenCalledTimes(1);
-    expect(await understand("what's Tesla at", {}, catalog.entries, intent)).toMatchObject({ source: "claude" });
+    expect(await understand("Tesla, thoughts on where that's sitting", {}, catalog.entries, intent)).toMatchObject({ source: "claude" }); // the rules can't read it: Claude
     expect(i.create).toHaveBeenCalledTimes(1);
     expect(log.mock.calls.filter(([l]) => l === "[llm] resolver budget reached (1 today), using the dictionary")).toHaveLength(1);
     // Nothing was cached for the names that weren't asked: tomorrow's glance may ask about them.
@@ -284,8 +284,8 @@ describe("daily limit", () => {
     const i = fakeClient({ intent: "price", symbol: "TSLA", amount: null, reply: null });
     const intent = createClaudeIntent(undefined, HAIKU, catalog.entries, 3_000, { budget, client: i.client, log: quiet })!;
     await resolver.resolveNames(["Acme"]);
-    await understand("what's Tesla at", {}, catalog.entries, intent);
-    await understand("what's Tesla at", {}, catalog.entries, intent); // over the limit: rules
+    await understand("Tesla, thoughts on where that's sitting", {}, catalog.entries, intent);
+    await understand("Tesla, thoughts on where that's sitting", {}, catalog.entries, intent); // over the limit: rules
     expect(r.create.mock.calls.length + i.create.mock.calls.length).toBe(2);
   });
 
@@ -320,15 +320,15 @@ describe("budget errors", () => {
     const budget = new LlmBudget(150, null, log, () => now);
     const bad = failing(Object.assign(new Error("402 Payment Required"), { status: 402 }));
     const intent = createClaudeIntent(undefined, HAIKU, catalog.entries, 3_000, { budget, client: bad.client, log })!;
-    const first = await understand("buy ten dollars of Tesla", {}, catalog.entries, intent);
-    expect(first).toMatchObject({ intent: "buy", source: "rules" });
+    const first = await understand("Tesla, thoughts on where that's sitting", {}, catalog.entries, intent);
+    expect(first).toMatchObject({ intent: "unknown", source: "rules" });
     expect(budget.status().paused).toBe(true);
-    await understand("what's Tesla at", {}, catalog.entries, intent);
+    await understand("Tesla, thoughts on where that's sitting", {}, catalog.entries, intent);
     expect(bad.create).toHaveBeenCalledTimes(1); // paused: not asked again
     expect(log.mock.calls.some(([l]) => /pausing Claude for 1 hour/.test(l))).toBe(true);
     now = T0 + PAUSE_MS + 1;
     expect(budget.status().paused).toBe(false);
-    await understand("what's Tesla at", {}, catalog.entries, intent);
+    await understand("Tesla, thoughts on where that's sitting", {}, catalog.entries, intent);
     expect(bad.create).toHaveBeenCalledTimes(2);
   });
 
