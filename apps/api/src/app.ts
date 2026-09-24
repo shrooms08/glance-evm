@@ -21,6 +21,8 @@ import { registerVoice } from "./voice/routes.js";
 import { chartContextFor } from "./showmeChart.js";
 import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
+import { SESSION_HEADERS } from "@glance/core/session";
+import { linkBody, revokeBody } from "./sessions.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
 
@@ -71,6 +73,7 @@ const showMeBody = z
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
   })
   .strict();
+const sessionQuery = z.object({ vault: address, session: address });
 const chartQuery = z.object({ range: z.enum(CHART_RANGES).default("1D"), vault: address.optional() });
 
 /** "GET /voice/speak?text=Hello 200" -> "GET /voice/speak?… 200": query strings never reach the log. */
@@ -79,7 +82,7 @@ export function redactQuery(line: string): string {
 }
 
 /** JSON with bigints as decimal strings. */
-function send(c: Context, body: unknown, status: 200 | 400 | 404 | 409 | 422 | 429 | 500 | 502 | 503 = 200) {
+function send(c: Context, body: unknown, status: 200 | 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500 | 502 | 503 = 200) {
   return c.body(JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)), status, {
     "content-type": "application/json; charset=utf-8",
   });
@@ -126,7 +129,7 @@ export function createServerApp(ctx: AppContext) {
         return null;
       },
       allowMethods: ["GET", "POST", "OPTIONS"],
-      allowHeaders: ["Content-Type"],
+      allowHeaders: ["Content-Type", ...Object.values(SESSION_HEADERS)],
       exposeHeaders: ["x-voice-cache", "x-voice-ms", "x-voice"],
       maxAge: 600,
     }),
@@ -141,7 +144,24 @@ export function createServerApp(ctx: AppContext) {
   app.use("/chart/*", rateLimit({ limit: config.CHART_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "chart" }));
   app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
 
+  app.use("/session/*", rateLimit({ limit: config.SESSION_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "session" }));
+
   app.get("/health", async (c) => send(c, await healthView(ctx)));
+
+  // Browser sessions, linked and unlinked by the vault owner's signature (src/sessions.ts).
+  app.post("/session/link", async (c) => {
+    const s = await ctx.sessions.link(parse(linkBody, await jsonBody(c)));
+    return send(c, { linked: true, vault: s.vault, sessionKey: s.sessionKey, expiresAt: s.expiresAt });
+  });
+  app.post("/session/revoke", async (c) => send(c, await ctx.sessions.revoke(parse(revokeBody, await jsonBody(c)))));
+  app.get("/session/status", (c) => {
+    const q = parse(sessionQuery, c.req.query());
+    return send(c, ctx.sessions.status(getAddress(q.vault), getAddress(q.session)));
+  });
+  app.get("/session/list", (c) => {
+    const q = parse(z.object({ vault: address }), c.req.query());
+    return send(c, { sessions: ctx.sessions.list(getAddress(q.vault)) });
+  });
 
   app.get("/catalog", (c) =>
     send(c, {

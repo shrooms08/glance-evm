@@ -22,6 +22,8 @@ import { Resolver } from "./resolver.js";
 import { rpcUrls } from "./rpc.js";
 import { loadAgentSigner, type AgentSigner } from "./signer.js";
 import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
+import { glanceVaultAbi } from "./abi.generated.js";
+import { createSessions, JsonSessionStore, type Sessions } from "./sessions.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
 export interface AppContext {
@@ -53,6 +55,8 @@ export interface AppContext {
   refusals: RefusalLog;
   /** Tests only: parts of the chart's sources to replace (a fake mainnet reader, fake quote history). */
   chartOverrides?: Partial<ChartDeps>;
+  /** Browsers linked to vaults by their owners (src/sessions.ts). */
+  sessions: Sessions;
   /** The gitignored .cache dir for persisted caches (portfolio events, news, names); null keeps them in memory (tests). */
   cacheDir: string | null;
 }
@@ -80,12 +84,13 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
   const anthropicKey = looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? undefined : config.ANTHROPIC_API_KEY;
   const budget = new LlmBudget(budgetLimits(config), files.usage, log);
   const voice = selectVoiceProviders({ ...config, INTENT_MODEL: models.intent });
+  const client = createChainClient(chain, rpcUrls(config));
   return {
     config,
     deployment,
     catalog,
     chain,
-    client: createChainClient(chain, rpcUrls(config)),
+    client,
     signer: loadAgentSigner(config.AGENT_PRIVATE_KEY, chain, rpcUrls(config)),
     resolver: new Resolver(catalog.text),
     llm: createLlmResolver({
@@ -109,6 +114,12 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     llmModels: models,
     showMe: createShowMe({ apiKey: anthropicKey, model: models.other, budget, symbols: catalog.entries.map((e) => e.symbol), log }),
     cacheDir,
+    sessions: createSessions({
+      store: new JsonSessionStore(sessionStoreFile(config, cacheDir)),
+      ownerOf: (vault) => client.readContract({ address: vault, abi: glanceVaultAbi, functionName: "owner" }),
+      chainId: deployment.chainId,
+      log,
+    }),
     why: {
       news: config.FINNHUB_API_KEY
         ? createFinnhub({ apiKey: config.FINNHUB_API_KEY, cache: new TtlCache(cacheDir ? join(cacheDir, "finnhub.json") : null, NEWS_TTL_MS) })
@@ -132,4 +143,12 @@ function refusalLogFile(config: Config): string | null {
   const set = config.REFUSAL_LOG_FILE;
   if (set !== undefined) return set.trim() || null;
   return config.NODE_ENV === "test" ? null : "data/refusals.jsonl";
+}
+
+/** .cache/sessions.json by default (gitignored); memory only in tests (unless set) or when set to "". */
+function sessionStoreFile(config: Config, cacheDir: string | null): string | null {
+  const set = config.SESSION_STORE_FILE;
+  if (set !== undefined) return set.trim() || null;
+  if (config.NODE_ENV === "test") return null;
+  return join(cacheDir ?? config.LLM_CACHE_DIR, "sessions.json");
 }

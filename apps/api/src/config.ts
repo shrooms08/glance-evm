@@ -131,6 +131,9 @@ const envSchema = z.object({
    * in memory only. Relative to the API's working directory.
    */
   REFUSAL_LOG_FILE: z.string().optional(),
+  /** Linked browser sessions (JSON). Default .cache/sessions.json; memory only in tests unless set; "" for memory. */
+  SESSION_STORE_FILE: z.string().optional(),
+  SESSION_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(30),
 });
 
 export type Config = z.infer<typeof envSchema> & { corsOrigins: string[] };

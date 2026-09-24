@@ -67,7 +67,7 @@ const LOG_CHUNK_BLOCKS = 2_000_000n;
 
 export class ApiError extends Error {
   constructor(
-    readonly status: 400 | 404 | 409 | 422 | 502 | 503,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 502 | 503,
     readonly code: string,
     message: string,
     readonly guard?: GuardError,

@@ -19,7 +19,8 @@
     "liquid-gooey": "^0.2.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "thinking-orbs": "0.3.2"
+    "thinking-orbs": "0.3.2",
+    "viem": "^2.56.8"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.0",

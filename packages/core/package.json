@@ -18,7 +18,8 @@
     "./showme": "./src/showme.ts",
     "./sketch": "./src/sketch.ts",
     "./persona": "./src/persona.ts",
-    "./sentences": "./src/sentences.ts"
+    "./sentences": "./src/sentences.ts",
+    "./session": "./src/session.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
