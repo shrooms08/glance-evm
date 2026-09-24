@@ -5,7 +5,8 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { isAddress } from "viem";
+import { getAddress, isAddress } from "viem";
+import { CHART_RANGES } from "@glance/core/chart";
 
 import type { GuardError } from "./errors.js";
 import { z } from "zod";
@@ -14,7 +15,7 @@ import type { AppContext } from "./context.js";
 import { rateLimit } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
-import { ApiError, activityView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
+import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 
 const MAX_RESOLVE_CHARS = 20_000;
@@ -32,6 +33,7 @@ const quoteQuery = z.object({ vault: address, symbol, side, amount: decimal, sli
 const tradeBody = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() }).strict();
 const activityQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
 const priceQuery = z.object({ vault: address.optional() });
+const chartQuery = z.object({ range: z.enum(CHART_RANGES).default("1D"), vault: address.optional() });
 
 /** JSON with bigints as decimal strings. */
 function send(c: Context, body: unknown, status: 200 | 400 | 404 | 409 | 422 | 429 | 500 | 502 | 503 = 200) {
@@ -88,6 +90,7 @@ export function createServerApp(ctx: AppContext) {
   app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
   app.use("/resolve/names", rateLimit({ limit: 20, trustProxy: config.TRUST_PROXY, name: "names" }));
   app.use("/why/*", rateLimit({ limit: config.WHY_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "why" }));
+  app.use("/chart/*", rateLimit({ limit: config.CHART_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "chart" }));
   app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
 
   app.get("/health", async (c) => send(c, await healthView(ctx)));
@@ -124,6 +127,11 @@ export function createServerApp(ctx: AppContext) {
   app.get("/vault/:address", async (c) => send(c, await vaultView(ctx, parse(address, c.req.param("address")))));
 
   app.get("/portfolio/:address", async (c) => send(c, await portfolioView(ctx, parse(address, c.req.param("address")))));
+
+  app.get("/chart/:symbol", async (c) => {
+    const { range, vault } = parse(chartQuery, c.req.query());
+    return send(c, await chartView(ctx, parse(symbol, c.req.param("symbol")), range, vault ? getAddress(vault) : undefined));
+  });
 
   app.get("/why/:symbol", async (c) => send(c, await whyView(ctx, parse(symbol, c.req.param("symbol")))));
 

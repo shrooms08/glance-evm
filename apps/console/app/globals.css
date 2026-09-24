@@ -321,6 +321,16 @@ em { font-style: normal; color: var(--t-text); font-weight: 500; }
 @media (min-width: 640px) { .price-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 1000px) { .price-grid { grid-template-columns: repeat(3, 1fr); } }
 .price { gap: var(--g-s6); }
+/* A price card opened to its chart spans the whole row. */
+.price-open { grid-column: 1 / -1; }
+.chart-toggle { align-self: flex-start; }
+.chart { display: flex; flex-direction: column; gap: var(--g-s6); }
+.chart-head { align-items: flex-end; flex-wrap: wrap; gap: var(--g-s5); }
+.chart-price { display: flex; flex-direction: column; gap: var(--g-s2); }
+.chart-box { position: relative; height: 300px; border-radius: var(--g-r-md); overflow: hidden; background: var(--t-canvas); border: 1px solid var(--t-line); }
+.chart-box.skeleton > span { height: 100%; width: 100%; border-radius: 0; }
+.chart-empty { display: flex; align-items: center; justify-content: center; }
+@media (max-width: 600px) { .chart-box { height: 220px; } }
 .keeper { display: flex; flex-direction: column; align-items: flex-end; gap: var(--g-s2); text-align: right; }
 @media (max-width: 600px) { .keeper { align-items: flex-start; text-align: left; } }
 

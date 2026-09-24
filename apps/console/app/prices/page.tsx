@@ -1,5 +1,8 @@
 "use client";
+import { useState } from "react";
+
 import { MarketChip } from "@/components/MarketChip";
+import { PriceChart } from "@/components/PriceChart";
 import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
@@ -74,8 +77,9 @@ function PriceCard({ stock, feed, now }: { stock: CatalogStock; feed?: FeedStatu
   const age = feed?.updatedAt ? now - feed.updatedAt : feed?.ageSeconds ?? null;
   const source = priceSourceLabel({ symbol: stock.symbol, feedReal: stock.feedReal, kind: feed?.source ?? stock.priceSourceKind });
   const mirrored = !stock.feedReal && source.tone === "neutral";
+  const [open, setOpen] = useState(false);
   return (
-    <article className="card price">
+    <article className={`card price${open ? " price-open" : ""}`}>
       <div className="between">
         <div>
           <p className="ticker">{stock.symbol}</p>
@@ -118,6 +122,10 @@ function PriceCard({ stock, feed, now }: { stock: CatalogStock; feed?: FeedStatu
           </a>
         )}
       </div>
+      <button className="btn btn-ghost chart-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? "Hide chart" : "Show chart"}
+      </button>
+      {open && <PriceChart symbol={stock.symbol} />}
     </article>
   );
 }

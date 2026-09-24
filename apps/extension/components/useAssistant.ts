@@ -54,9 +54,22 @@ export type AssistantCard =
   | { kind: "spent" }
   | { kind: "portfolio"; key: number; tab?: "positions" | "journal" }
   | { kind: "why"; symbol: string; key: number }
+  | { kind: "chart"; symbol: string; key: number }
   | null;
 
-export function useAssistant(opts: { context?: () => VoiceCommandContext } = {}) {
+export interface AssistantOptions {
+  context?: () => VoiceCommandContext;
+  /**
+   * A chart was asked for ("show me Tesla's chart"). On the page, this opens the side panel on it; in the side panel
+   * the chart card is simply shown.
+   */
+  onChart?(symbol: string): void;
+}
+
+export function useAssistant(opts: AssistantOptions = {}) {
+  // Read through a ref: the callbacks below don't re-create when the page passes a new handler.
+  const onChart = useRef(opts.onChart);
+  onChart.current = opts.onChart;
   const g = useGlance();
   const [card, setCard] = useState<AssistantCard>(null);
   const [heard, setHeard] = useState("");
@@ -131,6 +144,12 @@ export function useAssistant(opts: { context?: () => VoiceCommandContext } = {})
           if (!res.ok) return say(res.message);
           return say(spokenWhy(res.data, name), "Sources below");
         }
+        case "chart": {
+          setCard({ kind: "chart", symbol: cmd.symbol, key: ++seq.current });
+          onChart.current?.(cmd.symbol);
+          const name = g.catalog.find((s) => s.symbol === cmd.symbol)?.name ?? cmd.symbol;
+          return say(`Here's ${name}'s chart.`, "Chainlink price history");
+        }
         case "confirm":
         case "cancel":
           // Only a tap (or a typed "yes") confirms: a misheard word must never move money.
@@ -165,6 +184,12 @@ export function useAssistant(opts: { context?: () => VoiceCommandContext } = {})
         case "why":
           // The API is already speaking the summary; the card shows it with its sources as links.
           if (it.symbol) setCard({ kind: "why", symbol: it.symbol, key: ++seq.current });
+          break;
+        case "chart":
+          if (it.symbol) {
+            setCard({ kind: "chart", symbol: it.symbol, key: ++seq.current });
+            onChart.current?.(it.symbol);
+          }
           break;
       }
       // The reply is about to play: stay on thinking (no flicker to idle) until the audio actually starts. With spoken

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "What the API and the console must agree on: the contract ABIs, the guard sentences, money formatting and the rolling-window maths.",
+  "description": "What the API and the console must agree on: the contract ABIs, the guard sentences, money formatting and the rolling-window maths, and the price chart.",
   "exports": {
     "./abi": "./src/abi.generated.ts",
     "./errors": "./src/errors.ts",
@@ -12,7 +12,9 @@
     "./window": "./src/window.ts",
     "./factories": "./src/factories.ts",
     "./tone": "./src/tone.ts",
-    "./tickers": "./src/tickers.ts"
+    "./tickers": "./src/tickers.ts",
+    "./chart": "./src/chart.ts",
+    "./chart-mount": "./src/chart-mount.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -23,5 +25,9 @@
   },
   "peerDependencies": {
     "viem": "^2.56.8"
+  },
+  "dependencies": {
+    "@glance/design": "workspace:*",
+    "lightweight-charts": "5.2.1"
   }
 }

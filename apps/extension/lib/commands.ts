@@ -13,6 +13,7 @@ export type Command =
   | { kind: "spent" }
   | { kind: "portfolio" }
   | { kind: "why"; symbol: string }
+  | { kind: "chart"; symbol: string }
   | { kind: "confirm" }
   | { kind: "cancel" }
   | { kind: "unknown"; heard: string };
@@ -96,6 +97,17 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
 
   if (/\bhow am i doing\b|\bwhat do i (own|have|hold)\b|\b(show|open|see)( me)? my (portfolio|positions|holdings|stocks)\b|^(my )?(portfolio|positions|holdings)$|\bhow's my portfolio\b/.test(t)) {
     return { kind: "portfolio" };
+  }
+
+  // "show me Tesla's chart", "chart AMD", "open the Palantir chart": a company and the word chart (or graph).
+  if (/\b(chart|charts|graph)\b/.test(t)) {
+    const rest = t
+      .replace(/([a-z0-9])'s\b/g, "$1")
+      .replace(/\b(show|open|see|pull up|display|bring up)( me)?\b|\b(the|a|price|stock|chart|charts|graph|for|of|on)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const symbol = findCompany(rest, table);
+    if (symbol) return { kind: "chart", symbol };
   }
 
   // "why did Tesla move", "why is AMD down": a company and a movement word.

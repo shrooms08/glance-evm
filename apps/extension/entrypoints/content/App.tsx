@@ -28,6 +28,7 @@ import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
 import { SoundCue, type Sfx } from "../../lib/sfx";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
+import { requestChart } from "../../lib/chartPanel";
 import { capturePage, type PageContext } from "../../lib/journal";
 import { rememberOrbAnchor } from "../../lib/updatedNotice";
 
@@ -63,7 +64,9 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const soundCue = useRef(new SoundCue());
   useEffect(() => sfx?.setEnabled(g.sounds), [sfx, g.sounds]);
   const voiceContext = useRef<() => VoiceCommandContext>(() => ({}));
-  const assistant = useAssistant({ context: () => voiceContext.current() });
+  // "Show me Tesla's chart": the chart opens in the side panel (the floating panel offers a one-tap button if the
+  // browser won't open it without a tap).
+  const assistant = useAssistant({ context: () => voiceContext.current(), onChart: (symbol) => void requestChart(symbol) });
   const [mentions, setMentions] = useState<Mention[]>(underliner.current());
   /** This page, and the sentence around the company's first underline, for the headline journal. */
   const pageContextFor = (symbol: string): PageContext => capturePage(document, underliner.current().find((m) => m.symbol === symbol)?.range ?? null);
@@ -397,6 +400,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               }}
               autoFocusInput={openedByKeyboard}
               pageContext={pageContextFor}
+              onOpenChart={(symbol) => void requestChart(symbol)}
             />
           </GooPanel>
 

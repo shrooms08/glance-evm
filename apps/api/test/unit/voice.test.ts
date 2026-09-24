@@ -58,6 +58,10 @@ describe("intent (rules, validated)", () => {
     ["what's Tesla at", "price", "TSLA", null],
     ["how much is Netflix", "price", "NFLX", null],
     ["Palantir stock price", "price", "PLTR", null],
+    ["show me Tesla's chart", "chart", "TSLA", null],
+    ["chart AMD", "chart", "AMD", null],
+    ["open the Palantir chart", "chart", "PLTR", null],
+    ["Netflix price chart", "chart", "NFLX", null],
     ["how much have I spent today", "spend-so-far", null, null],
     ["how much can I still spend", "spend-so-far", null, null],
     ["why was that blocked", "explain", null, null],
@@ -677,6 +681,13 @@ describe("voice endpoints", () => {
     expect(neg).toMatchObject({ intent: "unknown", reply: "Okay. I won't buy or sell anything." });
     const why = (await (await post("/voice/command", { transcript: "why?", context: { lastGuard: { code: "PER_TRADE_CAP", message: "That's over your $100 per trade limit." } } })).json()) as { reply: string };
     expect(why.reply).toBe("That's over your $100 per trade limit.");
+  });
+
+  it("/voice/command: \"show me Tesla's chart\" names the chart to open", async () => {
+    const res = await post("/voice/command", { transcript: "show me Tesla's chart" });
+    expect(await res.json()).toMatchObject({ intent: "chart", symbol: "TSLA", reply: "Here's Tesla's chart.", source: "rules" });
+    // No company: nothing to chart.
+    expect(await (await post("/voice/command", { transcript: "show me a chart" })).json()).toMatchObject({ intent: "unknown" });
   });
 
   it("/voice/command validates its input", async () => {

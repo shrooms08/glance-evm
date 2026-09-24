@@ -2,6 +2,8 @@
  * Typed API client for every extension surface. Calls go through the background service worker.
  */
 import type { Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
+import type { ChartData, ChartRange } from "@glance/core/chart";
+
 import { send } from "./lifecycle";
 import { setChainStatus } from "./chainStatus";
 import type { ApiRequest, ApiResponse } from "./messages";
@@ -65,6 +67,7 @@ export const api = {
   vault: (address: string) => call<Vault>("GET", `/vault/${address}`),
   portfolio: (address: string) => call<Portfolio>("GET", `/portfolio/${address}`),
   why: (symbol: string) => call<WhyMoved>("GET", `/why/${encodeURIComponent(symbol)}`),
+  chart: (symbol: string, range: ChartRange, vault?: string) => call<ChartData>("GET", `/chart/${encodeURIComponent(symbol)}?${q({ range, vault })}`),
   quote: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Quote>("GET", `/quote?${q(p)}`),
   trade: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>

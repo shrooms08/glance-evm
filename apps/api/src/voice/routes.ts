@@ -127,6 +127,9 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
       const a = await whyView(ctx, it.symbol!);
       return { reply: spokenSummary(a, name), facts: { why: { summary: a.summary, sources: a.sources.length } } };
     }
+    case "chart":
+      // The extension opens the side panel on the chart; the chart itself is read from GET /chart there.
+      return { reply: `Here's ${name}'s chart.` };
     case "explain":
       if (context.lastGuard) return { reply: context.lastGuard.message };
       return { reply: it.modelReply ?? "Nothing has been refused yet, so there's nothing to explain." };

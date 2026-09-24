@@ -9,6 +9,7 @@ import { buildCatalog, loadCatalogText, loadPriceSources, type Catalog } from ".
 import { chainFor, createChainClient } from "./chain.js";
 import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
+import type { ChartDeps } from "./chart.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
 import { chooseModel, LlmBudget, NameCache, type BudgetLimits, type Log } from "./llmBudget.js";
 import { TtlCache } from "./ttlCache.js";
@@ -43,6 +44,8 @@ export interface AppContext {
   why: { news: NewsClient | null; summarizer: Summarizer | null; summaries: TtlCache<Omit<WhyAnswer, "cached">> };
   /** Trades the guards refused before anything was sent (see src/refusals.ts). */
   refusals: RefusalLog;
+  /** Tests only: parts of the chart's sources to replace (a fake mainnet reader, fake quote history). */
+  chartOverrides?: Partial<ChartDeps>;
   /** The gitignored .cache dir for persisted caches (portfolio events, news, names); null keeps them in memory (tests). */
   cacheDir: string | null;
 }

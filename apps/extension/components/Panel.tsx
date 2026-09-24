@@ -3,7 +3,7 @@
  * the orb's state and reply, the active card, companies found on the page, the weekend badge, a command box, and the
  * floating / docked switch.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { keyLabel } from "../lib/hotkeys";
 import { isAddress } from "../lib/settings";
@@ -11,6 +11,7 @@ import type { PageContext } from "../lib/journal";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
 import { WhyCard } from "./Why";
+import { Sparkline } from "./Sparkline";
 import { marketClosed, useGlance } from "./context";
 import { Orb, ORB_LABELS } from "./Orb";
 import type { useAssistant } from "./useAssistant";
@@ -34,9 +35,16 @@ interface Props {
   autoFocusInput?: boolean;
   /** The page a buy from this panel is placed from, for the headline journal (null: none). */
   pageContext?(symbol: string): Promise<PageContext | null> | PageContext | null;
+  /**
+   * The full price chart. Only the side panel passes it (it loads the chart library lazily); on the page, a chart
+   * request shows a one-tap card that opens the side panel instead.
+   */
+  renderChart?(symbol: string, onClose?: () => void): ReactNode;
+  /** On the page: open the side panel on `symbol`'s chart (a tap, so the browser allows it). */
+  onOpenChart?(symbol: string): void;
 }
 
-export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext }: Props) {
+export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext, renderChart, onOpenChart }: Props) {
   const g = useGlance();
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -110,6 +118,20 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
             </button>
           </div>
         ) : null}
+
+        {assistant.card?.kind === "company" && renderChart && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s5)" }}>{renderChart(assistant.card.symbol)}</div>
+        )}
+
+        {assistant.card?.kind === "chart" && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
+            {renderChart ? (
+              renderChart(assistant.card.symbol, () => assistant.setCard(null))
+            ) : (
+              <ChartRequestCard symbol={assistant.card.symbol} onOpen={onOpenChart} onClose={() => assistant.setCard(null)} />
+            )}
+          </div>
+        )}
 
         {assistant.card?.kind === "company" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
@@ -218,6 +240,30 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         </button>
         <button className="g-btn g-btn-ghost" onClick={g.openSettings}>
           Settings
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** On the page: the chart lives in the side panel. One tap opens it there (the day's sparkline meanwhile). */
+function ChartRequestCard({ symbol, onOpen, onClose }: { symbol: string; onOpen?(symbol: string): void; onClose(): void }) {
+  const g = useGlance();
+  const name = g.catalog.find((s) => s.symbol === symbol)?.name ?? symbol;
+  return (
+    <div className="g-card" role="region" aria-label={`${name} chart`}>
+      <div className="g-section" style={{ gap: 8 }}>
+        <div className="g-between">
+          <span className="g-ui">
+            {name} <span className="g-ticker">{symbol}</span>
+          </span>
+          <button className="g-btn g-btn-ghost g-icon-btn" aria-label="Close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <Sparkline symbol={symbol} />
+        <button className="g-btn g-btn-primary" onClick={() => onOpen?.(symbol)}>
+          Open the chart in the side panel
         </button>
       </div>
     </div>

@@ -12,6 +12,7 @@ import { ageHours, priceUsd, shortHash } from "../lib/format";
 import { BlockedCard } from "./BlockedCard";
 import { useGlance } from "./context";
 import { Orb } from "./Orb";
+import { Sparkline } from "./Sparkline";
 import { useTradeFlow, type PageContextSource } from "./useTradeFlow";
 import { WhyLine } from "./Why";
 
@@ -115,6 +116,7 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
                   ? `market closed · limits at ${weekendCap}`
                   : "price too old to trade on"}
             </span>
+            {variant === "hover" && <Sparkline symbol={symbol} />}
           </>
         ) : priceError ? (
           <span className="g-meta">{priceError}</span>

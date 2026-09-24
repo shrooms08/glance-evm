@@ -189,6 +189,10 @@ const components = /* css */ `
 
 /* ---------- Portfolio, journal, why it moved ---------- */
 .g-up { color: var(--g-lime); }
+.g-chart-box { position: relative; height: 220px; margin: 0 var(--g-s7); border-radius: var(--g-r-md); overflow: hidden; background: var(--g-canvas); }
+.g-chart-empty { display: flex; align-items: center; justify-content: center; }
+.g-chart-card .g-tab { padding: 3px 10px; }
+.g-spark { display: block; margin-top: 4px; }
 .g-down { color: var(--g-down); }
 .g-tabs { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--g-r-pill); background: var(--g-raised); border: 1px solid var(--g-line); }
 .g-tab { border: 0; background: transparent; color: var(--g-mute); padding: 4px 12px; border-radius: var(--g-r-pill); font-size: var(--g-ui-size); font-weight: var(--g-ui-weight); cursor: pointer; }

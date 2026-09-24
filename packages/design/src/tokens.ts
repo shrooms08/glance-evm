@@ -52,6 +52,14 @@ export const color = {
   failInkWash: "rgba(180,35,24,.07)",
   failInkLine: "rgba(180,35,24,.30)",
   lightShadow: "rgba(10,10,10,.06)",
+  // Price charts: the lime (or lime ink) fill fading to transparent, a barely-there grid, the market-closed band.
+  chartFillLime: "rgba(196,241,53,.28)",
+  chartFillLimeInk: "rgba(79,122,0,.18)",
+  chartFillClear: "rgba(0,0,0,0)",
+  chartGrid: "rgba(255,255,255,.035)",
+  chartGridInk: "rgba(0,0,0,.035)",
+  chartClosed: "rgba(255,255,255,.05)",
+  chartClosedInk: "rgba(0,0,0,.045)",
 } as const;
 
 /**

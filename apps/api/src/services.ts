@@ -20,6 +20,21 @@ import type { CatalogEntry } from "./catalog.js";
 import type { AppContext } from "./context.js";
 import { primaryVault } from "./deployment.js";
 import { buildPortfolio, findDeployBlock, PortfolioStore, toTradeEvents, VaultEventCache } from "./portfolio.js";
+import {
+  buildChart,
+  cachedQuoteHistory,
+  chainlinkReader,
+  mainnetClient,
+  quoteCacheFile,
+  RoundStore,
+  roundStoreFile,
+  type ChartDeps,
+  type FeedReader,
+  type QuoteHistory,
+} from "./chart.js";
+import type { ChartRange } from "@glance/core/chart";
+import { usTicker } from "@glance/core/tickers";
+import { TtlCache } from "./ttlCache.js";
 import { explainMove, type FeedMove, type WhyAnswer } from "./why.js";
 import { onChainRefusals } from "./refusals.js";
 import { glanceFactories } from "@glance/core/factories";
@@ -1094,5 +1109,98 @@ export async function whyView(ctx: AppContext, symbolParam: string): Promise<Why
   return explainMove(
     { ...ctx.why, feedMove: (s) => feedMove(ctx, s), now: () => Date.now(), log: (l) => console.log(l) },
     { symbol: stock.symbol, name: stock.name },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Charts
+// ---------------------------------------------------------------------------
+
+const chartDepsByCtx = new WeakMap<AppContext, ChartDeps>();
+const THRESHOLDS_TTL_MS = 10 * 60 * 1000;
+const QUOTE_HISTORY_TTL_MS = 5 * 60 * 1000;
+
+/** Everything a chart reads, built once per context (tests replace parts through ctx.chartOverrides). */
+export function chartDeps(ctx: AppContext): ChartDeps {
+  const known = chartDepsByCtx.get(ctx);
+  if (known) return known;
+  let mainnet: ReturnType<typeof mainnetClient> | null = null;
+  const readers = new Map<string, FeedReader>();
+  const thresholds = new Map<string, { at: number; value: Promise<{ openMaxAge: number; closedMaxAge: number } | null> }>();
+  const refreshing = new Set<string>();
+  const deps: ChartDeps = {
+    reader(feed) {
+      let r = readers.get(feed);
+      if (!r) readers.set(feed, (r = chainlinkReader((mainnet ??= mainnetClient(ctx.config.RPC_MAINNET_URL)), feed)));
+      return r;
+    },
+    store: new RoundStore(roundStoreFile(ctx)),
+    quoteHistory: cachedQuoteHistory(new TtlCache<QuoteHistory>(quoteCacheFile(ctx), QUOTE_HISTORY_TTL_MS)),
+    async keeperHistory(symbol, since) {
+      const stock = stockBySymbol(ctx, symbol);
+      const latest = (await chainNow(ctx)).number;
+      // ~0.15s blocks: enough blocks to cover the range, from the deployment at the earliest.
+      const lookback = BigInt(Math.ceil((Date.now() / 1000 - since) / 0.15));
+      const event = testPriceFeedAbi.find((i) => i.type === "event" && i.name === "PriceSet") as Extract<(typeof testPriceFeedAbi)[number], { type: "event"; name: "PriceSet" }>;
+      const [decimals, logs] = await Promise.all([
+        ctx.client.readContract({ address: stock.feed, abi: testPriceFeedAbi, functionName: "decimals" }),
+        ctx.client.getLogs({ address: stock.feed, event, fromBlock: startBlock(ctx, latest, lookback), toBlock: latest }),
+      ]);
+      return logs
+        .map((l) => ({ t: Number(l.args.updatedAt as bigint), answer: l.args.answer as bigint, decimals }))
+        .filter((p) => p.answer > 0n && p.t >= since)
+        .sort((a, b) => a.t - b.t);
+    },
+    thresholds(symbol) {
+      const hit = thresholds.get(symbol);
+      if (hit && Date.now() - hit.at < THRESHOLDS_TTL_MS) return hit.value;
+      const value = readPrice(ctx, stockBySymbol(ctx, symbol), ctx.defaultVault).then(
+        (p) => ({ openMaxAge: Number(p.openMaxAge), closedMaxAge: Number(p.closedMaxAge) }),
+        () => {
+          thresholds.delete(symbol); // a failed read isn't remembered: the next chart asks again
+          return null;
+        },
+      );
+      thresholds.set(symbol, { at: Date.now(), value });
+      return value;
+    },
+    trades(vault) {
+      const record = portfolioEvents(ctx).store.get(vault);
+      if (!record) {
+        // Not cached yet: read it in the background (the portfolio checks it's a vault first), for the next chart.
+        const key = vault.toLowerCase();
+        if (!refreshing.has(key)) {
+          refreshing.add(key);
+          void portfolioView(ctx, vault)
+            .catch(() => {})
+            .finally(() => refreshing.delete(key));
+        }
+        return null;
+      }
+      return { events: record.events, usdgDecimals: record.usdg?.decimals ?? 6 };
+    },
+    // Only what "Why it moved" already has: a chart never asks Finnhub or Claude.
+    news: (symbol) => ctx.why.summaries.get(symbol)?.value.sources ?? [],
+    explorerUrl: ctx.config.EXPLORER_URL,
+    now: () => Math.floor(Date.now() / 1000),
+    ...ctx.chartOverrides,
+  };
+  chartDepsByCtx.set(ctx, deps);
+  return deps;
+}
+
+export async function chartView(ctx: AppContext, symbolParam: string, range: ChartRange, vault?: Address) {
+  const stock = stockBySymbol(ctx, symbolParam);
+  const source =
+    stock.priceSourceKind === "mainnet-mirror" && stock.mainnetFeed
+      ? { kind: "mainnet-mirror" as const, feed: stock.mainnetFeed, description: stock.priceSource }
+      : stock.priceSourceKind === "public-quote"
+        ? { kind: "public-quote" as const, provider: "yahoo-finance", description: stock.priceSource }
+        : null;
+  return buildChart(
+    chartDeps(ctx),
+    { symbol: stock.symbol, token: stock.token, tokenDecimals: stock.tokenDecimals, source, ticker: usTicker(stock.symbol) ?? stock.symbol },
+    range,
+    vault,
   );
 }

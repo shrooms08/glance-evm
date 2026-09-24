@@ -91,6 +91,9 @@ const envSchema = z.object({
   WHY_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
   /** Company news for "Why it moved" (finnhub.io). Server-side only: never logged, never sent to a client. */
   FINNHUB_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Robinhood Chain mainnet, read-only: the Chainlink feeds behind the price charts (GET /chart). */
+  RPC_MAINNET_URL: z.url().default("https://rpc.mainnet.chain.robinhood.com"),
+  CHART_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),
   /** Per-IP limits for the new read endpoints. */
   WHY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(20),
   PORTFOLIO_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),

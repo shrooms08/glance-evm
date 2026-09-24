@@ -4,7 +4,7 @@
  * found. Speech started in the panel runs right here (an extension page, under Glance's own microphone permission);
  * speech started on the page runs in the offscreen document and its words are handed over.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
@@ -19,6 +19,10 @@ import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { PageMatchesReply } from "../../lib/messages";
 import type { PageContext } from "../../lib/journal";
 import { defaultMode } from "../../lib/settings";
+import { pendingChart, takePendingChart } from "../../lib/chartPanel";
+
+// The chart library comes with this chunk, loaded the first time a chart is shown.
+const StockChart = lazy(() => import("../../components/StockChart"));
 
 function SidePanel() {
   const g = useGlance();
@@ -117,9 +121,24 @@ function SidePanel() {
     }
   };
 
+  // "Show me Tesla's chart" said on the page: the request waits in storage for this panel.
+  const { setCard } = assistant;
+  useEffect(() => {
+    const show = (symbol: string | null) => symbol && setCard({ kind: "chart", symbol, key: Date.now() });
+    void takePendingChart().then(show);
+    return pendingChart.watch((v) => {
+      if (v) void takePendingChart().then(show);
+    });
+  }, [setCard]);
+
   return (
     <Panel
       layout="tall"
+      renderChart={(symbol, onClose) => (
+        <Suspense fallback={<div className="g-chart-box" aria-busy="true" />}>
+          <StockChart key={symbol} symbol={symbol} onClose={onClose} />
+        </Suspense>
+      )}
       pageContext={pageContext}
       assistant={assistant}
       host={page.host}

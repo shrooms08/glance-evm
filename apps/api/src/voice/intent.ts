@@ -15,7 +15,7 @@ import type { MessagesClient } from "../llm.js";
 import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "../llmBudget.js";
 import { extractAmounts } from "./amounts.js";
 
-export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "unknown"] as const;
+export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
 export interface VoiceContext {
@@ -98,7 +98,8 @@ function aliasTable(catalog: readonly CatalogEntry[]): Array<{ phrase: string; s
 
 /** Every catalog company named in the text, in order of first mention. */
 export function findCompanies(text: string, catalog: readonly CatalogEntry[]): string[] {
-  const t = ` ${normalise(text).replace(/\?/g, " ")} `;
+  // "Tesla's chart" names Tesla: possessives are dropped for matching only ("what's" elsewhere is left alone).
+  const t = ` ${normalise(text).replace(/\?/g, " ").replace(/([a-z0-9])'s\b/g, "$1")} `;
   const hits: Array<{ at: number; symbol: string }> = [];
   for (const row of aliasTable(catalog)) {
     const at = t.indexOf(` ${row.phrase} `);
@@ -128,6 +129,10 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   }
   if (/\bhow am i doing\b|\bwhat do i (own|have|hold)\b|\b(show|open|see)( me)? my (portfolio|positions|holdings|stocks)\b|^(my )?(portfolio|positions|holdings)$|\bhow('s| is) my (portfolio|vault) doing\b/.test(t)) {
     return { ...base, symbol: null, intent: "portfolio" };
+  }
+  // "show me Tesla's chart", "chart AMD", "open the Palantir chart": a company and the word chart (or graph).
+  if (symbol && /\b(chart|charts|graph)\b/.test(t)) {
+    return { ...base, intent: "chart" };
   }
   // "why did Tesla move?", "why is AMD down?": a company and a movement word. (A bare "why?" explains a refusal.)
   if (symbol && /\bwhy\b|\bwhat (moved|happened to)\b/.test(t) && /\b(move|moved|moving|up|down|drop|dropped|dropping|jump|jumped|fall|fell|falling|rise|rose|rising|rally|rallied|slide|slid|surge|surged|plunge|plunged|spike|spiked|tank|tanked|climb|climbed)\b/.test(t)) {
@@ -191,6 +196,10 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     notes.push("why without a catalog company");
     out.intent = "explain";
   }
+  if (out.intent === "chart" && !out.symbol) {
+    notes.push("chart without a catalog company");
+    out.intent = "unknown";
+  }
   if (out.intent === "portfolio") out.symbol = null;
   if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol) {
     notes.push(`${out.intent} without a catalog company`);
@@ -245,6 +254,7 @@ export function createClaudeIntent(
     "Intents: buy, sell, price (the user wants a price), spend-so-far (how much they have spent or have left today),",
     "explain (they ask why something happened, e.g. why a trade was refused), portfolio (how they're doing, what they",
     "own, or to show their portfolio), why (why a named stock moved, e.g. \"why did Tesla move?\"; needs the symbol),",
+    "chart (they want to see a named stock's price chart, e.g. \"show me Tesla's chart\", \"chart AMD\"; needs the symbol),",
     "unknown (anything else, or ambiguous).",
     "Rules:",
     "- symbol: ONLY a ticker from the list below, or null. Never any other ticker.",

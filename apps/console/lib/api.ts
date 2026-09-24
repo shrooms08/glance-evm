@@ -10,6 +10,8 @@
  */
 import type { Address } from "viem";
 
+import type { ChartData, ChartRange } from "@glance/core/chart";
+
 import { env } from "./env";
 
 export interface Money {
@@ -221,6 +223,9 @@ export const api = {
   activity: (address: string, limit = 200) => apiGet<ActivityView>(`/vault/${address}/activity?limit=${limit}`),
   health: () => apiGet<HealthView>("/health"),
   catalog: () => apiGet<CatalogView>("/catalog"),
+  /** Public: price history for the chart; with a vault, its trades as markers too. */
+  chart: (symbol: string, range: ChartRange, vault?: string | null) =>
+    apiGet<ChartData>(`/chart/${encodeURIComponent(symbol)}?range=${range}${vault ? `&vault=${vault}` : ""}`),
 };
 
 /** Backoff for reads while the testnet isn't responding: they recover on their own. Other problems don't retry. */
