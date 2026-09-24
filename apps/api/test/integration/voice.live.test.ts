@@ -2,7 +2,7 @@
  * Real Deepgram and Fish Audio calls, with a latency breakdown printed. Skipped cleanly unless the keys are real
  * (placeholders count as missing). Never trades.   pnpm --filter api test:integration
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { resolve } from "node:path";
 import { parseEnv } from "node:util";
@@ -25,7 +25,12 @@ const wavFile = readFileSync(resolve(import.meta.dirname, "../fixtures/buy-ten-d
 const pcm = wavFile.subarray(44); // 16kHz mono 16-bit, as the extension now streams
 const report: string[] = [];
 const line = (s: string) => report.push(s);
-afterAll(() => console.info(`\n[latency breakdown, from this machine]\n${report.map((r) => `  ${r}`).join("\n")}\n`));
+afterAll(() => {
+  const text = `\n[latency breakdown, from this machine]\n${report.map((r) => `  ${r}`).join("\n")}\n`;
+  console.info(text);
+  // VOICE_LATENCY_REPORT=<file>: also written there (the test runner may not show console output).
+  if (process.env.VOICE_LATENCY_REPORT) writeFileSync(process.env.VOICE_LATENCY_REPORT, text);
+});
 
 const ms = (n: number) => `${Math.round(n)}ms`;
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
@@ -90,14 +95,18 @@ describe.skipIf(!haveDeepgram)("Deepgram transcription (live provider)", () => {
   });
 });
 
-describe.skipIf(!haveDeepgram)("Deepgram Aura speech (live provider)", () => {
-  it("first audio byte, cold then warm", async () => {
-    const aura = deepgramSpeaker({ apiKey: env.DEEPGRAM_API_KEY!, voice: env.DEEPGRAM_TTS_VOICE ?? "aura-2-athena-en" });
-    const firsts: number[] = [];
-    const totals: number[] = [];
-    for (let i = 0; i < 3; i++) {
+/** Three short Glance replies, as spoken. */
+const REPLIES = ["Tesla is at $242.18, and the market is open.", "You hold $119.92 across 1 stock, up $1.40 overall.", "Buying $10 of Tesla. Say yes to confirm."];
+/** VOICE_LATENCY_BENCH=1: 5 runs of each reply per voice (the comparison behind the default voice); otherwise 1. */
+const RUNS = process.env.VOICE_LATENCY_BENCH === "1" ? 5 : 1;
+
+describe.skipIf(!haveDeepgram)("Deepgram speech, Aura vs Flux (live provider)", () => {
+  it("time to first audio and total, per reply, median of runs", { timeout: 300_000 }, async () => {
+    const voices = ["aura-2-athena-en", "flux-sienna-en"];
+    const speakers = voices.map((voice) => deepgramSpeaker({ apiKey: env.DEEPGRAM_API_KEY!, voice }));
+    const timeOne = async (s: Speaker, text: string, minBytes = 5_000) => {
       const t0 = performance.now();
-      const reader = (await aura.stream!("Tesla is at $379.93. The market's open.")).getReader();
+      const reader = (await s.stream!(text)).getReader();
       let first = 0;
       let bytes = 0;
       for (;;) {
@@ -106,11 +115,27 @@ describe.skipIf(!haveDeepgram)("Deepgram Aura speech (live provider)", () => {
         if (!first) first = performance.now() - t0;
         bytes += value.byteLength;
       }
-      firsts.push(first);
-      totals.push(performance.now() - t0);
-      expect(bytes).toBeGreaterThan(5_000);
+      expect(bytes).toBeGreaterThan(minBytes);
+      return { first, total: performance.now() - t0 };
+    };
+    // Warm each endpoint's kept-alive connection first (the API pre-warms on key press), untimed.
+    for (const s of speakers) await timeOne(s, "Okay.", 1_000);
+    const results = speakers.map(() => REPLIES.map(() => ({ first: [] as number[], total: [] as number[] })));
+    for (let run = 0; run < RUNS; run++) {
+      for (const [r, text] of REPLIES.entries()) {
+        for (const [v, s] of speakers.entries()) {
+          const t = await timeOne(s, text); // alternating voices, so both see the same network
+          results[v]![r]!.first.push(t.first);
+          results[v]![r]!.total.push(t.total);
+        }
+      }
     }
-    line(`speech (Deepgram Aura ${env.DEEPGRAM_TTS_VOICE ?? "aura-2-athena-en"}): first byte ${firsts.map(ms).join(", ")} (cold, then warm); complete ${totals.map(ms).join(", ")} (playback starts at the first byte)`);
+    line(`speech, median of ${RUNS} run(s) per reply (first audio byte / complete):`);
+    for (const [v, voice] of voices.entries()) {
+      const rows = results[v]!.map((x) => `${ms(median(x.first))} / ${ms(median(x.total))}`);
+      const all = results[v]!.flatMap((x) => x.first);
+      line(`  ${voice.padEnd(17)} ${rows.join("   ")}   overall first byte ${ms(median(all))}`);
+    }
   });
 });
 

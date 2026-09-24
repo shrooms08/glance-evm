@@ -11,11 +11,17 @@
  *            {"type":"Finalize"} and take the result marked `from_finalize`: no waiting for end-of-speech detection.
  *            One connection is kept warm ({"type":"KeepAlive"} every 4s, closed after WARM_IDLE_MS unused) and reused
  *            command after command, so no command pays the 1-1.5s handshake to Deepgram.
- *   speak    POST https://api.deepgram.com/v1/speak?model=<Aura-2 voice>&encoding=mp3, JSON { text }; the audio
- *            streams back, so playback can start on the first bytes.
+ *   speak    DEEPGRAM_TTS_VOICE picks the voice and the endpoint by its prefix:
+ *              flux-*  Flux TTS, POST https://api.deepgram.com/v2/speak?model=<voice>&encoding=mp3, JSON { text }
+ *                      (the batch REST transport: MP3, the format the extension already plays; its body streams, first
+ *                      bytes in about 0.5s. The WebSocket transport is no faster warm, much slower cold, and only
+ *                      sends raw PCM, which would need an MP3 encoder here.)
+ *              aura-*  Aura-2, POST https://api.deepgram.com/v1/speak?model=<voice>&encoding=mp3, JSON { text }
+ *            Either way the MP3 streams back and is passed through untouched, so playback starts on the first bytes.
  * Fish Audio (docs.fish.audio): POST https://api.fish.audio/v1/tts, `Authorization: Bearer <key>`, a `model` header,
  *   JSON { text, reference_id, format, latency }; audio comes back as chunked bytes.
- * A speaker that answers 401, 402 or 429 hands the request to the next configured speaker, with one warning.
+ * The speech chain (default flux-sienna-en, then aura-2-athena-en, then Fish): a speaker that answers 401, 402 or 429,
+ * times out before its first byte, or can't be reached hands the request to the next, with one log line each time.
  */
 import { Agent, fetch as undiciFetch } from "undici";
 
@@ -73,6 +79,8 @@ export interface Speaker {
   readonly name: string;
   readonly model: string;
   readonly voice: string;
+  /** Where it speaks from, for the startup banner and /health ("POST https://api.deepgram.com/v2/speak"). */
+  readonly endpoint?: string;
   speak(text: string): Promise<{ audio: Uint8Array; mime: string }>;
   /** The same audio as a byte stream, available as the provider sends it (for playback that starts early). */
   stream?(text: string): Promise<ReadableStream<Uint8Array>>;
@@ -93,15 +101,52 @@ const REFINALIZE_MS = 150;
 
 /** Statuses that mean "this provider won't serve us right now": try the next one. */
 export const FALL_THROUGH_STATUSES = new Set([401, 402, 429]);
+/** How long a speaker has to start answering before the next one is tried. */
+export const SPEECH_FIRST_BYTE_TIMEOUT_MS = 4_000;
+/** The whole clip, once it has started (a failure after the first byte can't fall through: audio is already playing). */
+const SPEECH_TOTAL_TIMEOUT_MS = 20_000;
 
 export class ProviderError extends Error {
   constructor(
     readonly provider: string,
+    /** The HTTP status, or 0 when there was none (timeout, connection error). */
     readonly status: number,
     message: string,
+    readonly kind: "status" | "timeout" | "connection" = "status",
   ) {
     super(message);
   }
+}
+
+/**
+ * A provider request that gives up (ProviderError "timeout") if the answer hasn't started within `firstByteMs`, and
+ * reports a network failure as ProviderError "connection". Neither message carries the URL's query or any header.
+ */
+async function speechRequest(doFetch: typeof fetch, provider: string, url: string, init: RequestInit, firstByteMs: number): Promise<Response> {
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const first = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, firstByteMs);
+  const total = setTimeout(() => ctrl.abort(), SPEECH_TOTAL_TIMEOUT_MS);
+  total.unref?.();
+  let res: Response;
+  try {
+    res = await doFetch(url, { ...init, signal: ctrl.signal });
+  } catch {
+    clearTimeout(total);
+    throw timedOut
+      ? new ProviderError(provider, 0, `${provider} didn't answer within ${firstByteMs}ms`, "timeout")
+      : new ProviderError(provider, 0, `${provider} couldn't be reached`, "connection");
+  } finally {
+    clearTimeout(first);
+  }
+  if (!res.ok) {
+    clearTimeout(total);
+    void res.body?.cancel().catch(() => {});
+  }
+  return res;
 }
 
 /** "PASTE_YOUR_KEY_HERE", "YOUR_KEY", "xxx", "changeme": not a real key. */
@@ -448,32 +493,51 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Deepgram: speak (Aura)
+// Deepgram: speak (Flux TTS and Aura-2)
 // ---------------------------------------------------------------------------------------------------------------
+
+export const DEFAULT_TTS_VOICE = "flux-sienna-en";
+export const DEFAULT_TTS_FALLBACK_VOICE = "aura-2-athena-en";
+
+/** Flux voices ("flux-sienna-en") are served on /v2/speak; Aura voices ("aura-2-athena-en") on /v1/speak. */
+export function deepgramSpeakRoute(voice: string): { family: "flux" | "aura"; url: string } {
+  const flux = voice.startsWith("flux-");
+  const path = flux ? "/v2/speak" : "/v1/speak";
+  return { family: flux ? "flux" : "aura", url: `https://api.deepgram.com${path}` };
+}
 
 export interface DeepgramSpeakOptions {
   apiKey: string;
-  /** An Aura-2 voice, e.g. aura-2-athena-en. */
+  /** A Flux voice (flux-sienna-en) or an Aura-2 voice (aura-2-athena-en); the prefix picks the endpoint. */
   voice: string;
   fetch?: typeof fetch;
+  firstByteMs?: number;
 }
 
 export function deepgramSpeaker(opts: DeepgramSpeakOptions): Speaker {
   const doFetch = opts.fetch ?? providerFetch;
+  const route = deepgramSpeakRoute(opts.voice);
   const request = async (text: string) => {
-    const res = await doFetch(`https://api.deepgram.com/v1/speak?${new URLSearchParams({ model: opts.voice, encoding: "mp3" })}`, {
-      method: "POST",
-      headers: { Authorization: `Token ${opts.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(8_000),
-    });
+    // MP3 on both endpoints: exactly what the extension plays (audio/mpeg through MediaSource), passed through as is.
+    const res = await speechRequest(
+      doFetch,
+      "deepgram",
+      `${route.url}?${new URLSearchParams({ model: opts.voice, encoding: "mp3" })}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Token ${opts.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      },
+      opts.firstByteMs ?? SPEECH_FIRST_BYTE_TIMEOUT_MS,
+    );
     if (!res.ok) throw new ProviderError("deepgram", res.status, `Deepgram answered ${res.status}`);
     return res;
   };
   return {
     name: "deepgram",
-    model: "aura-2",
+    model: route.family === "flux" ? "flux" : "aura-2",
     voice: opts.voice,
+    endpoint: `POST ${route.url}`,
     async speak(text) {
       return { audio: new Uint8Array(await (await request(text)).arrayBuffer()), mime: "audio/mpeg" };
     },
@@ -485,27 +549,38 @@ export function deepgramSpeaker(opts: DeepgramSpeakOptions): Speaker {
   };
 }
 
+/** "deepgram flux-sienna-en", "fish s2.1-pro": which speaker, for log lines. */
+export const speakerLabel = (s: Pick<Speaker, "name" | "model" | "voice">) => (s.name === "deepgram" ? `deepgram ${s.voice}` : `${s.name} ${s.model}`);
+
+const fallReason = (err: ProviderError) =>
+  err.kind === "timeout"
+    ? "timed out before its first byte"
+    : err.kind === "connection"
+      ? "couldn't be reached"
+      : `answered ${err.status}, ${err.status === 402 ? "payment required (check its API credit)" : err.status === 401 ? "the key was refused" : "rate limited"}`;
+
+/** True for failures that hand the request to the next speaker: 401, 402, 429, a timeout or a connection error. */
+export function fallsThrough(err: unknown): err is ProviderError {
+  return err instanceof ProviderError && (FALL_THROUGH_STATUSES.has(err.status) || err.kind === "timeout" || err.kind === "connection");
+}
+
 /**
- * Tries each speaker in order. One that answers 401 (key), 402 (billing) or 429 (rate limit) hands the request to the
- * next, and a single warning is logged per provider and status (never the key). Any other failure is final.
+ * Tries each speaker in order. One that answers 401 (key), 402 (billing) or 429 (rate limit), times out before its first
+ * byte, or can't be reached hands the request to the next, with one log line per fall-through (never the key or the
+ * text). Any other failure is final. `onServed` hears which speaker answered.
  */
-export function withFallThrough(speakers: Speaker[], warn: (line: string) => void = (l) => console.warn(l)): Speaker {
-  const warned = new Set<string>();
+export function withFallThrough(speakers: Speaker[], warn: (line: string) => void = (l) => console.warn(l), onServed?: (s: Speaker) => void): Speaker {
   const attempt = async <T>(run: (s: Speaker) => Promise<T>): Promise<T> => {
     let last: unknown;
     for (const [i, s] of speakers.entries()) {
       try {
-        return await run(s);
+        const out = await run(s);
+        onServed?.(s);
+        return out;
       } catch (err) {
         last = err;
-        const status = err instanceof ProviderError ? err.status : 0;
-        if (!FALL_THROUGH_STATUSES.has(status) || i === speakers.length - 1) throw err;
-        const key = `${s.name}:${status}`;
-        if (!warned.has(key)) {
-          warned.add(key);
-          const why = status === 402 ? "payment required (check its API credit)" : status === 401 ? "the key was refused" : "rate limited";
-          warn(`[voice] speech: ${s.name} answered ${status}, ${why}; using ${speakers[i + 1]!.name} instead`);
-        }
+        if (!fallsThrough(err) || i === speakers.length - 1) throw err;
+        warn(`[voice] speech: ${speakerLabel(s)} ${fallReason(err)}; falling through to ${speakerLabel(speakers[i + 1]!)}`);
       }
     }
     throw last;
@@ -515,6 +590,7 @@ export function withFallThrough(speakers: Speaker[], warn: (line: string) => voi
     name: first.name,
     model: first.model,
     voice: first.voice,
+    endpoint: first.endpoint,
     speak: (text) => attempt((s) => s.speak(text)),
     stream: speakers.some((s) => s.stream)
       ? (text) => attempt((s) => (s.stream ? s.stream(text) : s.speak(text).then((o) => new Response(o.audio as unknown as ArrayBuffer).body!)))
@@ -522,8 +598,8 @@ export function withFallThrough(speakers: Speaker[], warn: (line: string) => voi
   };
 }
 
-/** Times a speaker's first audio byte for the per-request log. */
-export function withSpeechTiming(speaker: Speaker, log: (line: string) => void = (l) => console.log(l)): Speaker {
+/** Times a speaker's first audio byte for the per-request log (the text's length only, never the text). */
+export function withSpeechTiming(speaker: Speaker, log: (line: string) => void = (l) => console.log(l), servedBy: () => string = () => speaker.name): Speaker {
   const stamp = (text: string, t0: number, first: number, bytes: number, via: string) =>
     log(`[voice] speech ${via}: first byte ${Math.round(first)}ms, complete ${Math.round(performance.now() - t0)}ms, ${bytes} bytes, ${text.length} chars`);
   return {
@@ -531,7 +607,7 @@ export function withSpeechTiming(speaker: Speaker, log: (line: string) => void =
     async speak(text) {
       const t0 = performance.now();
       const out = await speaker.speak(text);
-      stamp(text, t0, performance.now() - t0, out.audio.byteLength, speaker.name);
+      stamp(text, t0, performance.now() - t0, out.audio.byteLength, servedBy());
       return out;
     },
     stream: speaker.stream
@@ -548,7 +624,7 @@ export function withSpeechTiming(speaker: Speaker, log: (line: string) => void =
                 ctrl.enqueue(chunk);
               },
               flush() {
-                stamp(text, t0, first, bytes, `${speaker.name} (streamed)`);
+                stamp(text, t0, first, bytes, `${servedBy()} (streamed)`);
               },
             }),
           );
@@ -567,17 +643,23 @@ export interface FishOptions {
   voice: string;
   latency: "low" | "normal" | "balanced";
   fetch?: typeof fetch;
+  firstByteMs?: number;
 }
 
 export function fish(opts: FishOptions): Speaker {
   const doFetch = opts.fetch ?? providerFetch;
   const request = async (text: string) => {
-    const res = await doFetch("https://api.fish.audio/v1/tts", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json", model: opts.model },
-      body: JSON.stringify({ text, reference_id: opts.voice, format: "mp3", mp3_bitrate: 64, latency: opts.latency, normalize: true }),
-      signal: AbortSignal.timeout(8_000),
-    });
+    const res = await speechRequest(
+      doFetch,
+      "fish",
+      "https://api.fish.audio/v1/tts",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json", model: opts.model },
+        body: JSON.stringify({ text, reference_id: opts.voice, format: "mp3", mp3_bitrate: 64, latency: opts.latency, normalize: true }),
+      },
+      opts.firstByteMs ?? SPEECH_FIRST_BYTE_TIMEOUT_MS,
+    );
     if (!res.ok) throw new ProviderError("fish", res.status, `Fish Audio answered ${res.status}`);
     return res;
   };
@@ -585,6 +667,7 @@ export function fish(opts: FishOptions): Speaker {
     name: "fish",
     model: opts.model,
     voice: opts.voice,
+    endpoint: "POST https://api.fish.audio/v1/tts",
     async speak(text) {
       return { audio: new Uint8Array(await (await request(text)).arrayBuffer()), mime: "audio/mpeg" };
     },
@@ -609,6 +692,7 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200): Cac
     name: speaker.name,
     model: speaker.model,
     voice: speaker.voice,
+    endpoint: speaker.endpoint,
     hits: 0,
     get cached() {
       return cache.size;
@@ -688,8 +772,11 @@ export interface VoiceConfig {
   DEEPGRAM_API_KEY?: string;
   DEEPGRAM_MODEL: string;
   DEEPGRAM_ENDPOINTING_MS?: number;
+  /** flux-* (Flux TTS, /v2/speak) or aura-* (Aura-2, /v1/speak). */
   DEEPGRAM_TTS_VOICE: string;
-  /** Which speaker is tried first. The other one (if configured) is the fall-through. */
+  /** The Aura voice tried after a Flux voice fails ("" for none). */
+  DEEPGRAM_TTS_FALLBACK_VOICE?: string;
+  /** Which provider is tried first: Deepgram (its voice, then its fallback voice) or Fish. */
   VOICE_TTS: "deepgram" | "fish";
   FISH_API_KEY?: string;
   FISH_MODEL: string;
@@ -701,13 +788,23 @@ export interface VoiceConfig {
   VOICE_WARM_IDLE_MS?: number;
 }
 
+/** One link of the speech chain, as shown in the banner, /voice/status and /health. */
+export interface SpeechLink {
+  provider: string;
+  voice: string;
+  model: string;
+  endpoint: string;
+}
+
 export interface VoiceProviders {
   stt: Transcriber | null;
   tts: CachedSpeaker | null;
+  /** The speech chain in order (first is the voice in use while it answers), and which one served the last reply. */
+  speech: { chain: SpeechLink[]; lastServedBy(): SpeechLink | null };
   /** Opens the speech provider's HTTPS connection ahead of time (kept alive), so the reply skips the TLS handshake. */
   prewarmSpeech(): void;
   /** Human-readable, key-free lines for the startup log and /health. */
-  status: { transcription: string; speech: string; intent: string; warnings: string[] };
+  status: { transcription: string; speech: string; speechFallbacks: string; intent: string; warnings: string[] };
 }
 
 export function selectVoiceProviders(
@@ -723,10 +820,12 @@ export function selectVoiceProviders(
     return {
       stt: fakeTranscriber(said, delay),
       tts: withPhraseCache(fakeSpeaker(delay)),
+      speech: { chain: [], lastServedBy: () => null },
       prewarmSpeech() {},
       status: {
         transcription: `FAKE (testing only): always hears "${said}"`,
         speech: "FAKE (testing only): a pre-recorded clip",
+        speechFallbacks: "none",
         intent: c.ANTHROPIC_API_KEY && !looksLikePlaceholder(c.ANTHROPIC_API_KEY) ? `claude (${c.INTENT_MODEL}), validated` : "rules parser, validated",
         warnings: ["VOICE_PROVIDERS=fake: transcription and speech are simulated"],
       },
@@ -753,14 +852,30 @@ export function selectVoiceProviders(
       })
     : null;
 
-  const aura = haveDeepgram ? deepgramSpeaker({ apiKey: c.DEEPGRAM_API_KEY!, voice: c.DEEPGRAM_TTS_VOICE, fetch: deps.fetch }) : null;
+  const voice = c.DEEPGRAM_TTS_VOICE.trim() || DEFAULT_TTS_VOICE;
+  if (!/^(flux|aura)-/.test(voice)) warnings.push(`DEEPGRAM_TTS_VOICE "${voice}" is neither a flux- nor an aura- voice: sent to /v1/speak`);
+  const fallbackVoice = (c.DEEPGRAM_TTS_FALLBACK_VOICE ?? DEFAULT_TTS_FALLBACK_VOICE).trim();
+  const deepgramChain = haveDeepgram
+    ? [voice, ...(fallbackVoice && fallbackVoice !== voice ? [fallbackVoice] : [])].map((v) => deepgramSpeaker({ apiKey: c.DEEPGRAM_API_KEY!, voice: v, fetch: deps.fetch }))
+    : [];
   const fishSpeaker = haveFish
     ? fish({ apiKey: c.FISH_API_KEY!, model: c.FISH_MODEL, voice: c.FISH_VOICE_ID, latency: c.FISH_LATENCY, fetch: deps.fetch })
     : null;
-  const order = (c.VOICE_TTS === "fish" ? [fishSpeaker, aura] : [aura, fishSpeaker]).filter((s): s is Speaker => s !== null);
+  const order = (c.VOICE_TTS === "fish" ? [fishSpeaker, ...deepgramChain] : [...deepgramChain, fishSpeaker]).filter((s): s is Speaker => s !== null);
   if (c.VOICE_TTS === "fish" && !fishSpeaker) warnings.push("VOICE_TTS=fish but FISH_API_KEY is not set: using Deepgram");
-  const describe = (s: Speaker) => (s.name === "deepgram" ? `deepgram aura (${s.voice})` : `fish (${s.model}, voice ${s.voice})`);
-  const tts = order.length ? withPhraseCache(withSpeechTiming(withFallThrough(order), log)) : null;
+  const link = (s: Speaker): SpeechLink => ({ provider: s.name, voice: s.voice, model: s.model, endpoint: s.endpoint ?? "" });
+  const describe = (s: Speaker) =>
+    s.name === "deepgram" ? `deepgram ${s.voice} (${s.model === "flux" ? "Flux TTS" : "Aura-2"}) via ${s.endpoint}, mp3 streamed` : `fish (${s.model}, voice ${s.voice}) via ${s.endpoint}`;
+  let lastServed: Speaker | null = null;
+  const tts = order.length
+    ? withPhraseCache(
+        withSpeechTiming(
+          withFallThrough(order, log, (s) => (lastServed = s)),
+          log,
+          () => speakerLabel(lastServed ?? order[0]!),
+        ),
+      )
+    : null;
   const claude = usable("ANTHROPIC_API_KEY", c.ANTHROPIC_API_KEY);
   const origin = order[0] ? (order[0].name === "deepgram" ? "https://api.deepgram.com/" : "https://api.fish.audio/") : null;
   const doFetch = deps.fetch ?? providerFetch;
@@ -768,6 +883,7 @@ export function selectVoiceProviders(
   return {
     stt,
     tts,
+    speech: { chain: order.map(link), lastServedBy: () => (lastServed ? link(lastServed) : null) },
     prewarmSpeech() {
       // A bare request to the origin leaves a kept-alive TLS connection in the pool for the real one (no key sent).
       // Deepgram's edge drops an idle connection after about 5s, so this runs on every key press (and during long
@@ -781,9 +897,11 @@ export function selectVoiceProviders(
     },
     status: {
       transcription: stt ? `deepgram (${stt.model}, live, warm connection reused)` : "none: the extension falls back to the browser's speech recognition",
-      speech: order.length
-        ? `${describe(order[0]!)}${order[1] ? `, falls through to ${describe(order[1])} on 401/402/429` : ""}`
-        : "none: the extension falls back to the browser's speech synthesis",
+      speech: order.length ? describe(order[0]!) : "none: the extension falls back to the browser's speech synthesis",
+      speechFallbacks:
+        order.length > 1
+          ? `${order.map(speakerLabel).join(" -> ")}, on 401/402/429, a timeout (${SPEECH_FIRST_BYTE_TIMEOUT_MS / 1000}s to first byte) or a connection error`
+          : "none",
       intent: claude ? `claude (${c.INTENT_MODEL}), validated` : "rules parser, validated (set ANTHROPIC_API_KEY for Claude)",
       warnings,
     },

@@ -166,6 +166,8 @@ export function registerVoice(
     send(c, {
       transcription: v.status.transcription,
       speech: v.status.speech,
+      speechChain: v.speech.chain,
+      speechFallbacks: v.status.speechFallbacks,
       intent: v.status.intent,
       available: { transcription: v.stt !== null, speech: v.tts !== null, stream: v.stt !== null && Boolean(upgradeWebSocket) },
       warnings: v.status.warnings,

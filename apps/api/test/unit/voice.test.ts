@@ -6,9 +6,11 @@ import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
 import { extractAmounts, wordsToNumber } from "../../src/voice/amounts.js";
 import { blocksTrade, rulesIntent, understand, validateIntent, type Intent, type IntentModel } from "../../src/voice/intent.js";
+import { voiceHealth } from "../../src/services.js";
 import {
   deepgram,
   deepgramSpeaker,
+  deepgramSpeakRoute,
   fish,
   looksLikePlaceholder,
   ProviderError,
@@ -147,19 +149,40 @@ describe("provider selection and fallback", () => {
     for (const k of [undefined, "", "PASTE_YOUR_KEY_HERE", "YOUR_API_KEY", "changeme", "xxxxxxxxxxxxxxxxxxxx", "short"]) expect(looksLikePlaceholder(k)).toBe(true);
     expect(looksLikePlaceholder(REAL_LOOKING)).toBe(false);
   });
-  it("speaks with Deepgram Aura by default, with Fish as the fall-through", () => {
+  it("speaks with the configured Aura voice (no Aura fallback after itself), with Fish as the fall-through", () => {
     const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING }, { log: () => {} });
     expect(v.stt?.name).toBe("deepgram");
     expect(v.tts?.name).toBe("deepgram");
     expect(v.tts?.voice).toBe("aura-2-athena-en");
-    expect(v.status.speech).toBe("deepgram aura (aura-2-athena-en), falls through to fish (s2.1-pro, voice 790560d72d4d455ba0464995cd534f27) on 401/402/429");
+    expect(v.status.speech).toBe("deepgram aura-2-athena-en (Aura-2) via POST https://api.deepgram.com/v1/speak, mp3 streamed");
+    expect(v.status.speechFallbacks).toBe("deepgram aura-2-athena-en -> fish s2.1-pro, on 401/402/429, a timeout (4s to first byte) or a connection error");
     expect(v.status.warnings).toEqual([]);
+  });
+  it("defaults to Flux Sienna on /v2/speak, then Aura Athena on /v1/speak, then Fish", () => {
+    const config = loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING });
+    expect(config.DEEPGRAM_TTS_VOICE).toBe("flux-sienna-en");
+    const v = selectVoiceProviders(config, { log: () => {} });
+    expect(v.tts?.voice).toBe("flux-sienna-en");
+    expect(v.speech.chain).toEqual([
+      { provider: "deepgram", voice: "flux-sienna-en", model: "flux", endpoint: "POST https://api.deepgram.com/v2/speak" },
+      { provider: "deepgram", voice: "aura-2-athena-en", model: "aura-2", endpoint: "POST https://api.deepgram.com/v1/speak" },
+      { provider: "fish", voice: "790560d72d4d455ba0464995cd534f27", model: "s2.1-pro", endpoint: "POST https://api.fish.audio/v1/tts" },
+    ]);
+    expect(v.status.speech).toBe("deepgram flux-sienna-en (Flux TTS) via POST https://api.deepgram.com/v2/speak, mp3 streamed");
+    expect(v.status.speechFallbacks).toBe(
+      "deepgram flux-sienna-en -> deepgram aura-2-athena-en -> fish s2.1-pro, on 401/402/429, a timeout (4s to first byte) or a connection error",
+    );
   });
   it("VOICE_TTS=fish puts Fish first, with Deepgram as the fall-through", () => {
     const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING, FISH_MODEL: "s1" }, { log: () => {} });
     expect(v.tts?.name).toBe("fish");
     expect(v.tts?.model).toBe("s1");
-    expect(v.status.speech).toMatch(/^fish \(s1, .*falls through to deepgram aura/);
+    expect(v.status.speech).toMatch(/^fish \(s1, /);
+    expect(v.status.speechFallbacks).toMatch(/^fish s1 -> deepgram aura-2-athena-en,/);
+  });
+  it("warns about a voice that is neither flux- nor aura-", () => {
+    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_TTS_VOICE: "sienna", DEEPGRAM_API_KEY: REAL_LOOKING }, { log: () => {} });
+    expect(v.status.warnings.join()).toMatch(/neither a flux- nor an aura- voice/);
   });
   it("VOICE_TTS=fish without a Fish key uses Deepgram, and says so", () => {
     const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: REAL_LOOKING }, { log: () => {} });
@@ -381,8 +404,10 @@ describe("Deepgram adapter", () => {
   });
 });
 
-describe("Deepgram Aura speech", () => {
-  it("posts the text to /v1/speak with the Aura voice, mp3, the key only in the header", async () => {
+describe("Deepgram speech: routing by voice prefix", () => {
+  const mp3 = new Uint8Array([0xff, 0xf3, 0x44, 0xc4, 0x00, 0x01, 0x02]); // an MPEG audio frame header and some bytes
+
+  it("posts an Aura voice to /v1/speak, mp3, the key only in the header", async () => {
     const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe("https://api.deepgram.com/v1/speak?model=aura-2-athena-en&encoding=mp3");
       expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${REAL_LOOKING}`);
@@ -390,7 +415,163 @@ describe("Deepgram Aura speech", () => {
       return new Response(new Uint8Array([1, 2]), { headers: { "content-type": "audio/mpeg" } });
     });
     const s = deepgramSpeaker({ apiKey: REAL_LOOKING, voice: "aura-2-athena-en", fetch: fetchFn as unknown as typeof fetch });
+    expect(s.model).toBe("aura-2");
     expect([...(await s.speak("Tesla is at $380.")).audio]).toEqual([1, 2]);
+  });
+
+  it("posts a Flux voice to /v2/speak, mp3, the key only in the header", async () => {
+    const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      expect(String(url)).toBe("https://api.deepgram.com/v2/speak?model=flux-sienna-en&encoding=mp3");
+      expect(String(url)).not.toContain(REAL_LOOKING);
+      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${REAL_LOOKING}`);
+      expect(JSON.parse(String(init!.body))).toEqual({ text: "Tesla is at $380." });
+      return new Response(mp3, { headers: { "content-type": "audio/mpeg" } });
+    });
+    const s = deepgramSpeaker({ apiKey: REAL_LOOKING, voice: "flux-sienna-en", fetch: fetchFn as unknown as typeof fetch });
+    expect(s).toMatchObject({ name: "deepgram", model: "flux", voice: "flux-sienna-en", endpoint: "POST https://api.deepgram.com/v2/speak" });
+    expect(await s.speak("Tesla is at $380.")).toEqual({ audio: mp3, mime: "audio/mpeg" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes by prefix: flux- to /v2/speak, aura- to /v1/speak", () => {
+    expect(deepgramSpeakRoute("flux-sienna-en")).toEqual({ family: "flux", url: "https://api.deepgram.com/v2/speak" });
+    expect(deepgramSpeakRoute("flux-haley-en").url).toMatch(/\/v2\/speak$/);
+    expect(deepgramSpeakRoute("aura-2-athena-en")).toEqual({ family: "aura", url: "https://api.deepgram.com/v1/speak" });
+    expect(deepgramSpeakRoute("aura-asteria-en").url).toMatch(/\/v1\/speak$/);
+  });
+
+  it("passes the streamed MP3 through untouched: same bytes, same chunks, audio/mpeg", async () => {
+    const chunks = [mp3.slice(0, 3), mp3.slice(3)];
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              for (const ch of chunks) c.enqueue(ch);
+              c.close();
+            },
+          }),
+          { headers: { "content-type": "audio/mpeg" } },
+        ),
+    );
+    const v = selectVoiceProviders({ ...loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING }), DEEPGRAM_API_KEY: REAL_LOOKING }, { fetch: fetchFn as unknown as typeof fetch, log: () => {} });
+    const got: Uint8Array[] = [];
+    const reader = (await v.tts!.stream!("Tesla is at $380.")).getReader();
+    for (let r = await reader.read(); !r.done; r = await reader.read()) got.push(r.value);
+    expect(got).toEqual(chunks);
+    // The route answers with the extension's format: audio/mpeg.
+    const c2 = createContext(loadConfig(baseEnv));
+    c2.voice = v;
+    const res = await createApp(c2).request("/voice/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Tesla is at $380." }) });
+    expect(res.headers.get("content-type")).toBe("audio/mpeg");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(mp3);
+  });
+});
+
+describe("speech chain: Flux, then Aura, then Fish", () => {
+  const FISH_URL = "https://api.fish.audio/v1/tts";
+  /** A fake Deepgram and Fish: each URL answers as told ("ok", a status, "timeout" or "down"). */
+  function providers(answers: Record<"flux" | "aura" | "fish", "ok" | number | "timeout" | "down">) {
+    const calls: string[] = [];
+    const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      const which = u.startsWith(FISH_URL) ? "fish" : u.includes("/v2/speak") ? "flux" : "aura";
+      calls.push(which);
+      const a = answers[which];
+      if (a === "down") throw new TypeError("fetch failed");
+      if (a === "timeout")
+        return new Promise<Response>((_, reject) => init!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+      if (a !== "ok") return new Response("no", { status: a });
+      return new Response(new Uint8Array([which.length]), { headers: { "content-type": "audio/mpeg" } });
+    });
+    const lines: string[] = [];
+    const v = selectVoiceProviders(
+      { ...loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING }), DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING },
+      { fetch: fetchFn as unknown as typeof fetch, log: (l) => lines.push(l) },
+    );
+    return { v, calls, lines, fetchFn };
+  }
+  const falls = (lines: string[]) => lines.filter((l) => l.includes("falling through"));
+
+  it("Flux answers: nothing else is asked", async () => {
+    const { v, calls, lines } = providers({ flux: "ok", aura: "ok", fish: "ok" });
+    expect([...(await v.tts!.speak("Tesla is at $380.")).audio]).toEqual([4]);
+    expect(calls).toEqual(["flux"]);
+    expect(falls(lines)).toEqual([]);
+    expect(v.speech.lastServedBy()?.voice).toBe("flux-sienna-en");
+  });
+
+  it.each([401, 402, 429])("Flux answers %i: Aura Athena speaks, with one log line", async (status) => {
+    const { v, calls, lines } = providers({ flux: status, aura: "ok", fish: "ok" });
+    expect([...(await v.tts!.speak("Tesla is at $380.")).audio]).toEqual([4]);
+    expect(calls).toEqual(["flux", "aura"]);
+    expect(falls(lines)).toHaveLength(1);
+    expect(falls(lines)[0]).toMatch(new RegExp(`^\\[voice\\] speech: deepgram flux-sienna-en answered ${status}.*; falling through to deepgram aura-2-athena-en$`));
+    expect(v.speech.lastServedBy()?.voice).toBe("aura-2-athena-en");
+  });
+
+  it("Flux times out before its first byte: Aura speaks", async () => {
+    vi.useFakeTimers();
+    try {
+      const { v, calls, lines } = providers({ flux: "timeout", aura: "ok", fish: "ok" });
+      const said = v.tts!.speak("Tesla is at $380.");
+      await vi.advanceTimersByTimeAsync(4_001);
+      expect([...(await said).audio]).toEqual([4]);
+      expect(calls).toEqual(["flux", "aura"]);
+      expect(falls(lines)).toEqual(["[voice] speech: deepgram flux-sienna-en timed out before its first byte; falling through to deepgram aura-2-athena-en"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Deepgram can't be reached at all: Flux, then Aura, then Fish, one line per fall-through", async () => {
+    const { v, calls, lines } = providers({ flux: "down", aura: "down", fish: "ok" });
+    expect([...(await v.tts!.speak("Tesla is at $380.")).audio]).toEqual([4]);
+    expect(calls).toEqual(["flux", "aura", "fish"]);
+    expect(falls(lines)).toEqual([
+      "[voice] speech: deepgram flux-sienna-en couldn't be reached; falling through to deepgram aura-2-athena-en",
+      "[voice] speech: deepgram aura-2-athena-en couldn't be reached; falling through to fish s2.1-pro",
+    ]);
+    expect(v.speech.lastServedBy()?.provider).toBe("fish");
+    // Every fall-through is logged, not only the first.
+    await v.tts!.speak("And again, a different line.");
+    expect(falls(lines)).toHaveLength(4);
+  });
+
+  it("streams fall through the same way (before the first byte)", async () => {
+    const { v, calls } = providers({ flux: 402, aura: 429, fish: "ok" });
+    const reader = (await v.tts!.stream!("Tesla is at $380.")).getReader();
+    expect([...(await reader.read()).value!]).toEqual([4]);
+    expect(calls).toEqual(["flux", "aura", "fish"]);
+  });
+
+  it("a server error is final, not a fall-through", async () => {
+    const { v, calls } = providers({ flux: 500, aura: "ok", fish: "ok" });
+    await expect(v.tts!.speak("Tesla is at $380.")).rejects.toThrow("Deepgram answered 500");
+    expect(calls).toEqual(["flux"]);
+  });
+
+  it("logs never carry the key or the text, only its length", async () => {
+    const { v, lines } = providers({ flux: 402, aura: "ok", fish: "ok" });
+    await v.tts!.speak("A secret sentence about Tesla.");
+    expect(lines.join("\n")).not.toContain(REAL_LOOKING);
+    expect(lines.join("\n")).not.toContain("secret");
+    expect(lines.some((l) => /speech deepgram aura-2-athena-en: first byte \d+ms, .* 30 chars$/.test(l))).toBe(true);
+  });
+
+  it("/health names the voice in use, its endpoint and the fallbacks", async () => {
+    const { v } = providers({ flux: "ok", aura: "ok", fish: "ok" });
+    expect(voiceHealth({ voice: v })).toEqual({
+      speech: { provider: "deepgram", voice: "flux-sienna-en", endpoint: "POST https://api.deepgram.com/v2/speak" },
+      fallbacks: [
+        { provider: "deepgram", voice: "aura-2-athena-en", endpoint: "POST https://api.deepgram.com/v1/speak" },
+        { provider: "fish", voice: "790560d72d4d455ba0464995cd534f27", endpoint: "POST https://api.fish.audio/v1/tts" },
+      ],
+      lastServedBy: null,
+    });
+    await v.tts!.speak("hi");
+    expect(voiceHealth({ voice: v }).lastServedBy).toBe("flux-sienna-en");
+    expect(JSON.stringify(voiceHealth({ voice: v }))).not.toContain(REAL_LOOKING);
   });
 });
 
@@ -410,7 +591,7 @@ describe("speech fall-through", () => {
     return s;
   };
 
-  it.each([401, 402, 429])("hands the request to the next provider on %i, with one warning", async (status) => {
+  it.each([401, 402, 429])("hands the request to the next provider on %i, with one log line per fall-through", async (status) => {
     const warn = vi.fn();
     const first = speaker("deepgram", status);
     const second = speaker("fish");
@@ -418,8 +599,8 @@ describe("speech fall-through", () => {
     expect([...(await chain.speak("hi")).audio]).toEqual([4]);
     await chain.speak("again");
     expect(second.calls).toBe(2);
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toMatch(new RegExp(`deepgram answered ${status}.*using fish instead`));
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0]![0]).toMatch(new RegExp(`deepgram v answered ${status}.*falling through to fish m`));
     expect(warn.mock.calls[0]![0]).not.toContain(REAL_LOOKING);
   });
 

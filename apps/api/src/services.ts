@@ -916,6 +916,19 @@ export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmMode
   };
 }
 
+/**
+ * The speaking voice for /health: the one in use (the first of the chain), its endpoint, the fallbacks in order, and
+ * which one served the last reply (null before the first). Names and URLs only: never a key.
+ */
+export function voiceHealth(ctx: Pick<AppContext, "voice">) {
+  const [inUse, ...fallbacks] = ctx.voice.speech.chain;
+  return {
+    speech: inUse ? { provider: inUse.provider, voice: inUse.voice, endpoint: inUse.endpoint } : null,
+    fallbacks: fallbacks.map((f) => ({ provider: f.provider, voice: f.voice, endpoint: f.endpoint })),
+    lastServedBy: ctx.voice.speech.lastServedBy()?.voice ?? null,
+  };
+}
+
 export async function healthView(ctx: AppContext) {
   const [chainId, blockNumber] = await Promise.all([ctx.client.getChainId(), ctx.client.getBlockNumber({ cacheTime: 0 })]);
   const feeds = await feedStatus(ctx, blockNumber, await latestTimestamp(ctx));
@@ -937,6 +950,7 @@ export async function healthView(ctx: AppContext) {
     },
     llmFallback: ctx.llm !== null,
     llm: llmHealth(ctx),
+    voice: voiceHealth(ctx),
     // Every vault factory; vaults from either are GlanceVaults, and the vault checks above never depend on which.
     factories: glanceFactories(ctx.deployment),
     keeper: {
