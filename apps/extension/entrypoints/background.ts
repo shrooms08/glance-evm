@@ -138,7 +138,7 @@ function relayVoice(event: VoiceEvent) {
 
 function relaySpeech(event: SpeechEvent) {
   const tabId = speechTabs.get(event.id);
-  if (event.type !== "start") speechTabs.delete(event.id);
+  if (event.type !== "start" && event.type !== "progress") speechTabs.delete(event.id);
   if (tabId !== undefined) browser.tabs.sendMessage(tabId, event).catch(() => {});
 }
 
@@ -217,6 +217,16 @@ export default defineBackground(() => {
         return undefined;
       case "api":
         return callApi(message);
+      case "capture:tab": {
+        // Only for a Show me question about a chart or an image. Needs the page's host permission; without it, the
+        // answer goes ahead without a screenshot.
+        const windowId = sender.tab?.windowId;
+        if (windowId === undefined) return Promise.resolve(null);
+        return browser.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 70 }).then(
+          (url) => url,
+          () => null,
+        );
+      }
       case "open:settings":
         return browser.runtime.openOptionsPage().then(() => true);
       case "panel:isOpen":

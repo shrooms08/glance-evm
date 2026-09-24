@@ -137,3 +137,10 @@ pnpm --filter console dev   # http://localhost:3000
 underlines them without touching the page, shows live prices on hover, and buys through the vault. When a guard
 refuses a trade it shows why, as protection rather than an error. See [apps/extension/README.md](apps/extension/README.md)
 for step-by-step installation.
+
+## Credits
+
+- "Show me" (Glance speaks and acts on the page with inline tags, in step with its voice) adapts the interaction pattern of [Clicky](https://github.com/farzaa/clicky) by Farza (MIT). No Clicky code is used; the tag grammar, parser, scheduler and drawing code are Glance's own.
+- Price charts use [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache-2.0), with its attribution kept on the chart.
+
+See [NOTICE](NOTICE).

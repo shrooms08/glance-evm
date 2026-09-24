@@ -11,7 +11,7 @@ import type { PageContext } from "../lib/journal";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
 import { WhyCard } from "./Why";
-import { Sparkline } from "./Sparkline";
+import { LINES } from "@glance/core/persona";
 import { marketClosed, useGlance } from "./context";
 import { Orb, ORB_LABELS } from "./Orb";
 import type { useAssistant } from "./useAssistant";
@@ -36,15 +36,13 @@ interface Props {
   /** The page a buy from this panel is placed from, for the headline journal (null: none). */
   pageContext?(symbol: string): Promise<PageContext | null> | PageContext | null;
   /**
-   * The full price chart. Only the side panel passes it (it loads the chart library lazily); on the page, a chart
-   * request shows a one-tap card that opens the side panel instead.
+   * The full price chart (the chart library is loaded on first use: lib/chartLoader.ts). In the tall side panel it also
+   * sits above a company's card.
    */
   renderChart?(symbol: string, onClose?: () => void): ReactNode;
-  /** On the page: open the side panel on `symbol`'s chart (a tap, so the browser allows it). */
-  onOpenChart?(symbol: string): void;
 }
 
-export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext, renderChart, onOpenChart }: Props) {
+export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext, renderChart }: Props) {
   const g = useGlance();
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -56,7 +54,7 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
     if (autoFocusInput) input.current?.focus();
   }, [autoFocusInput]);
 
-  const idleLine = `Hold ${voiceLabel} to talk, or type below`;
+  const idleLine = LINES.idle(voiceLabel);
   const cardSymbol = assistant.card?.kind === "company" ? assistant.card.symbol : null;
   const line = g.orb.state === "idle" && !g.orb.line ? idleLine : g.orb.line || idleLine;
   const meta = g.orb.meta || (host ? `Reading ${host} · ${companies.length} ${companies.length === 1 ? "name" : "names"} found` : "");
@@ -121,17 +119,13 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           </div>
         ) : null}
 
-        {assistant.card?.kind === "company" && renderChart && (
+        {assistant.card?.kind === "company" && renderChart && layout === "tall" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s5)" }}>{renderChart(assistant.card.symbol)}</div>
         )}
 
         {assistant.card?.kind === "chart" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
-            {renderChart ? (
-              renderChart(assistant.card.symbol, () => assistant.setCard(null))
-            ) : (
-              <ChartRequestCard symbol={assistant.card.symbol} onOpen={onOpenChart} onClose={() => assistant.setCard(null)} />
-            )}
+            {renderChart?.(assistant.card.symbol, () => assistant.setCard(null))}
           </div>
         )}
 
@@ -269,30 +263,6 @@ function MicHint({ hint, onDismiss }: { hint: { line: string; url: string }; onD
         <span className="g-data">{hint.url}</span>
         <button className="g-btn g-btn-ghost" onClick={onDismiss}>
           Dismiss
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** On the page: the chart lives in the side panel. One tap opens it there (the day's sparkline meanwhile). */
-function ChartRequestCard({ symbol, onOpen, onClose }: { symbol: string; onOpen?(symbol: string): void; onClose(): void }) {
-  const g = useGlance();
-  const name = g.catalog.find((s) => s.symbol === symbol)?.name ?? symbol;
-  return (
-    <div className="g-card" role="region" aria-label={`${name} chart`}>
-      <div className="g-section" style={{ gap: 8 }}>
-        <div className="g-between">
-          <span className="g-ui">
-            {name} <span className="g-ticker">{symbol}</span>
-          </span>
-          <button className="g-btn g-btn-ghost g-icon-btn" aria-label="Close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <Sparkline symbol={symbol} />
-        <button className="g-btn g-btn-primary" onClick={() => onOpen?.(symbol)}>
-          Open the chart in the side panel
         </button>
       </div>
     </div>

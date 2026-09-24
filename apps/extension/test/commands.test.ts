@@ -63,7 +63,8 @@ describe("confirm, cancel, unknown", () => {
 
   it("is honest about everything else", () => {
     expect(parse("sing me a song")).toEqual({ kind: "unknown", heard: "sing me a song" });
-    expect(parse("what's the weather at home").kind).toBe("unknown");
+    // A question is never guessed at as a trade: Show me answers it (honestly, if it's off topic).
+    expect(parse("what's the weather at home").kind).toBe("ask");
     expect(parse("").kind).toBe("unknown");
   });
 });

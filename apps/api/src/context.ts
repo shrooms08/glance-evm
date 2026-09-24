@@ -11,6 +11,7 @@ import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import type { ChartDeps } from "./chart.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
+import { createShowMe, type ShowMe } from "./showme.js";
 import { chooseModel, LlmBudget, NameCache, type BudgetLimits, type Log } from "./llmBudget.js";
 import { TtlCache } from "./ttlCache.js";
 import { createFinnhub, createWhySummarizer, NEWS_TTL_MS, SUMMARY_TTL_MS, type NewsClient, type Summarizer, type WhyAnswer } from "./why.js";
@@ -39,7 +40,9 @@ export interface AppContext {
   intentModel: IntentModel | null;
   /** Every Claude call's budget: the daily limit, the pause after a budget error, and the models in use. */
   llmBudget: LlmBudget;
-  llmModels: { resolver: string; intent: string; why: string };
+  llmModels: { resolver: string; intent: string; why: string; other: string };
+  /** "Show me", teach and guide (POST /showme), when ANTHROPIC_API_KEY is set. */
+  showMe: ShowMe | null;
   /** "Why it moved": Finnhub news (15-minute cache), the budgeted summarizer, and the 3-hour answer cache. */
   why: { news: NewsClient | null; summarizer: Summarizer | null; summaries: TtlCache<Omit<WhyAnswer, "cached">> };
   /** Trades the guards refused before anything was sent (see src/refusals.ts). */
@@ -66,6 +69,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     resolver: chooseModel(config.RESOLVER_MODEL ?? config.ANTHROPIC_MODEL, config.ALLOW_OPUS, "resolver", log),
     intent: chooseModel(config.INTENT_MODEL, config.ALLOW_OPUS, "intent", log),
     why: chooseModel(config.WHY_MODEL, config.ALLOW_OPUS, "why", log),
+    other: chooseModel(config.SHOWME_MODEL, config.ALLOW_OPUS, "showme", log),
   };
   const files = llmFiles(config);
   const cacheDir = files.cache ? dirname(files.cache) : null;
@@ -97,6 +101,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       : createClaudeIntent(config.ANTHROPIC_API_KEY, models.intent, catalog.entries, 3_000, { budget, log }),
     llmBudget: budget,
     llmModels: models,
+    showMe: createShowMe({ apiKey: anthropicKey, model: models.other, budget, symbols: catalog.entries.map((e) => e.symbol), log }),
     cacheDir,
     why: {
       news: config.FINNHUB_API_KEY

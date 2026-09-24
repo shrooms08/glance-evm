@@ -13,9 +13,12 @@ import { z } from "zod";
 import type { CatalogEntry } from "../catalog.js";
 import type { MessagesClient } from "../llm.js";
 import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "../llmBudget.js";
+import { PERSONA } from "@glance/core/persona";
+import { isAsk } from "@glance/core/showme";
+
 import { extractAmounts } from "./amounts.js";
 
-export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "unknown"] as const;
+export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
 export interface VoiceContext {
@@ -138,6 +141,9 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   if (symbol && /\bwhy\b|\bwhat (moved|happened to)\b/.test(t) && /\b(move|moved|moving|up|down|drop|dropped|dropping|jump|jumped|fall|fell|falling|rise|rose|rising|rally|rallied|slide|slid|surge|surged|plunge|plunged|spike|spiked|tank|tanked|climb|climbed)\b/.test(t)) {
     return { ...base, intent: "why" };
   }
+  // "what's this article saying about Tesla?", "show me where it mentions revenue", "explain this chart", "what's a stock
+  // token?", "how do I withdraw?", "walk me through Glance": answered by Show me / teach, with the page in view.
+  if (isAsk(t)) return { ...base, intent: "ask" };
   if (/^(why|explain|what happened|what does that mean|how come)\b|\bwhy (was|did|is|not|can't|cant)\b/.test(t)) {
     return { ...base, symbol: null, intent: "explain" };
   }
@@ -201,6 +207,7 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     out.intent = "unknown";
   }
   if (out.intent === "portfolio") out.symbol = null;
+  if (out.intent === "ask") out.amount = null;
   if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol) {
     notes.push(`${out.intent} without a catalog company`);
     out.intent = "unknown";
@@ -250,11 +257,16 @@ export function createClaudeIntent(
   const client: MessagesClient = opts.client ?? new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 0 });
   const companies = catalog.map((c) => `${c.symbol}: ${c.legalName} (also: ${[c.name, ...c.aliases].join(", ")})`).join("\n");
   const system = [
-    "You turn one spoken command to a stock-buying browser assistant into a structured intent.",
+    PERSONA,
+    "",
+    "Task: turn one spoken command to Glance into a structured intent.",
     "Intents: buy, sell, price (the user wants a price), spend-so-far (how much they have spent or have left today),",
     "explain (they ask why something happened, e.g. why a trade was refused), portfolio (how they're doing, what they",
     "own, or to show their portfolio), why (why a named stock moved, e.g. \"why did Tesla move?\"; needs the symbol),",
     "chart (they want to see a named stock's price chart, e.g. \"show me Tesla's chart\", \"chart AMD\"; needs the symbol),",
+    "ask (a question about the page they're reading, a request to be shown something on it, a question about what a term",
+    "means, or how to use Glance: \"what's this article saying about Tesla?\", \"explain this chart\", \"what's a stock",
+    "token?\", \"how do I withdraw?\"),",
     "unknown (anything else, or ambiguous).",
     "Rules:",
     "- symbol: ONLY a ticker from the list below, or null. Never any other ticker.",

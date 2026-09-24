@@ -21,6 +21,7 @@ import type { FallbackReason, VoiceCommandContext, VoiceIntent, VoiceTiming } fr
 import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
 import { useGlance } from "./context";
 import { spokenWhy } from "./Why";
+import { LINES } from "@glance/core/persona";
 
 /** The short label under the reason, so the kinds of failure are told apart at a glance. */
 const KIND_META: Record<VoiceFailureKind, string> = {
@@ -64,12 +65,16 @@ export interface AssistantOptions {
    * the chart card is simply shown.
    */
   onChart?(symbol: string): void;
+  /** A question for Show me ("what's this article saying?", "how do I withdraw?"): answered with the page in view. */
+  onAsk?(question: string): void;
 }
 
 export function useAssistant(opts: AssistantOptions = {}) {
   // Read through a ref: the callbacks below don't re-create when the page passes a new handler.
   const onChart = useRef(opts.onChart);
   onChart.current = opts.onChart;
+  const onAsk = useRef(opts.onAsk);
+  onAsk.current = opts.onAsk;
   const g = useGlance();
   const [card, setCard] = useState<AssistantCard>(null);
   const [heard, setHeard] = useState("");
@@ -123,7 +128,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
           return say(`${p.name} is at ${priceUsd(p.price.value)}. The price is ${ageHours(p.ageSeconds)} old and ${market}.`, `${cmd.symbol} · oracle ${p.priceSourceKind}`);
         }
         case "spent": {
-          if (!isAddress(g.vaultAddress)) return say("Add your vault in settings and I can tell you what you've spent.");
+          if (!isAddress(g.vaultAddress)) return say(LINES.noVaultSpent);
           setCard({ kind: "spent" });
           const res = await api.vault(g.vaultAddress);
           if (!res.ok) return say(res.message);
@@ -133,7 +138,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
         }
         case "portfolio": {
           setCard({ kind: "portfolio", key: ++seq.current });
-          if (!isAddress(g.vaultAddress)) return say("Add your vault in settings and I can show your portfolio.");
+          if (!isAddress(g.vaultAddress)) return say(LINES.noVaultPortfolio);
           const res = await api.portfolio(g.vaultAddress);
           if (!res.ok) return say(res.message);
           return say(res.data.sentence, "Portfolio");
@@ -150,16 +155,19 @@ export function useAssistant(opts: AssistantOptions = {}) {
           setCard({ kind: "chart", symbol: cmd.symbol, key: ++seq.current });
           onChart.current?.(cmd.symbol);
           const name = g.catalog.find((s) => s.symbol === cmd.symbol)?.name ?? cmd.symbol;
-          return say(`Here's ${name}'s chart.`, "Chainlink price history");
+          return say(LINES.hereIsChart(name), "Chainlink price history");
         }
+        case "ask":
+          if (onAsk.current) return onAsk.current(cmd.question);
+          return say(LINES.cantThink);
         case "confirm":
         case "cancel":
           // Only a tap (or a typed "yes") confirms: a misheard word must never move money.
-          if (source === "voice") return say("Tap Confirm on the card to buy, or Cancel.");
+          if (source === "voice") return say(LINES.tapToConfirm);
           setDecision((d) => ({ n: d.n + 1, confirm: cmd.kind === "confirm" }));
           return;
         default:
-          return say("I didn't catch that. Try “buy ten dollars of Tesla” or “what's Tesla at”.", cmd.heard ? `Heard “${cmd.heard}”` : "");
+          return say(LINES.didntCatch, cmd.heard ? `Heard “${cmd.heard}”` : "");
       }
     },
     [g, say],
@@ -191,6 +199,13 @@ export function useAssistant(opts: AssistantOptions = {}) {
           if (it.symbol) {
             setCard({ kind: "chart", symbol: it.symbol, key: ++seq.current });
             onChart.current?.(it.symbol);
+          }
+          break;
+        case "ask":
+          // Show me answers with the page in view, and speaks for itself.
+          if (onAsk.current) {
+            onAsk.current(said);
+            return;
           }
           break;
       }
@@ -272,7 +287,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
           if (failed || intentSeen) return;
           // No intent: the browser fallback (or the API couldn't answer). Parse it here, like typed text.
           if (finalText) void run(finalText, "voice");
-          else g.setOrb({ state: "idle", line: `I didn't hear anything. Hold ${keyLabel(g.voiceKey)} while you speak, then let go.`, meta: KIND_META["no-speech"] });
+          else g.setOrb({ state: "idle", line: LINES.noSpeech, meta: KIND_META["no-speech"] });
         },
       },
       { context, vault: isAddress(g.vaultAddress) ? g.vaultAddress : undefined },

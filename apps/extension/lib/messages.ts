@@ -21,6 +21,8 @@ export type PageMessage =
    */
   | { kind: "page:scan" }
   | { kind: "page:reveal"; symbol: string }
+  /** Docked: a Show me / teach question from the side panel, answered on the page (it reads, draws and speaks). */
+  | { kind: "page:ask"; question: string; lastGuard?: { code: string; message: string } | null }
   /** The side panel is placing a buy: what page is it on, and which sentence named the company? (For the journal.) */
   | { kind: "page:context"; symbol: string };
 
@@ -29,4 +31,7 @@ export interface PageMatchesReply {
   companies: Array<{ symbol: string; name: string; mentions: number }>;
 }
 
-export type Message = ApiRequest | PanelMessage | PageMessage | { kind: "open:settings" };
+/** Show me: a JPEG of the visible tab (a data URL), for a question about a chart or an image. Never stored. */
+export type CaptureRequest = { kind: "capture:tab" };
+
+export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | { kind: "open:settings" };

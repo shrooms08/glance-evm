@@ -5,7 +5,9 @@
  *   "buy ten dollars of Tesla", "buy $25 of TSLA", "buy twenty five bucks worth of amazon", "buy tesla for $10"
  *   "what's Tesla at", "what is amd trading at", "price of netflix", "how much is palantir"
  *   "how much have I spent today", "how much do I have left today"
+ *   any other question ("what's this article saying?", "how do I withdraw?"): "ask", answered by Show me
  */
+import { isAsk } from "@glance/core/showme";
 
 export type Command =
   | { kind: "buy"; symbol: string; amount: string }
@@ -14,6 +16,8 @@ export type Command =
   | { kind: "portfolio" }
   | { kind: "why"; symbol: string }
   | { kind: "chart"; symbol: string }
+  /** A question about the page, a term, or how to use Glance: answered by Show me. */
+  | { kind: "ask"; question: string }
   | { kind: "confirm" }
   | { kind: "cancel" }
   | { kind: "unknown"; heard: string };
@@ -28,6 +32,7 @@ const ONES: Record<string, number> = {
   eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
 };
 const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+
 
 /** "twenty five" -> 25, "one hundred" -> 100, "a thousand" -> 1000, "2,500" -> 2500, "12.50" -> 12.5. Else null. */
 export function parseAmount(text: string): string | null {
@@ -139,6 +144,12 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   if (m) {
     const symbol = findCompany(m[1]!, table);
     if (symbol) return { kind: "price", symbol };
+  }
+
+  // "what's this article saying?", "what's a stock token?", "how do I withdraw?", "should I buy Tesla?", or any other
+  // question typed in the panel: Show me answers it, with the page in view.
+  if (isAsk(t) || /\?\s*$/.test(heard) || /^(should i|is it|what|why|how|where|which|who|explain|teach|walk|show me)\b/.test(t)) {
+    return { kind: "ask", question: heard };
   }
 
   return { kind: "unknown", heard };

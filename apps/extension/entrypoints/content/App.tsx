@@ -21,14 +21,23 @@ import { reportIdleFrames, sampleFrames } from "../../lib/motionBudget";
 import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
-import { warmVoice } from "../../lib/voiceClient";
 import type { VoiceCommandContext } from "../../lib/voiceMessages";
 import type { Message, PageMatchesReply } from "../../lib/messages";
 import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
 import { SoundCue, type Sfx } from "../../lib/sfx";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
-import { requestChart } from "../../lib/chartPanel";
+import { requestCard } from "../../lib/chartPanel";
+import { color } from "@glance/design";
+import StockChart from "../../components/StockChart";
+import { useGreeting } from "../../components/useGreeting";
+import { api } from "../../lib/api";
+import { findQuote, revealRange } from "../../lib/anchor";
+import { pageMount } from "../../lib/chartLoader";
+import { readPage } from "../../lib/pageRead";
+import { ShowDrawings } from "../../lib/showDraw";
+import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
+import { hush, speak, warmVoice } from "../../lib/voiceClient";
 import { capturePage, type PageContext } from "../../lib/journal";
 import { rememberOrbAnchor } from "../../lib/updatedNotice";
 
@@ -64,9 +73,15 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const soundCue = useRef(new SoundCue());
   useEffect(() => sfx?.setEnabled(g.sounds), [sfx, g.sounds]);
   const voiceContext = useRef<() => VoiceCommandContext>(() => ({}));
-  // "Show me Tesla's chart": the chart opens in the side panel (the floating panel offers a one-tap button if the
-  // browser won't open it without a tap).
-  const assistant = useAssistant({ context: () => voiceContext.current(), onChart: (symbol) => void requestChart(symbol) });
+  // "Show me Tesla's chart": in the floating panel (a side panel can't open without a click), or in the side panel when
+  // it's already open. Questions ("what's this article saying?") go to Show me, on this page.
+  const showChartRef = useRef<(symbol: string) => void>(() => {});
+  const askRef = useRef<(question: string) => void>(() => {});
+  const assistant = useAssistant({
+    context: () => voiceContext.current(),
+    onChart: (symbol) => showChartRef.current(symbol),
+    onAsk: (question) => askRef.current(question),
+  });
   const [mentions, setMentions] = useState<Mention[]>(underliner.current());
   /** This page, and the sentence around the company's first underline, for the headline journal. */
   const pageContextFor = (symbol: string): PageContext => capturePage(document, underliner.current().find((m) => m.symbol === symbol)?.range ?? null);
@@ -89,11 +104,103 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const heldForPanel = useRef(false);
 
   const companies = useMemo(() => companiesFrom(mentions, g.catalog), [mentions, g.catalog]);
+  const companiesLatest = companies;
+  const companiesRef = useRef<PageCompany[]>([]);
   const host = location.hostname.replace(/^www\./, "");
   // What the voice API may use to understand a command: this page and the companies found on it.
   voiceContext.current = () => ({ host, companies: companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) });
 
   useEffect(() => underliner.onChange(setMentions), [underliner]);
+  useGreeting();
+
+  // ---- Show me ---------------------------------------------------------------------------------------------------
+  // Drawings live in an SVG inside our shadow root; the orb flies to what's being talked about, then home.
+  const layerRef = useRef<HTMLDivElement>(null);
+  const drawings = useRef<ShowDrawings | null>(null);
+  const showRun = useRef<ShowMeRun | null>(null);
+  const [flyRange, setFlyRange] = useState<Range | null>(null);
+  const [flyPos, setFlyPos] = useState<OrbPosition | null>(null);
+  const [orbFlying, setOrbFlying] = useState(false);
+  useEffect(() => {
+    if (!layerRef.current) return;
+    const d = new ShowDrawings(layerRef.current, color.lime);
+    drawings.current = d;
+    return () => d.destroy();
+  }, []);
+  // The orb follows its words while the page scrolls them into view; home again when the reply ends.
+  useEffect(() => {
+    if (!flyRange) {
+      setFlyPos(null);
+      const t = setTimeout(() => setOrbFlying(false), 700);
+      return () => clearTimeout(t);
+    }
+    setOrbFlying(true);
+    let frame = 0;
+    const place = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setFlyPos(orbBeside(flyRange.getBoundingClientRect()));
+      });
+    };
+    place();
+    window.addEventListener("scroll", place, { passive: true, capture: true });
+    window.addEventListener("resize", place, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", place, { capture: true });
+      window.removeEventListener("resize", place);
+    };
+  }, [flyRange]);
+
+  const showChart = useCallback(
+    (symbol: string) => {
+      if (docked) {
+        void requestCard({ kind: "chart", symbol });
+        return;
+      }
+      assistant.setCard({ kind: "chart", symbol, key: Date.now() });
+      setPanelOpen(true);
+    },
+    [docked, assistant],
+  );
+  showChartRef.current = showChart;
+
+  const ask = useCallback(
+    (question: string) => {
+      showRun.current?.cancel();
+      const onConsole = (() => {
+        try {
+          return Boolean(g.consoleUrl) && new URL(g.consoleUrl).origin === location.origin;
+        } catch {
+          return false;
+        }
+      })();
+      showRun.current = runShowMe(question, {
+        readPage: () => readPage(document, { companies: companiesRef.current.map((c) => c.symbol) }),
+        surface: onConsole ? "console" : "page",
+        capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null),
+        downscale: downscaleJpeg,
+        ask: (body) => api.showme(body),
+        speak: (text, h) => speak(text, g.voiceReplies, h),
+        hush,
+        findQuote: (quote) => findQuote(document.body, quote),
+        reveal: (range) => void revealRange(range),
+        draw: (kind, range) => drawings.current?.draw(kind, range) ?? false,
+        point: setFlyRange,
+        chart: showChart,
+        portfolio: () => {
+          if (docked) void requestCard({ kind: "portfolio" });
+          else assistant.setCard({ kind: "portfolio", key: Date.now() });
+        },
+        say: (line, state) => g.setOrb({ state, line, meta: onConsole ? "Show me · on the console" : "Show me" }),
+        done: (cancelled) => (cancelled ? drawings.current?.clear() : drawings.current?.fadeLater()),
+      });
+    },
+    [g, docked, assistant, showChart],
+  );
+  askRef.current = ask;
+  companiesRef.current = companiesLatest;
   // One quiet-time frame sample: if this page can't hold frame rate on its own, skip the idle breathing pulse.
   useEffect(() => {
     const t = setTimeout(() => void sampleFrames().then(reportIdleFrames), 4_000);
@@ -130,6 +237,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
       if (msg.kind === "page:scan") return underliner.glance().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
+      // Docked: a question asked in the side panel, answered here (this page is what it's about).
+      if (msg.kind === "page:ask") askRef.current(msg.question);
       // The side panel is placing a buy: this page, and the sentence that named the company (kept in this browser).
       if (msg.kind === "page:context") return Promise.resolve(pageContextFor(msg.symbol)) as never;
       return undefined;
@@ -184,7 +293,22 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   // Capture phase, so the keys work even while focus is inside our shadow root, and the page never sees them.
   useHotkeys(
     { glance: g.glanceKey, voice: g.voiceKey },
-    { onGlance: () => void glance(), onVoiceStart: startTalking, onVoiceEnd: stopTalking, onEscape: closePanel },
+    {
+      onGlance: () => void glance(),
+      onVoiceStart: startTalking,
+      onVoiceEnd: stopTalking,
+      // Escape stops Show me first (voice, drawings, the orb comes home); pressed again, it closes the panel.
+      onEscape: () => {
+        const run = showRun.current;
+        showRun.current = null;
+        if (run && (flyRange || (drawings.current?.count ?? 0) > 0 || g.orb.state !== "idle")) {
+          run.cancel();
+          return;
+        }
+        drawings.current?.clear();
+        closePanel();
+      },
+    },
     { capture: true },
   );
 
@@ -345,7 +469,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const panelPlacement = { ...beside, ...(orbTopHalf ? { top: vh - pos.bottom + 8 } : { bottom: pos.bottom + orbTokens.hitArea + 8 }) };
 
   return (
-    <div className="g-layer">
+    <div className="g-layer" ref={layerRef}>
       {dockAnim && (
         <DockTransition
           key={dockAnim}
@@ -400,15 +524,15 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               }}
               autoFocusInput={openedByKeyboard}
               pageContext={pageContextFor}
-              onOpenChart={(symbol) => void requestChart(symbol)}
+              renderChart={(symbol, onClose) => <StockChart key={symbol} symbol={symbol} onClose={onClose} mount={pageMount} />}
             />
           </GooPanel>
 
           <button
             ref={orbRef}
-            className={`g-orb-button${dockAnim ? " is-hidden" : ""}`}
+            className={`g-orb-button${dockAnim ? " is-hidden" : ""}${orbFlying ? " is-flying" : ""}`}
             data-breathe={orbMotion.breathe || undefined}
-            style={{ right: pos.right, bottom: pos.bottom }}
+            style={flyPos ? { right: flyPos.right, bottom: flyPos.bottom } : { right: pos.right, bottom: pos.bottom }}
             aria-label={`Glance: ${companies.length} companies found on this page. Click to dock to the side panel. Tap Option ${g.glanceKey} to glance, hold Option ${g.voiceKey} to talk.`}
             aria-expanded={panelOpen}
             onPointerDown={onPointerDown}
@@ -442,6 +566,18 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       )}
     </div>
   );
+}
+
+/** Where the orb sits to point at words: just left of them (right of them near the left edge), on the viewport. */
+export function orbBeside(rect: DOMRect | { left: number; right: number; top: number; height: number }, vw = window.innerWidth, vh = window.innerHeight): OrbPosition {
+  const size = orbTokens.hitArea;
+  const gap = 6;
+  let left = rect.left - size - gap;
+  if (left < 4) left = rect.right + gap;
+  const top = rect.top + rect.height / 2 - size / 2;
+  const right = Math.min(Math.max(vw - left - size, 4), vw - size - 4);
+  const bottom = Math.min(Math.max(vh - top - size, 4), vh - size - 4);
+  return { right, bottom };
 }
 
 /** Below the words if there is room, otherwise above; kept inside the viewport. */

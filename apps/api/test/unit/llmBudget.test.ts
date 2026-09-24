@@ -41,7 +41,7 @@ function resolverWith(client: MessagesClient, opts: { limit?: number | BudgetLim
 describe("models", () => {
   it("defaults every Claude call to Haiku, including the old ANTHROPIC_MODEL name", () => {
     const c = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE }), quiet);
-    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU });
+    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU, other: HAIKU });
     expect(HAIKU).toBe("claude-haiku-4-5");
   });
 
@@ -52,7 +52,7 @@ describe("models", () => {
     expect(log.mock.calls[0]![0]).toMatch(/resolver model "claude-opus-5" refused/);
     const lines: string[] = [];
     const c = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, ANTHROPIC_MODEL: "claude-opus-5", INTENT_MODEL: "claude-opus-4-7", WHY_MODEL: "claude-opus-5" }), (l) => lines.push(l));
-    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU });
+    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU, other: HAIKU });
     expect(lines.filter((l) => l.includes("refused"))).toHaveLength(3);
     // RESOLVER_MODEL wins over the old name.
     expect(createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, RESOLVER_MODEL: "claude-sonnet-5", ANTHROPIC_MODEL: "claude-opus-5" }), quiet).llmModels.resolver).toBe("claude-sonnet-5");
@@ -372,7 +372,7 @@ describe("visibility", () => {
   it("/health reports the models, the limit, calls used and whether Claude is paused", () => {
     const zero = (limit: number) => ({ usedToday: 0, limit });
     expect(llmHealth(ctx)).toEqual({
-      models: { resolver: null, intent: null, why: null },
+      models: { resolver: null, intent: null, why: null, showme: null },
       dailyLimit: 250,
       usedToday: 0,
       byPurpose: { resolver: zero(40), intent: zero(80), why: zero(60), other: zero(70) },

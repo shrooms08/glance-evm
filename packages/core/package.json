@@ -14,7 +14,10 @@
     "./tone": "./src/tone.ts",
     "./tickers": "./src/tickers.ts",
     "./chart": "./src/chart.ts",
-    "./chart-mount": "./src/chart-mount.ts"
+    "./chart-mount": "./src/chart-mount.ts",
+    "./showme": "./src/showme.ts",
+    "./sketch": "./src/sketch.ts",
+    "./persona": "./src/persona.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

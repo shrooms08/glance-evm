@@ -66,6 +66,8 @@ const components = /* css */ `
   border: 0; background: transparent; border-radius: 50%; cursor: grab; pointer-events: auto; touch-action: none;
 }
 .g-orb-button:active { cursor: grabbing; }
+/* Show me: the orb flies to the words it's talking about, and home again. */
+.g-orb-button.is-flying { transition: right 640ms var(--g-ease), bottom 640ms var(--g-ease); }
 .g-orb-button, .g-orb-motion { will-change: transform; }
 /* While docking or undocking, the liquid stands in for the orb: it sits exactly where the orb is, so the hand-over is
    instant (a fade would leave a ghost of the orb over the liquid). Under reduced motion the fade is the animation. */

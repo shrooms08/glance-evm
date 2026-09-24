@@ -12,14 +12,17 @@ import { GlanceProvider, useGlance } from "../../components/context";
 import { Panel, type PageCompany } from "../../components/Panel";
 import { useAssistant } from "../../components/useAssistant";
 import { useHotkeys } from "../../components/useHotkeys";
-import { warmVoice } from "../../lib/voiceClient";
+import { speak, warmVoice } from "../../lib/voiceClient";
+import { api } from "../../lib/api";
+import { useGreeting } from "../../components/useGreeting";
 import { glanceLine, keyLabel } from "../../lib/hotkeys";
 import { mountPageStyles } from "../../lib/extensionPage";
 import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { PageMatchesReply } from "../../lib/messages";
 import type { PageContext } from "../../lib/journal";
 import { defaultMode } from "../../lib/settings";
-import { pendingChart, takePendingChart } from "../../lib/chartPanel";
+import { pendingChart, takePendingCard, type PendingCard } from "../../lib/chartPanel";
+import { panelMount } from "../../lib/chartLoader";
 
 // The chart library comes with this chunk, loaded the first time a chart is shown.
 const StockChart = lazy(() => import("../../components/StockChart"));
@@ -27,7 +30,26 @@ const StockChart = lazy(() => import("../../components/StockChart"));
 function SidePanel() {
   const g = useGlance();
   const pageRef = useRef<PageMatchesReply>({ host: "", companies: [] });
-  const assistant = useAssistant({ context: () => ({ host: pageRef.current.host, companies: pageRef.current.companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) }) });
+  const assistant = useAssistant({
+    context: () => ({ host: pageRef.current.host, companies: pageRef.current.companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) }),
+    // Show me is about the page: the active tab reads it, draws on it and speaks. A browser page (no content script)
+    // gets the answer here, without drawings.
+    onAsk: (question) => void askOnPage(question),
+  });
+  const askOnPage = async (question: string) => {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    try {
+      if (tab?.id === undefined) throw new Error("no tab");
+      await browser.tabs.sendMessage(tab.id, { kind: "page:ask", question });
+    } catch {
+      g.setOrb({ state: "thinking", line: "Let me think…", meta: "Show me" });
+      const res = await api.showme({ question, surface: "page" });
+      const line = res.ok ? res.data.spoken : res.message;
+      g.setOrb({ state: "idle", line, meta: "" });
+      if (res.ok) void speak(line, g.voiceReplies, { onStart: () => g.setOrb({ state: "speaking", line, meta: "" }), onEnd: () => g.setOrb({ state: "idle", line, meta: "" }) });
+    }
+  };
+  useGreeting();
   const [page, setPage] = useState<PageMatchesReply>({ host: "", companies: [] });
   pageRef.current = page;
 
@@ -124,10 +146,13 @@ function SidePanel() {
   // "Show me Tesla's chart" said on the page: the request waits in storage for this panel.
   const { setCard } = assistant;
   useEffect(() => {
-    const show = (symbol: string | null) => symbol && setCard({ kind: "chart", symbol, key: Date.now() });
-    void takePendingChart().then(show);
+    const show = (card: PendingCard | null) => {
+      if (card?.kind === "chart") setCard({ kind: "chart", symbol: card.symbol, key: Date.now() });
+      else if (card?.kind === "portfolio") setCard({ kind: "portfolio", key: Date.now() });
+    };
+    void takePendingCard().then(show);
     return pendingChart.watch((v) => {
-      if (v) void takePendingChart().then(show);
+      if (v) void takePendingCard().then(show);
     });
   }, [setCard]);
 
@@ -136,7 +161,7 @@ function SidePanel() {
       layout="tall"
       renderChart={(symbol, onClose) => (
         <Suspense fallback={<div className="g-chart-box" aria-busy="true" />}>
-          <StockChart key={symbol} symbol={symbol} onClose={onClose} />
+          <StockChart key={symbol} symbol={symbol} onClose={onClose} mount={panelMount} />
         </Suspense>
       )}
       pageContext={pageContext}

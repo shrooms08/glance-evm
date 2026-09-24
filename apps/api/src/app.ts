@@ -7,6 +7,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { getAddress, isAddress } from "viem";
 import { CHART_RANGES } from "@glance/core/chart";
+import { LINES } from "@glance/core/persona";
 
 import type { GuardError } from "./errors.js";
 import { z } from "zod";
@@ -33,7 +34,31 @@ const quoteQuery = z.object({ vault: address, symbol, side, amount: decimal, sli
 const tradeBody = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() }).strict();
 const activityQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
 const priceQuery = z.object({ vault: address.optional() });
+const showMeBody = z
+  .object({
+    question: z.string().trim().min(1).max(500),
+    surface: z.enum(["page", "console"]).default("page"),
+    page: z
+      .object({
+        title: z.string().max(500).optional(),
+        host: z.string().max(253).optional(),
+        selection: z.string().max(4_000).optional(),
+        // Cut to about 6k tokens by the handler; a little slack here for the extension's own cap.
+        text: z.string().max(60_000).optional(),
+        companies: z.array(z.string().max(8)).max(20).optional(),
+      })
+      .optional(),
+    // A downscaled JPEG, base64 (at most 1280px wide): about 1.5 MB at most.
+    screenshot: z.string().max(2_000_000).regex(/^[A-Za-z0-9+/=]+$/).optional(),
+    lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
+  })
+  .strict();
 const chartQuery = z.object({ range: z.enum(CHART_RANGES).default("1D"), vault: address.optional() });
+
+/** "GET /voice/speak?text=Hello 200" -> "GET /voice/speak?… 200": query strings never reach the log. */
+export function redactQuery(line: string): string {
+  return line.replace(/\?\S*/g, "?…");
+}
 
 /** JSON with bigints as decimal strings. */
 function send(c: Context, body: unknown, status: 200 | 400 | 404 | 409 | 422 | 429 | 500 | 502 | 503 = 200) {
@@ -69,7 +94,9 @@ export function createServerApp(ctx: AppContext) {
   const { config } = ctx;
   const nodeWs = createNodeWebSocket({ app });
 
-  if (config.NODE_ENV !== "test") app.use(logger()); // method, path, status and time only: no bodies, no keys
+  // Method, path, status and time only: no bodies, no keys, and no query strings (GET /voice/speak carries the words
+  // being spoken, which can quote the page).
+  if (config.NODE_ENV !== "test") app.use(logger((line, ...rest) => console.log(redactQuery(line), ...rest)));
 
   app.use(
     "*",
@@ -90,6 +117,7 @@ export function createServerApp(ctx: AppContext) {
   app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
   app.use("/resolve/names", rateLimit({ limit: 20, trustProxy: config.TRUST_PROXY, name: "names" }));
   app.use("/why/*", rateLimit({ limit: config.WHY_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "why" }));
+  app.use("/showme", rateLimit({ limit: config.SHOWME_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "showme" }));
   app.use("/chart/*", rateLimit({ limit: config.CHART_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "chart" }));
   app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
 
@@ -127,6 +155,13 @@ export function createServerApp(ctx: AppContext) {
   app.get("/vault/:address", async (c) => send(c, await vaultView(ctx, parse(address, c.req.param("address")))));
 
   app.get("/portfolio/:address", async (c) => send(c, await portfolioView(ctx, parse(address, c.req.param("address")))));
+
+  // Show me, teach and guide: one budgeted Claude call ("other"), nothing from the page kept or logged.
+  app.post("/showme", async (c) => {
+    const input = parse(showMeBody, await jsonBody(c));
+    if (!ctx.showMe) return send(c, { reply: LINES.cantThink, spoken: LINES.cantThink, actions: [], source: "unavailable" });
+    return send(c, await ctx.showMe.answer(input));
+  });
 
   app.get("/chart/:symbol", async (c) => {
     const { range, vault } = parse(chartQuery, c.req.query());

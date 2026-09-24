@@ -916,13 +916,14 @@ async function feedStatus(ctx: AppContext, latest: bigint, now: number) {
  * Claude's budget for /health: the models in use (null where Claude is off), the total limit and calls used, the same
  * per purpose, and whether Claude is paused.
  */
-export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmModels" | "llmBudget"> & { why?: AppContext["why"] }) {
+export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmModels" | "llmBudget"> & { why?: AppContext["why"]; showMe?: AppContext["showMe"] }) {
   const { dailyLimit, usedToday, byPurpose, paused } = ctx.llmBudget.status();
   return {
     models: {
       resolver: ctx.llm ? ctx.llmModels.resolver : null,
       intent: ctx.intentModel ? ctx.llmModels.intent : null,
       why: ctx.why?.summarizer ? ctx.llmModels.why : null,
+      showme: ctx.showMe ? ctx.llmModels.other : null,
     },
     dailyLimit,
     usedToday,

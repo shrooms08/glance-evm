@@ -1,14 +1,15 @@
 /**
- * The full price chart at the top of a stock's view in the side panel: the current price and the change over the range,
- * 1D / 1W / 1M, the chart (Lightweight Charts, loaded with this component: the side panel imports it lazily, and the
- * page's content script never does), the current vault's buys, sells and cached news as markers, and where the prices
- * come from. Empty or failed: "No chart data yet.", never a broken canvas.
+ * The full price chart, in the side panel (at the top of a stock's view) and in the floating panel: the current price
+ * and the change over the range, 1D / 1W / 1M, the chart (Lightweight Charts, loaded on first use: lib/chartLoader.ts),
+ * the current vault's buys, sells and cached news as markers, and where the prices come from. Empty or failed: "No
+ * chart data yet.", never a broken canvas.
  */
 import { CHART_NOTE, CHART_RANGES, NO_CHART_DATA, rangeChange, type ChartData, type ChartRange } from "@glance/core/chart";
-import { mountChart, type ChartHandle } from "@glance/core/chart-mount";
+import type { ChartHandle } from "@glance/core/chart-mount";
 import { useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
+import type { Mount } from "../lib/chartLoader";
 import { isAddress } from "../lib/settings";
 import { useGlance } from "./context";
 
@@ -17,11 +18,11 @@ type Load = { state: "loading" } | { state: "done"; data: ChartData } | { state:
 export interface StockChartProps {
   symbol: string;
   onClose?(): void;
-  /** For tests: draws instead of Lightweight Charts. */
-  mount?: typeof mountChart;
+  /** How the chart library is loaded: lazily, differently on the page and in the side panel (lib/chartLoader.ts). */
+  mount: Mount;
 }
 
-export default function StockChart({ symbol, onClose, mount = mountChart }: StockChartProps) {
+export default function StockChart({ symbol, onClose, mount }: StockChartProps) {
   const g = useGlance();
   const stock = g.catalog.find((s) => s.symbol === symbol);
   const [range, setRange] = useState<ChartRange>("1D");
@@ -100,7 +101,7 @@ export default function StockChart({ symbol, onClose, mount = mountChart }: Stoc
 }
 
 /** The canvas: mounted once, then updated in place when the data changes (range switches keep the same chart). */
-function ChartCanvas({ data, mount }: { data: ChartData; mount: typeof mountChart }) {
+function ChartCanvas({ data, mount }: { data: ChartData; mount: Mount }) {
   const box = useRef<HTMLDivElement>(null);
   const handle = useRef<ChartHandle | null>(null);
   const [failed, setFailed] = useState(false);

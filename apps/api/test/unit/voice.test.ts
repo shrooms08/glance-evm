@@ -672,13 +672,13 @@ describe("voice endpoints", () => {
     const res = await post("/voice/command", { transcript: "buy ten dollars of Tesla", context: { host: "cnbc.com" } });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ intent: "buy", symbol: "TSLA", amount: "10", reply: "$10 of Tesla. Checking your vault's limits.", source: "rules" });
+    expect(body).toMatchObject({ intent: "buy", symbol: "TSLA", amount: "10", reply: "$10 of Tesla. Let me check your limits first.", source: "rules" });
     expect(trade).not.toHaveBeenCalled();
   });
 
   it("/voice/command answers refusals honestly", async () => {
     const neg = (await (await post("/voice/command", { transcript: "don't buy Tesla" })).json()) as { intent: string; reply: string };
-    expect(neg).toMatchObject({ intent: "unknown", reply: "Okay. I won't buy or sell anything." });
+    expect(neg).toMatchObject({ intent: "unknown", reply: "Got it. Nothing bought, nothing sold." });
     const why = (await (await post("/voice/command", { transcript: "why?", context: { lastGuard: { code: "PER_TRADE_CAP", message: "That's over your $100 per trade limit." } } })).json()) as { reply: string };
     expect(why.reply).toBe("That's over your $100 per trade limit.");
   });

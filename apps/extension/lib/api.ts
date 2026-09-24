@@ -3,6 +3,7 @@
  */
 import type { Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
 import type { ChartData, ChartRange } from "@glance/core/chart";
+import type { ShowAction } from "@glance/core/showme";
 
 import { send } from "./lifecycle";
 import { setChainStatus } from "./chainStatus";
@@ -45,6 +46,21 @@ async function once<T>(method: "GET" | "POST", path: string, body?: unknown): Pr
   }
 }
 
+export interface ShowMeRequest {
+  question: string;
+  surface: "page" | "console";
+  page?: { title: string; host: string; selection?: string; text: string; companies: string[] };
+  screenshot?: string;
+  lastGuard?: { code: string; message: string } | null;
+}
+
+export interface ShowMeReply {
+  reply: string;
+  spoken: string;
+  actions: ShowAction[];
+  source: "claude" | "budget" | "guarded" | "unavailable";
+}
+
 const q = (params: Record<string, string | number | undefined>) =>
   Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== "")
@@ -67,6 +83,8 @@ export const api = {
   vault: (address: string) => call<Vault>("GET", `/vault/${address}`),
   portfolio: (address: string) => call<Portfolio>("GET", `/portfolio/${address}`),
   why: (symbol: string) => call<WhyMoved>("GET", `/why/${encodeURIComponent(symbol)}`),
+  /** Show me, teach and guide: only when the user asks. The page text is sent once and never kept. */
+  showme: (body: ShowMeRequest) => call<ShowMeReply>("POST", "/showme", body),
   chart: (symbol: string, range: ChartRange, vault?: string) => call<ChartData>("GET", `/chart/${encodeURIComponent(symbol)}?${q({ range, vault })}`),
   quote: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Quote>("GET", `/quote?${q(p)}`),

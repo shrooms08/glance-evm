@@ -125,6 +125,7 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
   const onMessage = (msg: VoiceEvent | SpeechEvent) => {
     // The reply to this session is spoken under its id: follow its playback even after the session has ended.
     if (msg?.kind === "voice:speech" && msg.id === session) {
+      if (msg.type === "progress") return undefined;
       if (msg.type === "start") h.onReplyStart?.();
       else h.onReplyEnd?.();
       if (msg.type !== "start") safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
@@ -211,7 +212,7 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
  * onEnd come from the audio's real playback, so the speaking orb moves exactly while the voice is heard. Resolves when
  * it has finished (or when it's clear nothing will play). With `enabled` false, nothing is spoken.
  */
-export function speak(text: string, enabled: boolean, h: { onStart?(): void; onEnd?(): void } = {}): Promise<void> {
+export function speak(text: string, enabled: boolean, h: { onStart?(): void; onEnd?(): void; onProgress?(t: number, d: number | null): void } = {}): Promise<void> {
   if (!enabled || !text.trim()) return Promise.resolve();
   const id = newId();
   return new Promise<void>((resolve) => {
@@ -227,11 +228,16 @@ export function speak(text: string, enabled: boolean, h: { onStart?(): void; onE
       if (msg.type === "start") {
         started = true;
         h.onStart?.();
+      } else if (msg.type === "progress") {
+        // Still playing: push the safety timeout back (a long Show me answer can run past 30 seconds).
+        clearTimeout(timer);
+        timer = setTimeout(finish, 30_000);
+        h.onProgress?.(msg.t, msg.d);
       } else finish();
       return undefined;
     };
     // Nothing should take this long; never leave the orb speaking.
-    const timer = setTimeout(finish, 30_000);
+    let timer = setTimeout(finish, 30_000);
     safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
     sendSafe({ kind: "voice:speak", id, text } satisfies VoiceRequest).then(
       (ok) => ok === false && finish(),

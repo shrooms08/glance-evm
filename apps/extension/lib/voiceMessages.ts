@@ -8,7 +8,7 @@ import type { VoiceCode } from "./voiceReasons";
 
 /** What the API understood. A buy only names the card to open: nothing trades without the confirm tap. */
 export interface VoiceIntent {
-  intent: "buy" | "sell" | "price" | "spend-so-far" | "explain" | "portfolio" | "why" | "chart" | "unknown";
+  intent: "buy" | "sell" | "price" | "spend-so-far" | "explain" | "portfolio" | "why" | "chart" | "ask" | "unknown";
   symbol: string | null;
   amount: string | null;
   /** The one-sentence spoken reply (already being spoken by the offscreen document). */
@@ -43,7 +43,10 @@ export type VoiceEvent = { kind: "voice:event"; session: string; seq: number } &
 );
 
 /** Playback of a spoken reply, from the audio element's own events. */
-export type SpeechEvent = { kind: "voice:speech"; id: string; type: "start" | "end" | "unavailable" };
+export type SpeechEvent =
+  | { kind: "voice:speech"; id: string; type: "start" | "end" | "unavailable" }
+  /** While it plays (about 4 a second): where playback is, and the audio's length once the player knows it. */
+  | { kind: "voice:speech"; id: string; type: "progress"; t: number; d: number | null };
 
 /** What the page (or side panel) knows that helps the API understand a command. */
 export interface VoiceCommandContext {

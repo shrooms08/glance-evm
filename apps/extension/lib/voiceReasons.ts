@@ -135,7 +135,7 @@ export function reasonFor(code: VoiceCode, browser: BrowserInfo): string {
       if (!isGoogleChrome) return `This ${browser.name} build has no speech service. Google Chrome has it. Type instead.`;
       return "Chrome couldn't reach its speech service. Check your connection, or type instead.";
     case "no-speech":
-      return "I didn't hear anything. Hold the key and speak, or type instead.";
+      return "I didn't hear anything. Hold the key while you talk, or just type.";
     case "language-not-supported":
       return "Speech recognition doesn't support your browser's language. Type instead.";
     case "aborted":

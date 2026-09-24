@@ -14,6 +14,7 @@
  */
 import { AS_OF_LAST_CLOSE, containsAdvice, NEWS_UNAVAILABLE, NO_CLEAR_NEWS, NO_RECENT_NEWS, TONE_RULES } from "@glance/core/tone";
 import { formatSignedPercent } from "@glance/core/format";
+import { PERSONA } from "@glance/core/persona";
 import { usTicker } from "@glance/core/tickers";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -104,7 +105,9 @@ export function createWhySummarizer(o: { apiKey?: string; model: string; budget:
   const log = o.log ?? ((l: string) => console.log(l));
   const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 10_000, maxRetries: 0 });
   const system = [
-    "You explain, in at most 2 short sentences, why a stock may have moved, for a stock-buying browser extension.",
+    PERSONA,
+    "",
+    "Task: explain, in at most 2 short sentences, why a stock may have moved.",
     "Use ONLY the numbered headlines provided. Do not use anything else you know.",
     "Cite each claim with the headline's number in square brackets, like [1] or [2].",
     'Use hedged wording, such as "reports point to" or "may reflect". Never state a cause as certain.',

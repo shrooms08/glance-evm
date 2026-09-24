@@ -16,6 +16,8 @@ import { isAddress } from "viem";
 import { z } from "zod";
 
 import type { AppContext } from "../context.js";
+import { LINES } from "@glance/core/persona";
+
 import { ApiError, portfolioView, priceView, vaultView, whyView } from "../services.js";
 import { spokenSummary } from "../why.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
@@ -64,7 +66,7 @@ const commandBody = z
     vault: z.string().refine((v) => isAddress(v, { strict: false }), "must be a 0x address").optional(),
   })
   .strict();
-const speakBody = z.object({ text: z.string().trim().min(1).max(400) }).strict();
+const speakBody = z.object({ text: z.string().trim().min(1).max(1_500) }).strict();
 
 /** The words Deepgram should expect: our companies and tickers. */
 export function keyterms(ctx: AppContext): string[] {
@@ -93,24 +95,22 @@ const spoken = (usd: string) => {
 export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContext, vault?: string): Promise<{ reply: string; facts?: unknown }> {
   const name = it.symbol ? (ctx.catalog.bySymbol.get(it.symbol)?.name ?? it.symbol) : "";
   // A trade phrasing the validator refused: answer what was actually said, and never act on it.
-  if (it.note?.includes("negation")) return { reply: "Okay. I won't buy or sell anything." };
-  const advice = it.note?.includes("advice") ? "I can't tell you whether to trade, but here's the price. " : "";
+  if (it.note?.includes("negation")) return { reply: LINES.wontTrade };
+  const advice = it.note?.includes("advice") ? LINES.noAdvicePrefix : "";
   switch (it.intent) {
     case "buy":
       return {
-        reply: it.amount
-          ? `${spoken(it.amount)} of ${name}. Checking your vault's limits.`
-          : `How much ${name} would you like to buy?`,
+        reply: it.amount ? LINES.buying(spoken(it.amount), name) : LINES.howMuch(name),
       };
     case "sell":
-      return { reply: `Selling isn't in the extension yet. You can sell ${name} from your console.` };
+      return { reply: LINES.sellingElsewhere(name) };
     case "price": {
       const p = await priceFact(ctx, it.symbol!, vault);
       const market = p.marketState === "OPEN" ? "The market's open." : p.marketState === "CLOSED" ? "The market's closed." : "That price is too old to trade on.";
       return { reply: `${advice}${p.name} is at ${spoken(p.price.value)}. ${market}`, facts: { price: p.price.value, marketState: p.marketState } };
     }
     case "spend-so-far": {
-      if (!vault) return { reply: "Add your vault in settings and I can tell you what you've spent." };
+      if (!vault) return { reply: LINES.noVaultSpent };
       const v = await vaultFact(ctx, vault);
       const w = v.buyWindow;
       return {
@@ -119,7 +119,7 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
       };
     }
     case "portfolio": {
-      if (!vault) return { reply: "Add your vault in settings and I can show your portfolio." };
+      if (!vault) return { reply: LINES.noVaultPortfolio };
       const p = await portfolioView(ctx, vault);
       return { reply: p.sentence, facts: { totals: p.totals } };
     }
@@ -129,15 +129,18 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
     }
     case "chart":
       // The extension opens the side panel on the chart; the chart itself is read from GET /chart there.
-      return { reply: `Here's ${name}'s chart.` };
+      return { reply: LINES.hereIsChart(name) };
+    case "ask":
+      // Answered by the page (POST /showme), which has the page text and draws while it talks: nothing to say here.
+      return { reply: "" };
     case "explain":
       if (context.lastGuard) return { reply: context.lastGuard.message };
-      return { reply: it.modelReply ?? "Nothing has been refused yet, so there's nothing to explain." };
+      return { reply: it.modelReply ?? LINES.nothingRefused };
     default:
       if (it.note?.includes("past") || it.note?.includes("hypothetical") || it.note?.includes("deferred")) {
-        return { reply: "I only trade when you ask me to, right now. Say: buy ten dollars of Tesla." };
+        return { reply: LINES.onlyNow };
       }
-      return { reply: it.modelReply ?? "I didn't catch a company and an amount. Try: buy ten dollars of Tesla." };
+      return { reply: it.modelReply ?? LINES.missingCompanyOrAmount };
   }
 }
 

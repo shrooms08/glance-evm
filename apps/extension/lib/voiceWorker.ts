@@ -334,6 +334,11 @@ export class VoiceWorker {
       return this.emit(s, { type: "end" });
     }
     this.emit(s, { type: "intent", intent: { intent: intent.intent, symbol: intent.symbol, amount: intent.amount, reply: intent.reply } });
+    if (!intent.reply.trim()) {
+      // Nothing to say here ("ask": the page answers with Show me, and speaks that).
+      this.emit(s, { type: "timing", timing });
+      return this.emit(s, { type: "end" });
+    }
     // The reply is spoken under the session's id, so the page can follow it with the speaking orb.
     const released = s.released;
     void this.speak(s.id, intent.reply, s.api, () => {
@@ -401,6 +406,8 @@ export class VoiceWorker {
           if (begun) this.d.emit({ kind: "voice:speech", id, type: "end" });
           resolve(ok || begun);
         };
+        // Where playback is, for "Show me" (its drawings follow the voice). Duration is null while the audio streams in.
+        el.ontimeupdate = () => this.d.emit({ kind: "voice:speech", id, type: "progress", t: el.currentTime, d: Number.isFinite(el.duration) ? el.duration : null });
         el.onended = done(true);
         el.onpause = done(true);
         el.onerror = done(false);
