@@ -1,9 +1,9 @@
 /**
- * The "talk" browser command (⌥V by default, changeable in the browser's keyboard shortcuts for extensions). A command
- * fires on key-down only, so there's no key-up to end a hold. Instead:
+ * The "talk" browser command, only when the user has assigned it a key on the browser's shortcuts page (it has no
+ * default: ⌥V is hold to speak, release to send, on the page itself). A command fires on key-down only, so:
  *   - a tap starts listening, and the next tap sends it (press to talk, press again to send);
  *   - a key held down repeats the command (where the browser repeats it): listening ends once the repeats stop.
- * The in-page listeners (components/useHotkeys.ts) still give true hold-to-talk wherever the command can't fire.
+ * Hold-to-talk is the in-page listener's (components/useHotkeys.ts).
  */
 export const REPEAT_GAP_MS = 650;
 

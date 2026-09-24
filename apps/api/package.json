@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
+    "test:voice-live": "VOICE_LIVE_TESTS=1 vitest run test/integration/voice.live.test.ts",
     "test:integration": "vitest run test/integration",
     "abi": "node scripts/gen-abi.mjs",
     "check-vaults": "tsx --env-file-if-exists=.env scripts/check-vaults.ts",

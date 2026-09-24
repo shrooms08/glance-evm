@@ -52,9 +52,10 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const { closed, freshestAgeSeconds } = marketClosed(g.health);
-  // The browser's own shortcuts when it has them (Settings > keyboard shortcuts for extensions), else the in-page keys.
+  // ⌥G: the browser command's key when it has one (the browser's keyboard shortcuts for extensions), else the in-page
+  // key. ⌥V: always the in-page key, held to speak and released to send.
   const glanceLabel = g.shortcuts?.glance || keyLabel(g.glanceKey);
-  const voiceLabel = g.shortcuts?.talk || keyLabel(g.voiceKey);
+  const voiceLabel = keyLabel(g.voiceKey);
 
   useEffect(() => {
     if (autoFocusInput) input.current?.focus();

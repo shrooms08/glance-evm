@@ -44,6 +44,6 @@ describe("the steps", () => {
   it("once Glance is detected: 'You're set. Open any news article.', with the shortcuts", () => {
     render(<InstallGuide installed browser="chrome" onBrowser={() => {}} downloadUrl="" />);
     expect(screen.getByRole("heading", { name: "You're set. Open any news article." })).toBeTruthy();
-    expect(screen.getByText(/⌥G \(Alt\+G\)/)).toBeTruthy();
+    expect(screen.getByText(/⌥G \(Alt\+G\) glances at the page; hold ⌥V \(Alt\+V\) to speak, and let go to send/)).toBeTruthy();
   });
 });

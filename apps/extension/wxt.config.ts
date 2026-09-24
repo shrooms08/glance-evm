@@ -21,11 +21,13 @@ export default defineConfig({
     host_permissions: ["http://localhost/*", "http://127.0.0.1/*"],
     optional_host_permissions: ["https://*/*", "http://*/*"],
     action: { default_title: "Open Glance in the side panel" },
-    // Changeable in the browser's keyboard shortcuts for extensions. A command's key press also grants activeTab, so
-    // Show me can take its screenshot of the page. The in-page listeners remain where a command can't fire.
+    // ⌥G is a browser command (changeable in the browser's keyboard shortcuts for extensions): one press, and it grants
+    // activeTab, so Show me can take its screenshot of the page. Talk has NO default key on purpose: a command sees no
+    // key release, and ⌥V is hold to speak, release to send, handled on the page itself. Assign talk a key there only
+    // if you prefer press to start, press again to send.
     commands: {
       glance: { suggested_key: { default: "Alt+G", mac: "Alt+G" }, description: "Glance at this page" },
-      talk: { suggested_key: { default: "Alt+V", mac: "Alt+V" }, description: "Talk to Glance (press again to send)" },
+      talk: { description: "Talk to Glance: press to start, press again to send (⌥V held on the page works without this)" },
     },
     icons: { 16: "icon/16.png", 32: "icon/32.png", 48: "icon/48.png", 128: "icon/128.png" },
     // chart-mount.js: the floating panel's chart, loaded by the content script on first use.

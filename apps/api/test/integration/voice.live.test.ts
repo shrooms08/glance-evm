@@ -1,6 +1,7 @@
 /**
- * Real Deepgram and Fish Audio calls, with a latency breakdown printed. Skipped cleanly unless the keys are real
- * (placeholders count as missing). Never trades.   pnpm --filter api test:integration
+ * Real Deepgram and Fish Audio calls, with a latency breakdown printed. Opt-in: they run only with VOICE_LIVE_TESTS=1
+ * (and real keys; placeholders count as missing), so the normal suite never touches the network or spends credit.
+ * Never trades.   pnpm --filter api test:voice-live
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -12,14 +13,17 @@ import { deepgram, deepgramSpeaker, fish, looksLikePlaceholder, ProviderError, w
 
 // Only the voice variables, read from apps/api/.env (if present) over the process environment, into a local object:
 // nothing else in the environment changes for other tests (e.g. the agent key stays unloaded).
+// Opt-in only: without VOICE_LIVE_TESTS=1 nothing is read and every live test is skipped.
+const LIVE = process.env.VOICE_LIVE_TESTS === "1";
+const SKIPPED = "skipped: live Deepgram and Fish calls run only with VOICE_LIVE_TESTS=1 (and real keys in apps/api/.env)";
 const dotenv = resolve(import.meta.dirname, "../../.env");
-const fromFile = existsSync(dotenv) ? parseEnv(readFileSync(dotenv, "utf8")) : {};
+const fromFile = LIVE && existsSync(dotenv) ? parseEnv(readFileSync(dotenv, "utf8")) : {};
 const pick = (k: string) => process.env[k] || fromFile[k] || undefined;
 const env = Object.fromEntries(
   ["DEEPGRAM_API_KEY", "DEEPGRAM_MODEL", "DEEPGRAM_TTS_VOICE", "FISH_API_KEY", "FISH_MODEL", "FISH_VOICE_ID", "FISH_LATENCY"].map((k) => [k, pick(k)]),
 ) as Record<string, string | undefined>;
-const haveDeepgram = !looksLikePlaceholder(env.DEEPGRAM_API_KEY);
-const haveFish = !looksLikePlaceholder(env.FISH_API_KEY);
+const haveDeepgram = LIVE && !looksLikePlaceholder(env.DEEPGRAM_API_KEY);
+const haveFish = LIVE && !looksLikePlaceholder(env.FISH_API_KEY);
 
 const wavFile = readFileSync(resolve(import.meta.dirname, "../fixtures/buy-ten-dollars-of-tesla.wav"));
 const pcm = wavFile.subarray(44); // 16kHz mono 16-bit, as the extension now streams
@@ -173,8 +177,12 @@ describe.skipIf(!haveFish)("Fish Audio speech (live provider)", () => {
   });
 });
 
-describe.skipIf(haveDeepgram)("voice providers not configured", () => {
-  it("skips the live voice tests (set a real DEEPGRAM_API_KEY in apps/api/.env to run them)", () => {
+describe.skipIf(LIVE)("live voice tests", () => {
+  it.skip(SKIPPED, () => {});
+});
+
+describe.skipIf(!LIVE || haveDeepgram)("live voice tests, opted in", () => {
+  it("need a real DEEPGRAM_API_KEY in apps/api/.env (a placeholder counts as missing)", () => {
     expect(haveDeepgram).toBe(false);
   });
 });

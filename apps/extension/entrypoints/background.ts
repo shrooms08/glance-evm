@@ -11,7 +11,8 @@ import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
 import { forgetSession, linkExpiry, sessionAddress, signTrade, type TradeBody } from "../lib/session";
 import { consoleUrl } from "../lib/settings";
-import type { CommandMessage, ConsolePage, SessionInfo, SessionLinkStarted, Shortcuts } from "../lib/messages";
+import type { ConsolePage, SessionInfo, SessionLinkStarted, Shortcuts } from "../lib/messages";
+import { captureForShowMe, forwardCommand } from "../lib/commandRouting";
 import { consolePageUrl } from "../lib/consoleOrigins";
 import { SESSION_HEADERS } from "@glance/core/session";
 
@@ -241,13 +242,11 @@ export default defineBackground(() => {
     });
   });
 
-  // The keyboard shortcuts, as browser commands: forwarded to the active tab's Glance (which routes to the side panel
-  // when docked). The key press also grants activeTab for that tab.
+  // Browser commands: ⌥G (glance) by default, forwarded to the active tab's Glance (which routes to the side panel when
+  // docked); its key press also grants activeTab for that tab. "talk" has no default key: ⌥V is held on the page
+  // itself (hold to speak, release to send), and a user who prefers press-to-toggle can assign talk a key.
   browser.commands?.onCommand.addListener((command, tab) => {
-    if (command !== "glance" && command !== "talk") return;
-    const id = tab?.id;
-    if (id === undefined) return;
-    void browser.tabs.sendMessage(id, { kind: "command", command } satisfies CommandMessage).catch(() => {});
+    forwardCommand(command, tab?.id, (id, message) => browser.tabs.sendMessage(id, message));
   });
 
   browser.runtime.onMessage.addListener((message: Message | VoiceRequest | VoiceEvent | SpeechEvent, sender) => {
@@ -298,12 +297,8 @@ export default defineBackground(() => {
       case "capture:tab": {
         // Only for a Show me question about a chart or an image. Needs the page's host permission; without it, the
         // answer goes ahead without a screenshot.
-        const windowId = sender.tab?.windowId;
-        if (windowId === undefined) return Promise.resolve(null);
-        return browser.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 70 }).then(
-          (url) => url,
-          () => null,
-        );
+        // ⌥G (a browser command) grants activeTab for the tab, which is enough.
+        return captureForShowMe(sender.tab?.windowId, (windowId) => browser.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 70 }));
       }
       case "session:info":
         return sessionAddress().then((address) => ({ address }) satisfies SessionInfo);

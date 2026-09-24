@@ -33,8 +33,9 @@ export default function InstallPage() {
 }
 
 export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBrowser(b: BrowserKey): void; downloadUrl: string; shortcuts?: { glance: string; talk: string } }) {
+  // ⌥G is a browser command (its key as the browser has it); ⌥V is held on the page: hold to speak, release to send.
   const glanceKey = p.shortcuts?.glance || "⌥G (Alt+G)";
-  const talkKey = p.shortcuts?.talk || "⌥V (Alt+V)";
+  const talkKey = "⌥V (Alt+V)";
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string) => {
     void navigator.clipboard?.writeText(text).then(() => setCopied(text), () => {});
@@ -48,7 +49,7 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
           <h1 className="title">{p.installed ? "You're set. Open any news article." : "Install Glance in your browser"}</h1>
           <p className="meta">
             {p.installed
-              ? `Glance underlines the companies it knows. Hover one for its price and a buy button, or press ${talkKey} and ask.`
+              ? `Glance underlines the companies it knows. Hover one for its price and a buy button, or hold ${talkKey} and ask.`
               : "About a minute. Glance starts on the demo vault, so you can try a buy straight away: no wallet needed."}
           </p>
         </div>
@@ -63,8 +64,8 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
             <div>
               <p className="ui">Glance is in this browser.</p>
               <p className="meta">
-                Shortcuts: {glanceKey} glances at the page, {talkKey} to talk (press again to send). Change them in your browser&apos;s keyboard shortcuts for
-                extensions ({BROWSERS[p.browser].extensionsPage}/shortcuts).
+                Shortcuts: {glanceKey} glances at the page; hold {talkKey} to speak, and let go to send. Change the glance key in your browser&apos;s
+                keyboard shortcuts for extensions ({BROWSERS[p.browser].extensionsPage}/shortcuts), and the talk key in Glance&apos;s settings.
               </p>
             </div>
           </output>
