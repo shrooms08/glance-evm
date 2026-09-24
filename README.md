@@ -140,7 +140,16 @@ pnpm --filter console dev   # http://localhost:3000
 `apps/extension` is the demo surface. A floating orb (or a docked side panel) finds companies in any article,
 underlines them without touching the page, shows live prices on hover, and buys through the vault. When a guard
 refuses a trade it shows why, as protection rather than an error. See [apps/extension/README.md](apps/extension/README.md)
-for step-by-step installation.
+for step-by-step installation, or open the console's Get Glance page (`/install`).
+
+The judge journey (install, welcome, hover a company, a $10 demo buy, the receipt) is checked end to end, with the
+built extension in Chromium against a mock API (no real transactions):
+
+```sh
+pnpm --filter extension e2e    # builds into .output-e2e and .next-e2e; your own builds are left alone
+```
+
+It needs Playwright's Chromium once (`pnpm --filter extension exec playwright install chromium`).
 
 ## Credits
 

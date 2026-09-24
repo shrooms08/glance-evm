@@ -23,6 +23,10 @@ coverage/
 
 # Extension build output (rebuild with `pnpm --filter extension build`)
 apps/extension/.output/
+# The end-to-end check's own builds and results (pnpm --filter extension e2e)
+apps/extension/.output-e2e/
+apps/extension/test-results/
+apps/extension/playwright-report/
 apps/extension/.wxt/
 apps/extension/e2e/out/
 
@@ -31,6 +35,7 @@ apps/api/data/
 
 # Console build output
 apps/console/.next/
+apps/console/.next-e2e/
 apps/console/.vercel/
 # Agent notes that `next dev` writes and re-creates on every run
 apps/console/AGENTS.md

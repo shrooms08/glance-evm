@@ -13,7 +13,7 @@ const COLOR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
-    if (["node_modules", ".next", "test", "public", ".vercel"].includes(f)) return [];
+    if (["node_modules", ".next", ".next-e2e", "test", "public", ".vercel"].includes(f)) return [];
     return statSync(p).isDirectory() ? files(p) : /\.(tsx?|css|html|mjs)$/.test(f) ? [p] : [];
   });
 }

@@ -8,6 +8,8 @@ import { defineConfig } from "wxt";
 export default defineConfig({
   modules: ["@wxt-dev/module-react"],
   manifestVersion: 3,
+  // The end-to-end check builds into its own folder, so it never replaces the build loaded in your browser.
+  outDir: process.env.WXT_OUT_DIR || ".output",
   zip: { name: "glance-extension", artifactTemplate: "{{name}}-{{version}}.zip" },
   manifest: {
     name: "Glance",

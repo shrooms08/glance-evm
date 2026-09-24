@@ -15,6 +15,8 @@ const config: NextConfig = {
   // that the console never calls. Left to Node on the server (never bundled), those imports never run.
   serverExternalPackages: ["@base-org/account", "@coinbase/cdp-sdk"],
   reactStrictMode: true,
+  // The end-to-end check builds into its own folder, so it never touches a running dev server's .next.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   poweredByHeader: false,
 };
 
