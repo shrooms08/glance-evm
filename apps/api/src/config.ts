@@ -175,6 +175,11 @@ const envSchema = z.object({
     .regex(hexKey, "FAUCET_PRIVATE_KEY must be 0x followed by 64 hex characters")
     .optional()
     .or(z.literal("").transform(() => undefined)),
+  /** The starter USDG's total per UTC day, in whole USDG (20 per wallet: ten wallets a day at the default). */
+  FAUCET_DAILY_USDG: z
+    .string()
+    .regex(/^\d+$/, "FAUCET_DAILY_USDG must be a whole number like 200")
+    .default("200"),
   /** The faucet's total per UTC day, in ETH. */
   FAUCET_DAILY_ETH: z
     .string()

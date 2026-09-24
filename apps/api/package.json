@@ -20,6 +20,7 @@
     "check-vaults": "tsx --env-file-if-exists=.env scripts/check-vaults.ts",
     "link-session": "tsx --env-file-if-exists=.env scripts/link-session.ts",
     "faucet-wallet": "tsx scripts/faucet-wallet.ts",
+    "faucet-status": "tsx --env-file-if-exists=.env scripts/faucet-status.ts",
     "lint": "oxlint --deny-warnings src test scripts"
   },
   "dependencies": {

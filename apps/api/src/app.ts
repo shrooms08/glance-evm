@@ -26,6 +26,7 @@ import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
 import { SESSION_HEADERS } from "@glance/core/session";
 import { linkBody, revokeBody } from "./sessions.js";
+import { STARTER_USDG } from "./faucet.js";
 
 /** Largest JSON body accepted (Show me's page context included). */
 export const MAX_JSON_BODY_BYTES = 64 * 1024;
@@ -205,17 +206,28 @@ export function createServerApp(ctx: AppContext) {
   app.use("/session/*", rateLimit({ limit: config.SESSION_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "session" }));
   app.use("/faucet/*", rateLimit({ limit: 10, trustProxy: config.TRUST_PROXY, name: "faucet" }));
 
-  // "Get gas" (src/faucet.ts): off unless FAUCET_PRIVATE_KEY is set.
-  app.get("/faucet", (c) => send(c, { enabled: ctx.faucet !== null, amountEth: ctx.faucet ? formatEther(ctx.faucet.amount) : null }));
+  // The starter fund (src/faucet.ts): gas and 20 USDG for a new wallet. Off unless FAUCET_PRIVATE_KEY is set.
+  let stock: { at: number; value: Promise<{ gas: boolean; usdg: boolean }> } | null = null;
+  app.get("/faucet", async (c) => {
+    if (!ctx.faucet) return send(c, { enabled: false, amountEth: null, usdg: { enabled: false, amount: null }, stocked: { gas: false, usdg: false } });
+    // Its balances, read at most every 30 seconds.
+    if (!stock || Date.now() - stock.at > 30_000) stock = { at: Date.now(), value: ctx.faucet.stock().catch(() => ({ gas: false, usdg: false })) };
+    return send(c, { enabled: true, amountEth: formatEther(ctx.faucet.amount), usdg: { enabled: true, amount: STARTER_USDG }, stocked: await stock.value });
+  });
   app.post("/faucet/gas", async (c) => {
-    if (!ctx.faucet) throw new ApiError(404, "FAUCET_OFF", "Glance's gas faucet isn't set up here. Use the public faucet.");
+    if (!ctx.faucet) throw new ApiError(404, "FAUCET_OFF", "Glance's starter fund isn't set up here. Use the Robinhood testnet faucet.");
     const { address: to } = parse(z.object({ address }).strict(), await jsonBody(c));
     return send(c, await ctx.faucet.gas({ address: to, ip: clientIp(c, config.TRUST_PROXY) }));
+  });
+  app.post("/faucet/usdg", async (c) => {
+    if (!ctx.faucet) throw new ApiError(404, "FAUCET_OFF", "Glance's starter fund isn't set up here. Claim from the Paxos faucet.");
+    const { address: to } = parse(z.object({ address }).strict(), await jsonBody(c));
+    return send(c, await ctx.faucet.usdg({ address: to, ip: clientIp(c, config.TRUST_PROXY) }));
   });
 
   // In production, the public view only (no agent balance, voice decisions or budgets) unless ?admin=<ADMIN_TOKEN>.
   app.get("/health", async (c) => {
-    const full = await healthView(ctx);
+    const full = { ...(await healthView(ctx)), ...(ctx.faucet ? { faucet: await ctx.faucet.status().catch(() => null) } : {}) };
     return send(c, config.NODE_ENV === "production" && !isAdmin(config.ADMIN_TOKEN, c.req.query("admin")) ? publicHealth(full, config.GIT_COMMIT) : full);
   });
 

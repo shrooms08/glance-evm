@@ -23,11 +23,11 @@ import { Resolver } from "./resolver.js";
 import { rpcUrls } from "./rpc.js";
 import { loadAgentSigner, type AgentSigner } from "./signer.js";
 import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
-import { glanceVaultAbi } from "./abi.generated.js";
+import { erc20Abi, glanceVaultAbi } from "./abi.generated.js";
 import { createSessions, JsonSessionStore, type Sessions } from "./sessions.js";
 import { createTradeAuth, type TradeAuth } from "./tradeAuth.js";
 import { voiceMeters } from "./voice/dailyCaps.js";
-import { createFaucet, JsonFaucetStore, type Faucet } from "./faucet.js";
+import { createFaucet, JsonFaucetStore, PAXOS_USDG, type Faucet } from "./faucet.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
 export interface AppContext {
@@ -186,12 +186,17 @@ function faucetFor(config: Config, chain: Chain, cacheDir: string | null, log: L
   const wallet = createWalletClient({ account, chain, transport: http(primary, { timeout: 30_000 }) });
   return createFaucet({
     chain: {
+      address: account.address,
       balanceOf: (address) => reader.getBalance({ address }),
+      usdgBalanceOf: (address) => reader.readContract({ address: PAXOS_USDG, abi: erc20Abi, functionName: "balanceOf", args: [address] }),
+      usdgDecimals: () => reader.readContract({ address: PAXOS_USDG, abi: erc20Abi, functionName: "decimals" }),
       pendingNonce: () => reader.getTransactionCount({ address: account.address, blockTag: "pending" }),
       transfer: (to, value, nonce) => wallet.sendTransaction({ to, value, nonce, chain }),
+      transferUsdg: (to, amount, nonce) => wallet.writeContract({ address: PAXOS_USDG, abi: erc20Abi, functionName: "transfer", args: [to, amount], nonce, chain }),
     },
     store: new JsonFaucetStore(cacheDir ? join(cacheDir, "faucet.json") : null),
     dailyCap: parseEther(config.FAUCET_DAILY_ETH),
+    dailyUsdg: config.FAUCET_DAILY_USDG,
     log,
   });
 }

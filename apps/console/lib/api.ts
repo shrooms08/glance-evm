@@ -258,9 +258,11 @@ export const api = {
   /** The vault's linked browsers (public: addresses and dates only). */
   linkedBrowsers: (vault: string) => apiGet<{ sessions: LinkedBrowser[] }>(`/session/list?vault=${vault}`),
   /** Whether the API's "Get gas" faucet is on (off: the console links the public faucet). */
-  faucet: () => apiGet<{ enabled: boolean; amountEth: string | null }>("/faucet"),
+  faucet: () => apiGet<{ enabled: boolean; amountEth: string | null; usdg: { enabled: boolean; amount: string | null }; stocked: { gas: boolean; usdg: boolean } }>("/faucet"),
   /** 0.0005 test ETH to a new wallet, once (the API checks it needs gas). */
   faucetGas: (address: string) => apiPost<{ txHash: `0x${string}`; amountEth: string }>("/faucet/gas", { address }),
+  /** 20 starter Paxos USDG to a new wallet, once (the API checks it needs it). */
+  faucetUsdg: (address: string) => apiPost<{ txHash: `0x${string}`; amountUsdg: string }>("/faucet/usdg", { address }),
   /** Whether this browser's Glance session is linked to the vault (the API's word). */
   sessionStatus: (vault: string, session: string) =>
     apiGet<{ linked: true; expiresAt: number; linkedAt: number } | { linked: false; reason: string; expiresAt?: number }>(`/session/status?vault=${vault}&session=${session}`),

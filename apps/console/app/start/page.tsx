@@ -1,7 +1,7 @@
 "use client";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Address, Hex } from "viem";
 import { useAccount, useSignTypedData } from "wagmi";
 
@@ -24,7 +24,8 @@ import { useGlanceExtension } from "@/lib/glanceExtension";
 import { linkAndTell } from "@/lib/linkGlance";
 import { api } from "@/lib/api";
 import { GlanceStep } from "@/components/GlanceStep";
-import { FundingStep, PAXOS_FAUCET, PUBLIC_GAS_FAUCET } from "@/components/FundingStep";
+import { FundingStep, PAXOS_FAUCET, PUBLIC_GAS_FAUCET, type FundSource, type SendState } from "@/components/FundingStep";
+import { nextAutoAction, promptPlan, type AutoAction, type AutoState } from "@/lib/autoSetup";
 
 type RunMode = "setup" | "add-more";
 
@@ -96,9 +97,14 @@ export default function StartPage() {
     }
   }
 
-  // Step 3's "Get gas": Glance's own faucet, when the API has one (else the public faucet link).
-  const faucet = useQuery({ queryKey: ["faucet"], queryFn: () => api.faucet(), staleTime: 60_000 });
-  const [gas, setGas] = useState<{ state: "idle" } | { state: "sending" } | { state: "sent"; txHash: string } | { state: "failed"; message: string }>({ state: "idle" });
+  // Step 3: gas and starter USDG from the starter fund, sent by themselves (the faucet sites when it's off or empty).
+  const faucet = useQuery({ queryKey: ["faucet"], queryFn: () => api.faucet(), staleTime: 30_000 });
+  const source = {
+    gas: (!faucet.data?.enabled ? "off" : faucet.data.stocked.gas ? "on" : "empty") as FundSource,
+    usdg: (!faucet.data?.usdg.enabled ? "off" : faucet.data.stocked.usdg ? "on" : "empty") as FundSource,
+  };
+  const [gas, setGas] = useState<SendState>({ state: "idle" });
+  const [usdg, setUsdg] = useState<SendState>({ state: "idle" });
   async function getGas() {
     if (!address) return;
     setGas({ state: "sending" });
@@ -109,8 +115,19 @@ export default function StartPage() {
       setGas({ state: "failed", message: (err as Error).message });
     }
   }
+  async function getUsdg() {
+    if (!address) return;
+    setUsdg({ state: "sending" });
+    try {
+      const res = await api.faucetUsdg(address);
+      setUsdg({ state: "sent", txHash: res.txHash });
+    } catch (err) {
+      setUsdg({ state: "failed", message: (err as Error).message });
+    }
+  }
 
-  const [deposit, setDeposit] = useState("10");
+  // The first deposit: 20 USDG by default (what the starter fund sends), editable.
+  const [deposit, setDeposit] = useState("20");
   const [addMore, setAddMore] = useState("");
   const [running, setRunning] = useState<RunMode | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -142,6 +159,51 @@ export default function StartPage() {
   const statuses = stepStatuses(inputs);
   const summary = summarize(statuses);
   const busy = running !== null || tx.busy;
+
+  // ---- "Set me up": every step starts by itself; the user only answers wallet prompts (lib/autoSetup.ts) ---------
+  const tried = useRef(new Set<AutoAction>());
+  const vaultReady = statuses.vault === "done";
+  const auto: AutoState = {
+    connected: isConnected,
+    onChain,
+    eth: s ? s.eth : null,
+    walletUsdg: s ? s.usdg[effective.key] : null,
+    usdgDecimals: decimals,
+    deposit: first.raw,
+    vaultReady,
+    glancePresent: Boolean(hello),
+    linked: glanceLinked !== null,
+    faucet: { gas: source.gas === "on", usdg: source.usdg === "on" },
+    busy: busy || linking || gate.switching || gas.state === "sending" || usdg.state === "sending" || effective.key !== "paxos",
+    tried: tried.current,
+  };
+  const next = nextAutoAction(auto);
+  useEffect(() => {
+    if (!next) return;
+    tried.current.add(next);
+    if (next === "switch-network") gate.onSwitchNetwork();
+    else if (next === "get-gas") void getGas();
+    else if (next === "get-usdg") void getUsdg();
+    else if (next === "create") run("setup", first.raw);
+    else if (next === "link" && myVault) void connectGlance(myVault);
+    // Each action runs once per visit; `next` changes only when the state it depends on does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [next]);
+  const plannedPrompts = promptPlan({
+    connected: isConnected,
+    onChain,
+    vaultReady,
+    approveNeeded: !plan || plan.steps.some((st) => /^Approve/.test(st.label)),
+    glancePresent: Boolean(hello),
+    linked: glanceLinked !== null,
+  });
+
+  // Glance's setup card follows along (display only: Glance checks readiness itself, with the API).
+  const progressKey = `${isConnected}|${Boolean(myVault)}|${vaultReady}|${glanceLinked !== null}`;
+  useEffect(() => {
+    if (hello) ext.progress({ wallet: isConnected, vault: Boolean(myVault), funded: vaultReady, linked: glanceLinked !== null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progressKey, Boolean(hello)]);
 
   /**
    * Runs one action to the end, a wallet confirmation at a time. Before every transaction it re-reads the chain and
@@ -204,7 +266,8 @@ export default function StartPage() {
         <div>
           <p className="eyebrow">Get started</p>
           <h1 className="title">Five steps to your own vault</h1>
-          <p className="meta">Each step is checked against the chain, not remembered by this page, so it&apos;s right on any device.</p>
+          <p className="meta">Each step starts by itself once the one before is done; you only answer your wallet. Every step is checked against the chain, so it&apos;s right on any device.</p>
+          <p className="ui">The plan: {plannedPrompts}.</p>
         </div>
         <output className="progress" data-complete={summary.complete || undefined}>
           <span className="ui">{summary.text}</span>
@@ -245,10 +308,12 @@ export default function StartPage() {
             usdgKey={effective.key === "paxos" ? "paxos" : "test"}
             walletUsdg={s?.usdg[effective.key] ?? 0n}
             usdgDecimals={decimals}
-            faucet={Boolean(faucet.data?.enabled)}
+            source={source}
             connected={isConnected}
             gas={gas}
+            usdg={usdg}
             onGetGas={() => void getGas()}
+            onGetUsdg={() => void getUsdg()}
           />
         </Step>
 
@@ -274,8 +339,8 @@ export default function StartPage() {
             runError={runError}
             linkAfter={Boolean(hello) && !glanceLinked && !s?.snapshot.vault}
             onErrorAction={(kind) => {
-              if (kind === "get-gas") return faucet.data?.enabled ? void getGas() : void window.open(PUBLIC_GAS_FAUCET, "_blank", "noopener");
-              if (kind === "get-usdg") return void window.open(PAXOS_FAUCET, "_blank", "noopener");
+              if (kind === "get-gas") return source.gas === "on" ? void getGas() : void window.open(PUBLIC_GAS_FAUCET, "_blank", "noopener");
+              if (kind === "get-usdg") return source.usdg === "on" ? void getUsdg() : void window.open(PAXOS_FAUCET, "_blank", "noopener");
               if (kind === "switch-network") return gate.onSwitchNetwork();
               run("setup", first.raw);
             }}

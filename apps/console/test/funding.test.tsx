@@ -1,12 +1,12 @@
 /**
- * Get started, step 3, balance-aware: polling every 5 seconds until the wallet has gas and USDG (then every 15), "Get
- * gas" only when Glance's faucet is on (the public faucet link otherwise), the transaction shown while it lands, and
- * each row ticking itself when the funds arrive. Rendered for real; no wallet, no network.
+ * Get started, step 3, automatic: polling every 5 seconds until the wallet has gas and USDG; gas and 20 starter USDG
+ * sent by the starter fund on their own (the transaction shown while it lands); when the fund is empty or off, the
+ * faucet sites with a plain line, still detected automatically; a failed send has one action, Try again.
  */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { FundingStep } from "../components/FundingStep";
+import { EMPTY_GAS_LINE, EMPTY_USDG_LINE, FundingStep } from "../components/FundingStep";
 import { startPollMs } from "../lib/useSetupSnapshot";
 
 afterEach(cleanup);
@@ -18,48 +18,58 @@ describe("balance polling", () => {
     expect(startPollMs(state(0n, 0n))).toBe(5_000);
     expect(startPollMs(state(1n, 0n))).toBe(5_000);
     expect(startPollMs(state(1n, 10n))).toBe(15_000);
-    // USDG already in the vault counts.
     expect(startPollMs(state(1n, 0n, 10n))).toBe(15_000);
   });
 });
 
 describe("the funding rows", () => {
-  const base = { hasEth: false, hasUsdg: false, usdgKey: "paxos" as const, walletUsdg: 0n, usdgDecimals: 6, connected: true, gas: { state: "idle" as const }, onGetGas: () => {} };
+  const base = {
+    hasEth: false,
+    hasUsdg: false,
+    usdgKey: "paxos" as const,
+    walletUsdg: 0n,
+    usdgDecimals: 6,
+    source: { gas: "on" as const, usdg: "on" as const },
+    connected: true,
+    gas: { state: "idle" as const },
+    usdg: { state: "idle" as const },
+    onGetGas: () => {},
+    onGetUsdg: () => {},
+  };
 
-  it("'Get gas' when Glance's faucet is on", () => {
-    const onGetGas = vi.fn();
-    render(<FundingStep {...base} faucet onGetGas={onGetGas} />);
-    fireEvent.click(screen.getByRole("button", { name: "Get gas" }));
-    expect(onGetGas).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText(/faucet.testnet.chain.robinhood.com/)).toBeNull();
-  });
-
-  it("no faucet here: no button, the public faucet link instead", () => {
-    render(<FundingStep {...base} faucet={false} />);
-    expect(screen.queryByRole("button", { name: "Get gas" })).toBeNull();
-    expect(screen.getByRole("link", { name: /faucet.testnet.chain.robinhood.com/ })).toBeTruthy();
-  });
-
-  it("sent: the transaction, until the balance shows it; then the row is done", () => {
-    const { rerender } = render(<FundingStep {...base} faucet gas={{ state: "sent", txHash: `0x${"ab".repeat(32)}` }} />);
-    expect(screen.getByText(/On its way/)).toBeTruthy();
-    rerender(<FundingStep {...base} faucet hasEth gas={{ state: "sent", txHash: `0x${"ab".repeat(32)}` }} />);
+  it("with the starter fund: no buttons to press; each send shows while it lands, then the row is done", () => {
+    const { rerender } = render(<FundingStep {...base} gas={{ state: "sending" }} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText(/Sending you test ETH/)).toBeTruthy();
+    rerender(<FundingStep {...base} hasEth gas={{ state: "sent", txHash: `0x${"ab".repeat(32)}` }} usdg={{ state: "sent", txHash: `0x${"cd".repeat(32)}` }} />);
     expect(screen.getByText(/Test ETH for gas: arrived\./)).toBeTruthy();
-    expect(document.querySelectorAll('li[data-ok="true"]')).toHaveLength(1);
+    expect(screen.getByText(/On its way/)).toBeTruthy();
+    rerender(<FundingStep {...base} hasEth hasUsdg walletUsdg={20_000_000n} />);
+    expect(document.querySelectorAll('li[data-ok="true"]')).toHaveLength(2);
   });
 
-  it("Paxos USDG: the faucet link and which network to pick, until it arrives", () => {
-    const { rerender } = render(<FundingStep {...base} faucet={false} />);
+  it("the fund empty: the plain line and the faucet site (Paxos: choose Robinhood Chain testnet)", () => {
+    render(<FundingStep {...base} source={{ gas: "empty", usdg: "empty" }} />);
+    expect(screen.getByText(new RegExp(EMPTY_GAS_LINE.replace(/[.]/g, "\\.")))).toBeTruthy();
+    expect(screen.getByText(new RegExp(EMPTY_USDG_LINE.replace(/[.]/g, "\\.")))).toBeTruthy();
     expect(screen.getByRole("link", { name: /faucet.paxos.com/ })).toBeTruthy();
-    expect(screen.getByText(/choose Robinhood Chain testnet/)).toBeTruthy();
-    rerender(<FundingStep {...base} faucet={false} hasUsdg walletUsdg={10_000_000n} />);
-    expect(screen.getByText(/arrived\./)).toBeTruthy();
-    expect(screen.queryByRole("link", { name: /faucet.paxos.com/ })).toBeNull();
+    expect(screen.getByText(/Choose Robinhood Chain testnet/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /faucet.testnet.chain.robinhood.com/ })).toBeTruthy();
+    expect(EMPTY_USDG_LINE).toBe("Our starter fund is empty right now. Claim from the Paxos faucet instead.");
   });
 
-  it("the faucet failed: said plainly, with the public faucet as the way on", () => {
-    render(<FundingStep {...base} faucet gas={{ state: "failed", message: "Glance's gas faucet is used up for today. Try the public faucet." }} />);
-    expect(screen.getByText("No gas sent")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /faucet.testnet.chain.robinhood.com/ })).toBeTruthy();
+  it("no starter fund on this API: the faucet sites", () => {
+    render(<FundingStep {...base} source={{ gas: "off", usdg: "off" }} />);
+    expect(screen.getByRole("link", { name: /faucet.paxos.com/ })).toBeTruthy();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("a failed send: one action, Try again", () => {
+    const onGetUsdg = vi.fn();
+    render(<FundingStep {...base} hasEth usdg={{ state: "failed", message: "That didn't go out. Try again in a moment." }} onGetUsdg={onGetUsdg} />);
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["Try again"]);
+    fireEvent.click(buttons[0]!);
+    expect(onGetUsdg).toHaveBeenCalledTimes(1);
   });
 });

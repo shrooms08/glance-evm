@@ -10,6 +10,7 @@
  *                      GLANCE_SET_VAULT { vault }   only once the connected wallet is verified as that vault's owner
  *                      GLANCE_LINKED    { vault, sessionAddress, expiresAt }   after the API accepted the owner's link
  *                      GLANCE_UNLINKED  { vault }
+ *                      GLANCE_PROGRESS  { wallet, vault, funded, linked }   Get started's progress, for Glance's setup card
  *
  * A page can't make the extension trade: it can only tell it which vault to use, and that linking happened (which the
  * extension checks with the API before believing it). No key ever travels here: HELLO carries the session's address.
@@ -101,6 +102,8 @@ export function useGlanceExtension() {
     setVault: (vault: Address) => post({ type: "GLANCE_SET_VAULT", vault }),
     linked: (vault: Address, sessionAddress: Address, expiresAt: number) => post({ type: "GLANCE_LINKED", vault, sessionAddress, expiresAt }),
     unlinked: (vault: Address) => post({ type: "GLANCE_UNLINKED", vault }),
+    /** Get started's progress, for Glance's setup card (display only: Glance checks readiness itself). */
+    progress: (p: { wallet: boolean; vault: boolean; funded: boolean; linked: boolean }) => post({ type: "GLANCE_PROGRESS", ...p }),
   };
 }
 

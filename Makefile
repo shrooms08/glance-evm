@@ -5,7 +5,7 @@ export
 NETWORK ?= robinhood
 
 .PHONY: help build test test-fork fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
-	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume link-demo-session faucet-wallet feeds set-freshness fund-paxos check-vaults create-vault deploy-factory-v2 dry-run-factory-v2
+	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume link-demo-session faucet-wallet faucet-status feeds set-freshness fund-paxos check-vaults create-vault deploy-factory-v2 dry-run-factory-v2
 
 TESTNET_RPC_URL ?= https://rpc.testnet.chain.robinhood.com
 MAINNET_RPC_URL ?= https://rpc.mainnet.chain.robinhood.com
@@ -29,7 +29,8 @@ help:
 	@echo "make keeper                mirror the mainnet Chainlink feeds (price AND updatedAt) onto the testnet feeds, once"
 	@echo "make keeper-watch          the same, every 120s, until Ctrl-C (use while recording)"
 	@echo "make link-demo-session     link a browser to the demo vault with the deployer key [SESSION=0x... VAULT=0x... API_URL=...]"
-	@echo "make faucet-wallet         create the Get gas faucet wallet; its key goes straight into apps/api/.env (never printed)"
+	@echo "make faucet-wallet         create the starter-fund wallet; its key goes straight into apps/api/.env (never printed)"
+	@echo "make faucet-status         the starter fund's ETH and USDG, and what it sent today"
 	@echo "make keeper-pause / resume stop / restart the keeper (creates / removes keeper.paused)"
 	@echo "make feeds                 every feed's price, age, market state and source, from the API's /health"
 	@echo "make weekend               back-date the feeds 30h to demo the closed-market caps (run make keeper-pause first)"
@@ -131,6 +132,9 @@ link-demo-session:
 # The key is generated and written into apps/api/.env by the script; only the wallet's address is printed.
 faucet-wallet:
 	@pnpm --silent --filter api faucet-wallet
+
+faucet-status:
+	@pnpm --silent --filter api faucet-status
 
 feeds:
 	@curl -s $(or $(API_URL),http://localhost:8790)/health | jq -r '.feeds[] | "\(.symbol)\t$$\(.price.value)\t\(.marketState)\tage \(.age)\t\(.source)\tlast write \(if .lastWrite then "\(.lastWrite.agoSeconds)s ago" else "none" end)"' | column -t -s $$'\t'
