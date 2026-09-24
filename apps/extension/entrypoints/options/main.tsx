@@ -30,6 +30,7 @@ import {
   type Mode,
 } from "../../lib/settings";
 import { sound } from "../../lib/tokens";
+import { DEMO_VAULT_LABEL, forgetThisBrowser, isOpenDemoVault, linkedUntil, linkStatus, sessionInfo, startLinking, waitForLink } from "../../lib/linking";
 
 type Test = { state: "idle" } | { state: "running" } | { state: "ok"; health: Health } | { state: "failed"; message: string };
 
@@ -59,6 +60,83 @@ function DevToggle() {
       />{" "}
       Developer tools (type “glance test drawing” in the panel to draw every Show me shape on your selection)
     </label>
+  );
+}
+
+type LinkView = { state: "checking" } | { state: "linked"; until: number } | { state: "not-linked"; reason: string } | { state: "waiting" } | { state: "unreachable" };
+
+/**
+ * "This browser": its session address, whether the vault's owner has linked it (and until when), a button that opens
+ * the console to link it, and "Unlink this browser" (forgets its key; the owner can also unlink it from the console).
+ * The demo vault needs no link: it's open for trying Glance.
+ */
+function BrowserLink({ vault }: { vault: string }) {
+  const [address, setAddress] = useState<string | null>(null);
+  const [view, setView] = useState<LinkView>({ state: "checking" });
+  const valid = isAddress(vault);
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const a = await sessionInfo();
+      if (!live) return;
+      setAddress(a);
+      if (!a || !valid) return setView({ state: "not-linked", reason: "unknown" });
+      const s = await linkStatus(vault, a);
+      if (!live) return;
+      setView(s.linked ? { state: "linked", until: s.expiresAt } : s.reason === "unreachable" ? { state: "unreachable" } : { state: "not-linked", reason: s.reason });
+    })();
+    return () => {
+      live = false;
+    };
+  }, [vault, valid]);
+
+  const link = async () => {
+    setView({ state: "waiting" });
+    const started = await startLinking(vault);
+    if (!started) return setView({ state: "not-linked", reason: "unknown" });
+    setAddress(started.address);
+    const s = await waitForLink(vault, started.address);
+    setView(s.linked ? { state: "linked", until: s.expiresAt } : { state: "not-linked", reason: s.reason });
+  };
+
+  const unlink = async () => {
+    await forgetThisBrowser();
+    setAddress(await sessionInfo());
+    setView({ state: "not-linked", reason: "unknown" });
+  };
+
+  return (
+    <div className="g-field">
+      <span className="g-ui">This browser</span>
+      {isOpenDemoVault(vault) && <span className="g-meta">{DEMO_VAULT_LABEL}. Linking is optional here.</span>}
+      <span className="g-meta">
+        {view.state === "linked"
+          ? `${linkedUntil(view.until)}. It may ask Glance to trade this vault within its limits. It can never withdraw.`
+          : view.state === "waiting"
+            ? "Waiting for your vault owner's signature in the console tab…"
+            : view.state === "unreachable"
+              ? "Can't reach the Glance API to check this browser's link."
+              : view.state === "checking"
+                ? "Checking…"
+                : view.reason === "expired"
+                  ? "This browser's link has expired. Link it again."
+                  : "Not linked. Your vault's owner signs once in the console (a signature, not a transaction)."}
+      </span>
+      {address && (
+        <span className="g-meta">
+          Session <span className="g-mono">{address.slice(0, 6)}…{address.slice(-4)}</span> (only this address leaves the extension; its key never does)
+        </span>
+      )}
+      <div className="g-row">
+        <button className="g-btn g-btn-primary" onClick={() => void link()} disabled={!valid || view.state === "waiting"}>
+          {view.state === "linked" ? "Link again" : "Link this browser to my vault"}
+        </button>
+        <button className="g-btn g-btn-ghost" onClick={() => void unlink()} disabled={view.state === "waiting"}>
+          Unlink this browser
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -134,7 +212,7 @@ function Settings() {
         <Orb state={test.state === "ok" ? "success" : test.state === "running" ? "thinking" : "idle"} size={40} markUrl="/glance-mark.png" />
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <h1 className="g-heading">Glance settings</h1>
-          <span className="g-meta">Glance never holds a key or signs anything. Trades go through your vault's limits via the Glance API.</span>
+          <span className="g-meta">Glance holds no wallet and can never withdraw. It signs trade requests with this browser's own key, once your vault's owner links it; every trade stays inside your vault's limits.</span>
         </div>
       </header>
 
@@ -161,6 +239,7 @@ function Settings() {
               </button>
             </div>
           </Field>
+          <BrowserLink vault={form.vault} />
           <div className="g-row">
             <button className="g-btn" onClick={() => void runTest()} disabled={test.state === "running"}>
               {test.state === "running" ? "Testing…" : "Test connection"}

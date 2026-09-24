@@ -13,6 +13,7 @@ import { speak } from "../lib/voiceClient";
 import type { Guard, Quote, Trade } from "../lib/api-types";
 import { recordTrade, type PageContext } from "../lib/journal";
 import { isAddress } from "../lib/settings";
+import { LINK_CODES, startLinking, waitForLink } from "../lib/linking";
 import { useGlance } from "./context";
 
 export type FlowStep =
@@ -22,7 +23,12 @@ export type FlowStep =
   | { step: "trading"; amount: string; quote: Quote }
   | { step: "done"; amount: string; quote: Quote; trade: Trade }
   | { step: "blocked"; amount: string; guard: Guard; quote?: Quote }
-  | { step: "failed"; amount: string; code: string; message: string };
+  | { step: "failed"; amount: string; code: string; message: string }
+  /**
+   * The API wants this browser linked to the vault first (SESSION_REQUIRED / SESSION_EXPIRED): the card offers to link
+   * it (the owner signs in the console), then to send the same buy again in one tap.
+   */
+  | { step: "needs-link"; amount: string; quote: Quote; code: string; message: string; link: "idle" | "waiting" | "linked" | "failed"; until?: number };
 
 /** Where a buy was placed from, for the headline journal (null: not from a page). */
 export type PageContextSource = () => Promise<PageContext | null> | PageContext | null;
@@ -70,9 +76,10 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
     [g, symbol, opts.voice],
   );
 
-  const confirm = useCallback(async () => {
-    if (flow.step !== "review") return;
-    const { amount, quote } = flow;
+  const linking = useRef<AbortController | null>(null);
+  useEffect(() => () => linking.current?.abort(), []);
+
+  const send = useCallback(async (amount: string, quote: Quote) => {
     const id = ++run.current;
     // The page the buy was placed from, as it is at this moment (for the journal; kept only in this browser).
     const page = Promise.resolve()
@@ -92,11 +99,40 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
     } else if (res.guard) {
       setFlow({ step: "blocked", amount, guard: res.guard, quote });
       g.setOrb({ state: "blocked", line: res.guard.message, meta: `Guard · ${res.guard.code}` });
+    } else if (LINK_CODES.has(res.code)) {
+      // Nothing was sent: this browser isn't linked to the vault yet (or its link ran out).
+      setFlow({ step: "needs-link", amount, quote, code: res.code, message: res.message, link: "idle" });
+      g.setOrb({ state: "idle", line: res.message, meta: "" });
     } else {
       setFlow({ step: "failed", amount, code: res.code, message: res.message });
       g.setOrb({ state: "idle", line: res.message, meta: "" });
     }
-  }, [flow, g, symbol, opts]);
+  }, [g, symbol, opts]);
+
+  const confirm = useCallback(async () => {
+    if (flow.step !== "review") return;
+    await send(flow.amount, flow.quote);
+  }, [flow, send]);
+
+  /** Opens the console to link this browser, then waits for the owner's signature. */
+  const link = useCallback(async () => {
+    if (flow.step !== "needs-link" || flow.link === "waiting") return;
+    const base = flow;
+    linking.current?.abort();
+    const abort = (linking.current = new AbortController());
+    setFlow({ ...base, link: "waiting" });
+    const started = await startLinking(g.vaultAddress);
+    if (!started) return setFlow({ ...base, link: "failed" });
+    const status = await waitForLink(g.vaultAddress, started.address, { signal: abort.signal });
+    if (abort.signal.aborted) return;
+    setFlow(status.linked ? { ...base, link: "linked", until: status.expiresAt } : { ...base, link: "failed" });
+  }, [flow, g.vaultAddress]);
+
+  /** After linking: the same buy, in one tap (the API runs the on-chain preflight again before sending). */
+  const retry = useCallback(async () => {
+    if (flow.step !== "needs-link") return;
+    await send(flow.amount, flow.quote);
+  }, [flow, send]);
 
   // A quote that failed only because the testnet wasn't answering tries again, on its own, once it answers.
   useEffect(() => {
@@ -107,9 +143,10 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
 
   const reset = useCallback(() => {
     run.current++;
+    linking.current?.abort();
     setFlow({ step: "idle" });
     g.setOrb({ state: "idle" });
   }, [g]);
 
-  return { flow, start, confirm, reset };
+  return { flow, start, confirm, reset, link, retry };
 }

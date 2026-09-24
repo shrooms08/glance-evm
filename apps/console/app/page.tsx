@@ -5,6 +5,7 @@ import type { Address } from "viem";
 import { MarketChip } from "@/components/MarketChip";
 import { OwnVaultGate } from "@/components/OwnVaultGate";
 import { PositionsTable } from "@/components/PositionsCard";
+import { LinkedBrowsers } from "@/components/LinkedBrowsers";
 import { Meter } from "@/components/Meter";
 import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
@@ -50,6 +51,7 @@ function DashboardFor({ vault }: { vault: Address }) {
             <Agent v={q.data} limitsHref={href("/limits")} />
             <AgentPromise v={q.data} />
           </div>
+          <LinkedBrowsers vault={q.data.address} owner={q.data.owner} />
         </>
       )}
     </div>

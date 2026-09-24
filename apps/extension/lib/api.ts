@@ -96,4 +96,10 @@ export const api = {
     call<Quote>("GET", `/quote?${q(p)}`),
   trade: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Trade>("POST", "/trade", p),
+  /** Whether the vault's owner has linked this browser (polled while they sign in the console). */
+  sessionStatus: (vault: string, session: string) =>
+    call<{ linked: true; expiresAt: number; linkedAt: number } | { linked: false; reason: "unknown" | "revoked" | "expired"; expiresAt?: number }>(
+      "GET",
+      `/session/status?${q({ vault, session })}`,
+    ),
 };

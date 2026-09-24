@@ -13,7 +13,8 @@ import { BlockedCard } from "./BlockedCard";
 import { useGlance } from "./context";
 import { Orb } from "./Orb";
 import { Sparkline } from "./Sparkline";
-import { useTradeFlow, type PageContextSource } from "./useTradeFlow";
+import { useTradeFlow, type FlowStep, type PageContextSource } from "./useTradeFlow";
+import { DEMO_VAULT_LABEL, isOpenDemoVault, linkedUntil } from "../lib/linking";
 import { WhyLine } from "./Why";
 
 const PRESETS = ["10", "25", "100"];
@@ -38,7 +39,7 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
   const [priceError, setPriceError] = useState<string | null>(null);
   const [custom, setCustom] = useState("");
   // A card opened by voice ("buy ten dollars of Tesla") answers aloud; one opened by hover or click stays quiet.
-  const { flow, start, confirm, reset } = useTradeFlow(symbol, { voice: Boolean(autoAmount), pageContext });
+  const { flow, start, confirm, reset, link, retry } = useTradeFlow(symbol, { voice: Boolean(autoAmount), pageContext });
 
   const loadPrice = useCallback(async () => {
     setPriceError(null);
@@ -161,6 +162,7 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
             </button>
           </form>
           {variant === "hover" && <span className="g-meta">Glance checks every limit on chain before anything is sent.</span>}
+          {isOpenDemoVault(g.vaultAddress) && <span className="g-meta">{DEMO_VAULT_LABEL}</span>}
           <WhyLine symbol={symbol} />
         </div>
       ) : flow.step === "quoting" ? (
@@ -194,6 +196,8 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
             </button>
           </div>
         </div>
+      ) : flow.step === "needs-link" ? (
+        <NeedsLink flow={flow} symbol={symbol} onLink={() => void link()} onRetry={() => void retry()} onCancel={reset} />
       ) : flow.step === "done" ? (
         <Receipt symbol={symbol} amount={flow.amount} txUrl={flow.trade.explorerUrl} txHash={flow.trade.txHash} got={flow.trade.filled?.tokensOut?.formatted} price={flow.quote.price.value} onAgain={reset} />
       ) : null}
@@ -223,6 +227,62 @@ function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash:
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * The API wants this browser linked to the vault before it asks the agent to trade: nothing was sent. One button opens
+ * the console, where the owner signs (no transaction); once linked, one tap sends the same buy.
+ */
+export function NeedsLink({
+  flow,
+  symbol,
+  onLink,
+  onRetry,
+  onCancel,
+}: {
+  flow: Extract<FlowStep, { step: "needs-link" }>;
+  symbol: string;
+  onLink(): void;
+  onRetry(): void;
+  onCancel(): void;
+}) {
+  return (
+    <div className="g-section" role="status">
+      <span className="g-ui">{flow.message}</span>
+      {flow.link === "linked" && flow.until ? (
+        <>
+          <span className="g-live g-data">
+            <span className="g-dot" /> {linkedUntil(flow.until)}
+          </span>
+          <div className="g-row">
+            <button className="g-btn g-btn-primary g-grow" onClick={onRetry} autoFocus>
+              Buy ${flow.amount} of {symbol}
+            </button>
+            <button className="g-btn g-btn-ghost" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <span className="g-meta">
+            {flow.link === "waiting"
+              ? "Waiting for your vault owner's signature in the console tab…"
+              : "Nothing was sent. Your vault's owner signs once in the console (a signature, not a transaction), and this browser can then ask Glance to trade within your vault's limits. It can never withdraw."}
+          </span>
+          {flow.link === "failed" && <span className="g-meta">Not linked yet. Try again, and sign in the console with the vault owner's wallet.</span>}
+          <div className="g-row">
+            <button className="g-btn g-btn-primary g-grow" onClick={onLink} disabled={flow.link === "waiting"}>
+              {flow.link === "waiting" ? "Waiting for the signature…" : "Link this browser"}
+            </button>
+            <button className="g-btn g-btn-ghost" onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

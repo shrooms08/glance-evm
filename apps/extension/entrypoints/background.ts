@@ -9,8 +9,20 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
-import { sessionAddress, signTrade, type TradeBody } from "../lib/session";
-import { SESSION_HEADERS } from "@glance/core/session";
+import { forgetSession, linkExpiry, sessionAddress, signTrade, type TradeBody } from "../lib/session";
+import { consoleUrl } from "../lib/settings";
+import type { SessionInfo, SessionLinkStarted } from "../lib/messages";
+import { linkUrl, SESSION_HEADERS } from "@glance/core/session";
+
+/** Opens the console's /link page for this browser's session and the vault (the owner signs there). */
+async function startLink(vault: string): Promise<SessionLinkStarted | null> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(vault)) return null;
+  const address = await sessionAddress();
+  const expiresAt = linkExpiry();
+  const url = linkUrl(await consoleUrl.getValue(), vault as `0x${string}`, address, expiresAt);
+  await browser.tabs.create({ url });
+  return { address, expiresAt, url };
+}
 import { relayShowMe, SHOWME_PORT } from "../lib/showStream";
 import type { ShowMeRequest } from "../lib/api";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
@@ -274,6 +286,12 @@ export default defineBackground(() => {
           () => null,
         );
       }
+      case "session:info":
+        return sessionAddress().then((address) => ({ address }) satisfies SessionInfo);
+      case "session:link":
+        return startLink(message.vault);
+      case "session:forget":
+        return forgetSession().then(() => true);
       case "open:settings":
         return browser.runtime.openOptionsPage().then(() => true);
       case "panel:isOpen":

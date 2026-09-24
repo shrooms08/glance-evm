@@ -37,4 +37,18 @@ export type CaptureRequest = { kind: "capture:tab" };
 /** Docked: a Show me drawing for the chart in the side panel. */
 export type ChartAnnotateMessage = { kind: "chart:annotate"; annotation: import("@glance/core/showme").ChartAnnotation };
 
-export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | { kind: "open:settings" };
+/**
+ * This browser's session (the key stays in the background worker): its address; open the console to link it to a vault
+ * (the owner signs there); forget it ("Unlink this browser").
+ */
+export type SessionMessage = { kind: "session:info" } | { kind: "session:link"; vault: string } | { kind: "session:forget" };
+export interface SessionInfo {
+  address: string;
+}
+export interface SessionLinkStarted {
+  address: string;
+  expiresAt: number;
+  url: string;
+}
+
+export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | SessionMessage | { kind: "open:settings" };

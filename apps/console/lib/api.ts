@@ -218,11 +218,47 @@ export interface PortfolioView {
   sentence: string;
 }
 
+/** POST JSON (browser linking and unlinking: the owner's own signature, verified by the API on chain). */
+export async function apiPost<T>(path: string, body: unknown, fetchFn: typeof fetch = fetch): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetchFn(`${env.apiUrl}${path}`, {
+      method: "POST",
+      signal: AbortSignal.timeout(30_000),
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
+    });
+  } catch {
+    throw new ApiProblem("unreachable", unreachableMessage());
+  }
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch {
+    throw new ApiProblem("unreachable", unreachableMessage());
+  }
+  if (res.ok) return parsed as T;
+  const err = (parsed as { error?: { code?: string; message?: string } }).error ?? {};
+  throw new ApiProblem("other", err.message ?? `The Glance API answered ${res.status}.`, err.code ?? "UNKNOWN", res.status);
+}
+
+/** A browser linked to a vault (GET /session/list). */
+export interface LinkedBrowser {
+  sessionKey: Address;
+  linkedAt: number;
+  expiresAt: number;
+  expired: boolean;
+}
+
 export const api = {
   vault: (address: string) => apiGet<VaultView>(`/vault/${address}`),
   portfolio: (address: string) => apiGet<PortfolioView>(`/portfolio/${address}`),
   activity: (address: string, limit = 200) => apiGet<ActivityView>(`/vault/${address}/activity?limit=${limit}`),
   health: () => apiGet<HealthView>("/health"),
+  /** The vault's linked browsers (public: addresses and dates only). */
+  linkedBrowsers: (vault: string) => apiGet<{ sessions: LinkedBrowser[] }>(`/session/list?vault=${vault}`),
+  linkBrowser: (body: unknown) => apiPost<{ linked: true; expiresAt: number }>("/session/link", body),
+  unlinkBrowser: (body: unknown) => apiPost<{ revoked: true }>("/session/revoke", body),
   catalog: () => apiGet<CatalogView>("/catalog"),
   /** Public: price history for the chart; with a vault, its trades as markers too. */
   chart: (symbol: string, range: ChartRange, vault?: string | null) =>
