@@ -889,6 +889,17 @@ async function feedStatus(ctx: AppContext, latest: bigint, now: number) {
   );
 }
 
+/** Claude's budget for /health: the models in use (null where Claude is off), the daily limit, calls used, paused. */
+export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmModels" | "llmBudget">) {
+  const { dailyLimit, usedToday, paused } = ctx.llmBudget.status();
+  return {
+    models: { resolver: ctx.llm ? ctx.llmModels.resolver : null, intent: ctx.intentModel ? ctx.llmModels.intent : null },
+    dailyLimit,
+    usedToday,
+    paused,
+  };
+}
+
 export async function healthView(ctx: AppContext) {
   const [chainId, blockNumber] = await Promise.all([ctx.client.getChainId(), ctx.client.getBlockNumber({ cacheTime: 0 })]);
   const feeds = await feedStatus(ctx, blockNumber, await latestTimestamp(ctx));
@@ -909,6 +920,7 @@ export async function healthView(ctx: AppContext) {
       ethBalanceWei: balance.toString(),
     },
     llmFallback: ctx.llm !== null,
+    llm: llmHealth(ctx),
     // Every vault factory; vaults from either are GlanceVaults, and the vault checks above never depend on which.
     factories: glanceFactories(ctx.deployment),
     keeper: {

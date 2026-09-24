@@ -16,20 +16,22 @@
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
     "abi": "node scripts/gen-abi.mjs",
-    "check-vaults": "tsx --env-file-if-exists=.env scripts/check-vaults.ts"
+    "check-vaults": "tsx --env-file-if-exists=.env scripts/check-vaults.ts",
+    "lint": "oxlint --deny-warnings src test scripts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
+    "@glance/core": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "@hono/node-ws": "^1.3.1",
     "hono": "^4.13.8",
     "undici": "^8.11.0",
-    "@glance/core": "workspace:*",
     "viem": "^2.56.8",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "oxlint": "^1.85.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"

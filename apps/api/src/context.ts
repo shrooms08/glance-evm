@@ -1,6 +1,8 @@
 /**
  * Everything a request handler needs, built once at startup.
  */
+import { dirname, join } from "node:path";
+
 import { getAddress, type Address, type Chain, type PublicClient } from "viem";
 
 import { buildCatalog, loadCatalogText, loadPriceSources, type Catalog } from "./catalog.js";
@@ -8,6 +10,7 @@ import { chainFor, createChainClient } from "./chain.js";
 import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
+import { chooseModel, LlmBudget, ResolverCache, type Log } from "./llmBudget.js";
 import { RefusalLog } from "./refusals.js";
 import { Resolver } from "./resolver.js";
 import { rpcUrls } from "./rpc.js";
@@ -31,15 +34,31 @@ export interface AppContext {
   voice: VoiceProviders;
   /** Claude for voice intents, when ANTHROPIC_API_KEY is set; the validated rules parser otherwise. */
   intentModel: IntentModel | null;
+  /** Every Claude call's budget: the daily limit, the pause after a budget error, and the models in use. */
+  llmBudget: LlmBudget;
+  llmModels: { resolver: string; intent: string };
   /** Trades the guards refused before anything was sent (see src/refusals.ts). */
   refusals: RefusalLog;
 }
 
-export function createContext(config: Config): AppContext {
+/** The resolver cache and the call counter: files under LLM_CACHE_DIR by default; memory only in tests or when "". */
+export function llmFiles(config: Config): { cache: string | null; usage: string | null } {
+  const set = config.RESOLVER_CACHE_FILE;
+  const cache = set !== undefined ? set.trim() || null : config.NODE_ENV === "test" ? null : join(config.LLM_CACHE_DIR, "resolver.json");
+  return { cache, usage: cache ? join(dirname(cache), "llm-usage.json") : null };
+}
+
+export function createContext(config: Config, log: Log = (l) => console.log(l)): AppContext {
   const deployment = loadDeployment(config.DEPLOYMENT_FILE);
   const catalogText = loadCatalogText();
   const catalog = buildCatalog(deployment, catalogText, loadPriceSources(config.PRICE_SOURCES_FILE));
   const chain = chainFor(deployment, config);
+  const models = {
+    resolver: chooseModel(config.RESOLVER_MODEL ?? config.ANTHROPIC_MODEL, config.ALLOW_OPUS, "resolver", log),
+    intent: chooseModel(config.INTENT_MODEL, config.ALLOW_OPUS, "intent", log),
+  };
+  const files = llmFiles(config);
+  const budget = new LlmBudget(config.LLM_DAILY_CALL_LIMIT, files.usage, log);
   return {
     config,
     deployment,
@@ -48,12 +67,24 @@ export function createContext(config: Config): AppContext {
     client: createChainClient(chain, rpcUrls(config)),
     signer: loadAgentSigner(config.AGENT_PRIVATE_KEY, chain, rpcUrls(config)),
     resolver: new Resolver(catalog.text),
-    llm: createLlmResolver(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL, catalog.text),
+    llm: createLlmResolver({
+      apiKey: looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? undefined : config.ANTHROPIC_API_KEY,
+      model: models.resolver,
+      catalog: catalog.text,
+      budget,
+      cache: new ResolverCache(files.cache),
+      log,
+    }),
     desks: desksOf(deployment),
     defaultVault: config.DEFAULT_VAULT ? getAddress(config.DEFAULT_VAULT) : primaryVault(deployment).address,
-    voice: selectVoiceProviders(config),
+    // The status line names the model actually used (after the Opus guard), not the one configured.
+    voice: selectVoiceProviders({ ...config, INTENT_MODEL: models.intent }),
     refusals: new RefusalLog(refusalLogFile(config)),
-    intentModel: looksLikePlaceholder(config.ANTHROPIC_API_KEY) ? null : createClaudeIntent(config.ANTHROPIC_API_KEY, config.INTENT_MODEL, catalog.entries),
+    intentModel: looksLikePlaceholder(config.ANTHROPIC_API_KEY)
+      ? null
+      : createClaudeIntent(config.ANTHROPIC_API_KEY, models.intent, catalog.entries, 3_000, { budget, log }),
+    llmBudget: budget,
+    llmModels: models,
   };
 }
 

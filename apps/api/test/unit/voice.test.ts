@@ -61,8 +61,8 @@ describe("intent (rules, validated)", () => {
     ["why was that blocked", "explain", null, null],
     ["sell Netflix", "sell", "NFLX", null],
   ])("%s -> %s %s %s", (said, intent, symbol, amount) => {
-    const it = intentOf(said);
-    expect([it.intent, it.symbol, it.amount]).toEqual([intent, symbol, amount]);
+    const got = intentOf(said);
+    expect([got.intent, got.symbol, got.amount]).toEqual([intent, symbol, amount]);
   });
 
   it.each([
@@ -78,24 +78,24 @@ describe("intent (rules, validated)", () => {
     ["I'm thinking about buying Netflix", "hypothetical"],
     ["remind me to buy Tesla tomorrow", "deferred"],
   ])("never a trade: %s (%s)", (said, why) => {
-    const it = intentOf(said);
-    expect(it.intent).not.toBe("buy");
-    expect(it.intent).not.toBe("sell");
-    expect(it.amount).toBeNull();
+    const got = intentOf(said);
+    expect(got.intent).not.toBe("buy");
+    expect(got.intent).not.toBe("sell");
+    expect(got.amount).toBeNull();
     expect(blocksTrade(said)).toBe(why);
   });
 
   it.each(["buy me a coffee", "buy ten dollars", "buy Apple", "get me out of here", "hello", "twelve fifty"])(
     "no catalog company: never a trade: %s",
     (said) => {
-      const it = intentOf(said);
-      expect(["buy", "sell"]).not.toContain(it.intent);
+      const got = intentOf(said);
+      expect(["buy", "sell"]).not.toContain(got.intent);
     },
   );
 
   it("an ambiguous amount is not guessed: the card asks instead", () => {
-    const it = intentOf("buy twelve fifty of AMD");
-    expect([it.intent, it.symbol, it.amount]).toEqual(["buy", "AMD", null]);
+    const got = intentOf("buy twelve fifty of AMD");
+    expect([got.intent, got.symbol, got.amount]).toEqual(["buy", "AMD", null]);
   });
 });
 
@@ -103,22 +103,22 @@ describe("intent validator (applied to Claude's answers too)", () => {
   const claudeSays = (raw: Partial<Intent>): Intent => ({ intent: "buy", symbol: "TSLA", amount: "10", source: "claude", ...raw });
 
   it("drops a symbol that isn't in our catalog", () => {
-    const it = validateIntent(claudeSays({ symbol: "AAPL" }), "buy ten dollars of Apple", catalog);
-    expect(it.intent).toBe("unknown");
-    expect(it.symbol).toBeNull();
+    const got = validateIntent(claudeSays({ symbol: "AAPL" }), "buy ten dollars of Apple", catalog);
+    expect(got.intent).toBe("unknown");
+    expect(got.symbol).toBeNull();
   });
   it("drops an amount the user did not say, however plausible", () => {
-    const it = validateIntent(claudeSays({ amount: "100" }), "buy some Tesla", catalog);
-    expect([it.intent, it.symbol, it.amount]).toEqual(["buy", "TSLA", null]);
-    expect(it.note).toMatch(/amount 100 was not said/);
+    const got = validateIntent(claudeSays({ amount: "100" }), "buy some Tesla", catalog);
+    expect([got.intent, got.symbol, got.amount]).toEqual(["buy", "TSLA", null]);
+    expect(got.note).toMatch(/amount 100 was not said/);
   });
   it("keeps an amount only when it matches what was said, in any form", () => {
     expect(validateIntent(claudeSays({ amount: "$25.00" }), "buy twenty five dollars of Tesla", catalog).amount).toBe("25");
   });
   it("refuses a buy on a negation even if the model says buy", () => {
-    const it = validateIntent(claudeSays({}), "don't buy ten dollars of Tesla", catalog);
-    expect(it.intent).toBe("unknown");
-    expect(it.amount).toBeNull();
+    const got = validateIntent(claudeSays({}), "don't buy ten dollars of Tesla", catalog);
+    expect(got.intent).toBe("unknown");
+    expect(got.amount).toBeNull();
   });
   it("turns an advice question into a price, never a trade", () => {
     expect(validateIntent(claudeSays({ amount: null }), "should I buy Tesla", catalog).intent).toBe("price");

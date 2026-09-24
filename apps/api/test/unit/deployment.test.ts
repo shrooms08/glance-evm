@@ -43,8 +43,10 @@ describe("DEFAULT_VAULT", () => {
 describe("vault factories", () => {
   it("reads the original factory today, and the one-transaction factory once it's recorded, keeping both", async () => {
     const { glanceFactories, factoryV2Address } = await import("@glance/core/factories");
-    expect(glanceFactories(real)).toEqual([{ version: 1, address: "0x2dE74C4643FF724c54150f1F24f4d8B73F432999" }]);
-    expect(factoryV2Address(real)).toBeNull();
+    // A record from before V2 was deployed (independent of whether deployments/46630.json has it now).
+    const before = { ...real, factoryV2: undefined };
+    expect(glanceFactories(before)).toEqual([{ version: 1, address: "0x2dE74C4643FF724c54150f1F24f4d8B73F432999" }]);
+    expect(factoryV2Address(before)).toBeNull();
 
     const withV2 = deploymentSchema.parse({
       ...JSON.parse(readFileSync(resolve(import.meta.dirname, "../../../../deployments/46630.json"), "utf8")),

@@ -77,7 +77,7 @@ export function loadDeployment(path: string): Deployment {
   try {
     raw = JSON.parse(readFileSync(path, "utf8"));
   } catch (err) {
-    throw new Error(`Cannot read deployment file ${path}: ${(err as Error).message}`);
+    throw new Error(`Cannot read deployment file ${path}: ${(err as Error).message}`, { cause: err });
   }
   const parsed = deploymentSchema.safeParse(raw);
   if (!parsed.success) {

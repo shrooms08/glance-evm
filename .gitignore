@@ -35,3 +35,6 @@ apps/console/.vercel/
 # Agent notes that `next dev` writes and re-creates on every run
 apps/console/AGENTS.md
 apps/console/CLAUDE.md
+
+# The API's resolver cache and Claude call counter (RESOLVER_CACHE_FILE)
+apps/api/.cache/

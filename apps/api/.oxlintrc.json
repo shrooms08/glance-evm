@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "import",
+    "node"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "import/no-unassigned-import": "off",
+    "no-underscore-dangle": [
+      "warn",
+      {
+        "allow": [
+          "_call"
+        ]
+      }
+    ]
+  },
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "data/**",
+    ".cache/**"
+  ]
+}

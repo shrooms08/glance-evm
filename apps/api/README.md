@@ -85,6 +85,27 @@ the default. Endpoint paths and tokens are redacted in the startup log.
 A trade is never retried. If the RPC fails while sending, the message says the outcome is unknown and to check the
 activity first. If it was sent but can't be confirmed, the message includes the transaction hash.
 
+## Claude budget
+
+Claude is optional. The API makes two kinds of call to it: the `/resolve` fallback when the dictionary finds nothing,
+and the voice intent. Both go through `src/llmBudget.ts`:
+
+- **Haiku everywhere.** `RESOLVER_MODEL` (formerly `ANTHROPIC_MODEL`, which still works) and `INTENT_MODEL` both
+  default to `claude-haiku-4-5`. A model name containing "opus" is refused at startup with one warning line, and Haiku
+  is used instead, unless `ALLOW_OPUS=1`. Answers are capped at 256 output tokens, and calls are never retried.
+- **Cached.** `/resolve` answers are cached for 24 hours by normalized text (lowercased, whitespace collapsed),
+  including "no listed company" answers. The cache is kept in memory and in `RESOLVER_CACHE_FILE` (default
+  `apps/api/.cache/resolver.json`, gitignored), so a restart doesn't pay again. Keys are SHA-256 hashes, so no page
+  text is written to disk.
+- **Capped.** `LLM_DAILY_CALL_LIMIT` (default 150) counts every Claude call across the API, resets at 00:00 UTC, and
+  persists next to the cache (`llm-usage.json`). At the limit, the dictionary resolver and the rules intent parser
+  answer, and one line is logged: `LLM daily limit reached, using rules`. The user never sees an error.
+- **Paused on budget errors.** An Anthropic 401, 402, 429, or a "credit balance" error pauses Claude for an hour, with
+  the same fallback.
+- **Visible.** The startup banner shows the models, and the calls used today out of the limit. Each call logs one
+  line: purpose, model, input and output tokens. The key, prompts, page text and audio are never logged. `/health`
+  has `llm: { models, dailyLimit, usedToday, paused }`.
+
 ## Endpoints
 
 Amounts appear as `{ raw, value, formatted }`: `raw` is in the token's smallest unit, `value` is a plain decimal

@@ -11,6 +11,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
 import type { CatalogEntry } from "../catalog.js";
+import type { MessagesClient } from "../llm.js";
+import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "../llmBudget.js";
 import { extractAmounts } from "./amounts.js";
 
 export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "unknown"] as const;
@@ -207,9 +209,24 @@ export interface IntentModel {
   classify(transcript: string, context: VoiceContext): Promise<Intent>;
 }
 
-export function createClaudeIntent(apiKey: string | undefined, model: string, catalog: readonly CatalogEntry[], timeoutMs = 3_000): IntentModel | null {
-  if (!apiKey) return null;
-  const client = new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 0 });
+export interface ClaudeIntentOptions {
+  /** Counts the call against the daily limit and pauses on budget errors; without it, calls aren't budgeted. */
+  budget?: LlmBudget;
+  log?: Log;
+  /** Stands in for the Anthropic client in tests. */
+  client?: MessagesClient;
+}
+
+export function createClaudeIntent(
+  apiKey: string | undefined,
+  model: string,
+  catalog: readonly CatalogEntry[],
+  timeoutMs = 3_000,
+  opts: ClaudeIntentOptions = {},
+): IntentModel | null {
+  if (!apiKey && !opts.client) return null;
+  const log = opts.log ?? ((l: string) => console.log(l));
+  const client: MessagesClient = opts.client ?? new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 0 });
   const companies = catalog.map((c) => `${c.symbol}: ${c.legalName} (also: ${[c.name, ...c.aliases].join(", ")})`).join("\n");
   const system = [
     "You turn one spoken command to a stock-buying browser assistant into a structured intent.",
@@ -244,14 +261,23 @@ export function createClaudeIntent(apiKey: string | undefined, model: string, ca
   return {
     model,
     async classify(transcript, context) {
-      const response = await client.messages.create({
-        model,
-        max_tokens: 300,
-        system,
-        tools: [tool],
-        tool_choice: { type: "tool", name: tool.name },
-        messages: [{ role: "user", content: `Context: ${JSON.stringify(context)}\n\nThe user said: "${transcript}"` }],
-      });
+      // Over the daily limit, or paused after a budget error: the caller uses the rules parser instead.
+      if (opts.budget && !opts.budget.tryAcquire()) throw new Error("LLM budget: using rules");
+      let response;
+      try {
+        response = await client.messages.create({
+          model,
+          max_tokens: MAX_OUTPUT_TOKENS,
+          system,
+          tools: [tool],
+          tool_choice: { type: "tool", name: tool.name },
+          messages: [{ role: "user", content: `Context: ${JSON.stringify(context)}\n\nThe user said: "${transcript}"` }],
+        });
+      } catch (err) {
+        opts.budget?.failed(err);
+        throw err;
+      }
+      logUsage(log, "intent", model, response.usage);
       const use = response.content.find((b) => b.type === "tool_use");
       const parsed = ClaudeIntent.safeParse(use && "input" in use ? use.input : null);
       if (!parsed.success) throw new Error("intent model returned no usable answer");

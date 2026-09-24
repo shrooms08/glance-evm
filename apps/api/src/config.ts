@@ -36,7 +36,23 @@ const envSchema = z.object({
     .optional()
     .or(z.literal("").transform(() => undefined)),
   ANTHROPIC_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
-  ANTHROPIC_MODEL: z.string().default("claude-opus-5"),
+  /**
+   * Claude models. Haiku by default for every call; a name containing "opus" is refused at startup unless ALLOW_OPUS=1
+   * (see src/llmBudget.ts). ANTHROPIC_MODEL is the older name for RESOLVER_MODEL and still works.
+   */
+  RESOLVER_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
+  ANTHROPIC_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
+  ALLOW_OPUS: z
+    .string()
+    .optional()
+    .transform((v) => v === "1" || v?.toLowerCase() === "true"),
+  /** Claude calls allowed per UTC day across the whole API; past it, the dictionary and the rules answer. */
+  LLM_DAILY_CALL_LIMIT: z.coerce.number().int().min(0).default(150),
+  /**
+   * The resolver's 24h answer cache (JSON). The daily call counter is kept next to it (llm-usage.json). Default
+   * apps/api/.cache/resolver.json (gitignored); in tests, memory only unless set; empty for memory only.
+   */
+  RESOLVER_CACHE_FILE: z.string().optional(),
   /** Voice (see src/voice). Keys stay on the server; placeholder values count as unset. */
   DEEPGRAM_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
   /** Deepgram model: nova-3 is its current general model and supports keyterm prompting. */
@@ -58,6 +74,8 @@ const envSchema = z.object({
   FISH_LATENCY: z.enum(["low", "normal", "balanced"]).default("balanced"),
   /** Claude model for voice intents: a fast one, since this is on the path from key release to the reply. */
   INTENT_MODEL: z.string().default("claude-haiku-4-5"),
+  /** Where RESOLVER_CACHE_FILE defaults to, relative to this package. */
+  LLM_CACHE_DIR: z.string().default(resolve(import.meta.dirname, "../.cache")),
   /** "fake": simulated transcription and speech, for testing the voice path without keys (refused in production). */
   VOICE_PROVIDERS: z.enum(["auto", "fake"]).default("auto"),
   VOICE_FAKE_TRANSCRIPT: z.string().optional(),

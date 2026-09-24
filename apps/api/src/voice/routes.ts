@@ -185,13 +185,13 @@ export function registerVoice(
     const started = performance.now();
     const body = parse(commandBody, await jsonBody(c));
     const it = await understand(body.transcript, body.context, ctx.catalog.entries, ctx.intentModel);
-    const { reply, facts } = await replyFor(ctx, it, body.context, body.vault);
+    const { reply, facts: replyFacts } = await replyFor(ctx, it, body.context, body.vault);
     return send(c, {
       intent: it.intent,
       symbol: it.symbol,
       amount: it.amount,
       reply,
-      facts,
+      facts: replyFacts,
       source: it.source,
       note: it.note,
       ms: Math.round(performance.now() - started),

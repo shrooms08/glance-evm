@@ -38,6 +38,9 @@ importers:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
+      oxlint:
+        specifier: ^1.85.0
+        version: 1.85.0
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
