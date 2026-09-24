@@ -87,6 +87,10 @@ export interface Speaker {
   readonly endpoint?: string;
   /** The same voice tried once more, on a fresh connection. */
   readonly retry?: boolean;
+  /** As speak(), with the voice that actually spoke (a chain may have fallen through). */
+  speakDetailed?(text: string): Promise<{ audio: Uint8Array; mime: string; voice: string }>;
+  /** As stream(), with the voice that actually speaks. */
+  streamDetailed?(text: string): Promise<{ stream: ReadableStream<Uint8Array>; voice: string }>;
   speak(text: string): Promise<{ audio: Uint8Array; mime: string }>;
   /** The same audio as a byte stream, available as the provider sends it (for playback that starts early). */
   stream?(text: string): Promise<ReadableStream<Uint8Array>>;
@@ -652,7 +656,7 @@ export function withFallThrough(
   warn: (line: string) => void = (l) => console.warn(l),
   onServed?: (s: Speaker) => void,
   decisions?: VoiceDecisions,
-): Speaker & { speakDetailed(text: string): Promise<{ audio: Uint8Array; mime: string; voice: string }> } {
+): Speaker & Required<Pick<Speaker, "speakDetailed" | "streamDetailed">> {
   const attempt = async <T>(run: (s: Speaker) => Promise<T>): Promise<{ out: T; by: Speaker }> => {
     let last: unknown;
     const t0 = performance.now();
@@ -691,16 +695,36 @@ export function withFallThrough(
       const { out, by } = await attempt((s) => s.speak(text));
       return { ...out, voice: by.voice };
     },
-    stream: speakers.some((s) => s.stream)
-      ? async (text) => (await attempt((s) => (s.stream ? s.stream(text) : s.speak(text).then((o) => new Response(o.audio as unknown as ArrayBuffer).body!)))).out
-      : undefined,
+    stream: speakers.some((s) => s.stream) ? async (text) => (await attempt(streamOf(text))).out : undefined,
+    async streamDetailed(text) {
+      const { out, by } = await attempt(streamOf(text));
+      return { stream: out, voice: by.voice };
+    },
   };
 }
+
+const streamOf = (text: string) => (s: Speaker) => (s.stream ? s.stream(text) : s.speak(text).then((o) => new Response(o.audio as unknown as ArrayBuffer).body!));
 
 /** Times a speaker's first audio byte for the per-request log (the text's length only, never the text). */
 export function withSpeechTiming(speaker: Speaker, log: (line: string) => void = (l) => console.log(l), servedBy: () => string = () => speaker.name): Speaker {
   const stamp = (text: string, t0: number, first: number, bytes: number, via: string) =>
     log(`[voice] speech ${via}: first byte ${Math.round(first)}ms, complete ${Math.round(performance.now() - t0)}ms, ${bytes} bytes, ${text.length} chars`);
+  const timed = (text: string, t0: number, source: ReadableStream<Uint8Array>) => {
+    let first = 0;
+    let bytes = 0;
+    return source.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, ctrl) {
+          if (!first) first = performance.now() - t0;
+          bytes += chunk.byteLength;
+          ctrl.enqueue(chunk);
+        },
+        flush() {
+          stamp(text, t0, first, bytes, `${servedBy()} (streamed)`);
+        },
+      }),
+    );
+  };
   return {
     ...speaker,
     async speak(text) {
@@ -709,24 +733,20 @@ export function withSpeechTiming(speaker: Speaker, log: (line: string) => void =
       stamp(text, t0, performance.now() - t0, out.audio.byteLength, servedBy());
       return out;
     },
-    stream: speaker.stream
+    speakDetailed: speaker.speakDetailed
       ? async (text) => {
           const t0 = performance.now();
-          const source = await speaker.stream!(text);
-          let first = 0;
-          let bytes = 0;
-          return source.pipeThrough(
-            new TransformStream<Uint8Array, Uint8Array>({
-              transform(chunk, ctrl) {
-                if (!first) first = performance.now() - t0;
-                bytes += chunk.byteLength;
-                ctrl.enqueue(chunk);
-              },
-              flush() {
-                stamp(text, t0, first, bytes, `${servedBy()} (streamed)`);
-              },
-            }),
-          );
+          const out = await speaker.speakDetailed!(text);
+          stamp(text, t0, performance.now() - t0, out.audio.byteLength, servedBy());
+          return out;
+        }
+      : undefined,
+    stream: speaker.stream ? async (text) => timed(text, performance.now(), await speaker.stream!(text)) : undefined,
+    streamDetailed: speaker.streamDetailed
+      ? async (text) => {
+          const t0 = performance.now();
+          const out = await speaker.streamDetailed!(text);
+          return { stream: timed(text, t0, out.stream), voice: out.voice };
         }
       : undefined,
   };
@@ -784,9 +804,24 @@ export function fish(opts: FishOptions): Speaker {
  */
 export type CachedSpeaker = Speaker & { readonly cached: number; hits: number; has(text: string): boolean };
 
-export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200): CachedSpeaker {
-  const cache = new Map<string, { audio: Uint8Array; mime: string }>();
-  const inflight = new Map<string, Promise<{ audio: Uint8Array; mime: string }>>();
+export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200, configuredVoice: string = speaker.voice): CachedSpeaker {
+  // Each entry remembers the voice that spoke it. Only the configured voice's audio is kept, and only it is served: a
+  // phrase that once fell through to another voice is never replayed in that voice.
+  const cache = new Map<string, { audio: Uint8Array; mime: string; voice: string }>();
+  const inflight = new Map<string, Promise<{ audio: Uint8Array; mime: string; voice: string }>>();
+  const keep = (key: string, entry: { audio: Uint8Array; mime: string; voice: string }) => {
+    if (entry.voice !== configuredVoice) return;
+    cache.set(key, entry);
+    while (cache.size > max) cache.delete(cache.keys().next().value!);
+  };
+  const lookup = (key: string) => {
+    const hit = cache.get(key);
+    return hit && hit.voice === configuredVoice ? hit : undefined;
+  };
+  const detailed = (text: string) =>
+    speaker.speakDetailed ? speaker.speakDetailed(text) : speaker.speak(text).then((o) => ({ ...o, voice: speaker.voice }));
+  const detailedStream = (text: string) =>
+    speaker.streamDetailed ? speaker.streamDetailed(text) : speaker.stream!(text).then((stream) => ({ stream, voice: speaker.voice }));
   const self = {
     name: speaker.name,
     model: speaker.model,
@@ -797,14 +832,14 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200): Cac
       return cache.size;
     },
     has(text: string) {
-      return cache.has(text.trim());
+      return lookup(text.trim()) !== undefined;
     },
-    /** Streams a new phrase through as it arrives, and caches it once complete. */
+    /** Streams a new phrase through as it arrives, and caches it once complete (if the configured voice spoke it). */
     stream: speaker.stream
       ? async (text: string) => {
           const key = text.trim();
-          const source = await speaker.stream!(key);
-          if (key.length > maxChars) return source;
+          const { stream: source, voice } = await detailedStream(key);
+          if (key.length > maxChars || voice !== configuredVoice) return source;
           const parts: Uint8Array[] = [];
           return source.pipeThrough(
             new TransformStream<Uint8Array, Uint8Array>({
@@ -819,8 +854,7 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200): Cac
                   audio.set(p, at);
                   at += p.byteLength;
                 }
-                cache.set(key, { audio, mime: "audio/mpeg" });
-                while (cache.size > max) cache.delete(cache.keys().next().value!);
+                keep(key, { audio, mime: "audio/mpeg", voice });
               },
             }),
           );
@@ -829,21 +863,20 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200): Cac
     async speak(text: string) {
       const key = text.trim();
       if (key.length > maxChars) return speaker.speak(key);
-      const hit = cache.get(key);
+      const hit = lookup(key);
       if (hit) {
         self.hits++;
         cache.delete(key);
         cache.set(key, hit); // most recently used
-        return hit;
+        return { audio: hit.audio, mime: hit.mime };
       }
       // Two requests for the same line at once share one provider call.
       const running = inflight.get(key);
-      if (running) return running;
-      const p = speaker.speak(key).then(
+      if (running) return running.then(({ audio, mime }) => ({ audio, mime }));
+      const p = detailed(key).then(
         (out) => {
           inflight.delete(key);
-          cache.set(key, out);
-          while (cache.size > max) cache.delete(cache.keys().next().value!);
+          keep(key, out);
           return out;
         },
         (err: unknown) => {
@@ -852,7 +885,7 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200): Cac
         },
       );
       inflight.set(key, p);
-      return p;
+      return p.then(({ audio, mime }) => ({ audio, mime }));
     },
   };
   return self;
@@ -984,7 +1017,7 @@ export function selectVoiceProviders(
   let lastServed: Speaker | null = null;
   const decisions = new VoiceDecisions();
   const chain = order.length ? withFallThrough(order, log, (s) => (lastServed = s), decisions) : null;
-  const tts = chain ? withPhraseCache(withSpeechTiming(chain, log, () => speakerLabel(lastServed ?? order[0]!))) : null;
+  const tts = chain ? withPhraseCache(withSpeechTiming(chain, log, () => speakerLabel(lastServed ?? order[0]!)), 64, 200, order[0]!.voice) : null;
   const claude = usable("ANTHROPIC_API_KEY", c.ANTHROPIC_API_KEY);
   const origin = order[0] ? (order[0].name === "deepgram" ? "https://api.deepgram.com/" : "https://api.fish.audio/") : null;
   const doFetch = deps.fetch ?? providerFetch;

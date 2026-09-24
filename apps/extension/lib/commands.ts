@@ -16,6 +16,8 @@ export type Command =
   | { kind: "portfolio" }
   | { kind: "why"; symbol: string }
   | { kind: "chart"; symbol: string }
+  /** Developer check: draw every Show me shape on the current selection. */
+  | { kind: "testDrawing" }
   /** A question about the page, a term, or how to use Glance: answered by Show me. */
   | { kind: "ask"; question: string }
   | { kind: "confirm" }
@@ -93,6 +95,7 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   const t = normalise(heard).replace(/^(ok |okay |hey |please |glance )+/, "").replace(/ please$/, "");
   const table = aliasTable(companies);
 
+  if (/^(glance )?test drawings?$/.test(t) || normalise(heard) === "glance test drawing") return { kind: "testDrawing" };
   if (/^(yes|yeah|yep|confirm|do it|go ahead|buy it)$/.test(t)) return { kind: "confirm" };
   if (/^(no|nope|cancel|stop|never mind|nevermind)$/.test(t)) return { kind: "cancel" };
 

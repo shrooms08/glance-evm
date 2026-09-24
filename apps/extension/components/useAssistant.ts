@@ -68,6 +68,8 @@ export interface AssistantOptions {
   onChart?(symbol: string): void;
   /** A question for Show me ("what's this article saying?", "how do I withdraw?"): answered with the page in view. */
   onAsk?(question: string): void;
+  /** Developer check ("glance test drawing"): draws every Show me shape on the selection. */
+  onTestDrawing?(): void;
 }
 
 export function useAssistant(opts: AssistantOptions = {}) {
@@ -76,6 +78,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
   onChart.current = opts.onChart;
   const onAsk = useRef(opts.onAsk);
   onAsk.current = opts.onAsk;
+  const onTestDrawing = useRef(opts.onTestDrawing);
+  onTestDrawing.current = opts.onTestDrawing;
   const g = useGlance();
   const [card, setCard] = useState<AssistantCard>(null);
   const [heard, setHeard] = useState("");
@@ -164,6 +168,9 @@ export function useAssistant(opts: AssistantOptions = {}) {
         case "ask":
           if (onAsk.current) return onAsk.current(cmd.question);
           return say(LINES.cantThink);
+        case "testDrawing":
+          if (onTestDrawing.current) return onTestDrawing.current();
+          return say("Test drawing works on a web page, with developer tools on in settings.");
         case "confirm":
         case "cancel":
           // Only a tap (or a typed "yes") confirms: a misheard word must never move money.

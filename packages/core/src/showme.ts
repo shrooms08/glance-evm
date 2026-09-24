@@ -94,6 +94,23 @@ export function formatTagged(t: Tagged): string {
   return out + t.spoken.slice(last);
 }
 
+/**
+ * Every POINT gets a visible mark on the same words, unless the reply already marks them: a CIRCLE for a short figure or
+ * phrase (up to 40 characters), an UNDERLINE for longer ones. The orb alone is easy to miss; the mark isn't.
+ */
+export function pairMarks(t: Tagged): Tagged {
+  const marked = new Set(t.actions.filter((a) => "quote" in a && a.kind !== "POINT").map((a) => looseText((a as { quote: string }).quote)));
+  const out: ShowAction[] = [];
+  for (const a of t.actions) {
+    out.push(a);
+    if (a.kind === "POINT" && !marked.has(looseText(a.quote))) {
+      out.push({ kind: a.quote.length <= 40 ? "CIRCLE" : "UNDERLINE", quote: a.quote, at: a.at });
+      marked.add(looseText(a.quote));
+    }
+  }
+  return { spoken: t.spoken, actions: out };
+}
+
 /** Whitespace- and case-tolerant form used to match quotes against page text. */
 export function looseText(s: string): string {
   return s.normalize("NFKC").replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/[–—‒]/g, "-").replace(/\s+/g, " ").trim().toLowerCase();

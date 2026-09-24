@@ -18,7 +18,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 import { GLANCE_FACTS, LINES, PERSONA } from "@glance/core/persona";
-import { formatTagged, keepQuotesOnPage, MAX_QUOTE, parseTagged, type ShowAction } from "@glance/core/showme";
+import { formatTagged, keepQuotesOnPage, MAX_QUOTE, pairMarks, parseTagged, type ShowAction } from "@glance/core/showme";
 import { containsAdvice } from "@glance/core/tone";
 
 import type { MessagesClient } from "./llm.js";
@@ -69,8 +69,12 @@ export function showMeSystem(symbols: readonly string[]): string {
     `  [CHART:SYMBOL]             open that stock's chart (only ${symbols.join(", ")})`,
     `  [PORTFOLIO]                open the user's portfolio`,
     "Tags are silent: they're removed before your words are spoken. Every sentence must read naturally with the tags",
-    "taken out, so never use a tag in place of words. Put each tag right after the words it illustrates. For example:",
-    '  Revenue grew twelve percent [CIRCLE:"Revenue grew 12%"], mostly from new cars.',
+    "taken out, so never use a tag in place of words. Put each tag right after the words it illustrates.",
+    "For \"show me\" and \"where does it say\" questions, pair every POINT with a visible mark on the key figure or",
+    "phrase (CIRCLE for a number or a short phrase, UNDERLINE for a longer one). Worked example, for \"show me the key",
+    "numbers\" on a page that says \"Revenue grew 12% to $25.2 billion\" and \"the gross margin reached 18.4%\":",
+    '  Revenue grew twelve percent [POINT:"Revenue grew 12%"][CIRCLE:"Revenue grew 12%"], to about twenty five billion',
+    '  dollars. The gross margin was eighteen point four percent [POINT:"gross margin reached 18.4%"][CIRCLE:"18.4%"].',
     `Quotes must be copied character for character from <page_text> (or <selection>), 3 to 8 words, at most ${MAX_QUOTE}`,
     "characters: a few distinctive words is best. Use at most 3 tags. No other tags exist; never write any other square",
     "brackets.",
@@ -135,7 +139,8 @@ export function createShowMe(o: { apiKey?: string; model: string; budget: LlmBud
       const raw = response.content.map((b) => (b.type === "text" ? b.text : "")).join(" ").trim();
       if (!raw) return plain(LINES.cantThink, "unavailable");
       const page = input.page ?? {};
-      const tagged = keepQuotesOnPage(parseTagged(raw, { symbols }), `${page.title ?? ""}\n${page.selection ?? ""}\n${(page.text ?? "").slice(0, SHOWME_MAX_PAGE_CHARS)}`);
+      // Only quotes that are really on the page; and every POINT gets a visible mark (the orb alone is easy to miss).
+      const tagged = pairMarks(keepQuotesOnPage(parseTagged(raw, { symbols }), `${page.title ?? ""}\n${page.selection ?? ""}\n${(page.text ?? "").slice(0, SHOWME_MAX_PAGE_CHARS)}`));
       if (!tagged.spoken) return plain(LINES.cantThink, "unavailable");
       if (containsAdvice(tagged.spoken)) return plain(LINES.noAdvice, "guarded");
       return { reply: formatTagged(tagged), spoken: tagged.spoken, actions: tagged.actions, source: "claude" };

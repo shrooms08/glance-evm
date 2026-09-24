@@ -23,12 +23,11 @@ import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { VoiceCommandContext } from "../../lib/voiceMessages";
 import type { Message, PageMatchesReply } from "../../lib/messages";
-import { defaultMode, orbPosition, type OrbPosition } from "../../lib/settings";
+import { defaultMode, devTools, orbPosition, type OrbPosition } from "../../lib/settings";
 import { SoundCue, type Sfx } from "../../lib/sfx";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
 import { requestCard } from "../../lib/chartPanel";
-import { color } from "@glance/design";
 import StockChart from "../../components/StockChart";
 import { useGreeting } from "../../components/useGreeting";
 import { api } from "../../lib/api";
@@ -81,7 +80,18 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     context: () => voiceContext.current(),
     onChart: (symbol) => showChartRef.current(symbol),
     onAsk: (question) => askRef.current(question),
+    onTestDrawing: () => void testDrawingRef.current(),
   });
+  const testDrawingRef = useRef<() => Promise<void>>(async () => {});
+  const lastSelection = useRef<Range | null>(null);
+  useEffect(() => {
+    const onSelection = () => {
+      const sel = document.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed && document.body.contains(sel.anchorNode)) lastSelection.current = sel.getRangeAt(0).cloneRange();
+    };
+    document.addEventListener("selectionchange", onSelection);
+    return () => document.removeEventListener("selectionchange", onSelection);
+  }, []);
   const [mentions, setMentions] = useState<Mention[]>(underliner.current());
   /** This page, and the sentence around the company's first underline, for the headline journal. */
   const pageContextFor = (symbol: string): PageContext => capturePage(document, underliner.current().find((m) => m.symbol === symbol)?.range ?? null);
@@ -122,7 +132,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const [orbFlying, setOrbFlying] = useState(false);
   useEffect(() => {
     if (!layerRef.current) return;
-    const d = new ShowDrawings(layerRef.current, color.lime);
+    const d = new ShowDrawings(layerRef.current);
     drawings.current = d;
     return () => d.destroy();
   }, []);
@@ -199,6 +209,18 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     [g, docked, assistant, showChart],
   );
   askRef.current = ask;
+  // Developer check: every shape on the selection (dev builds, or developer tools on in settings). Typing in the panel
+  // can take the page's selection away, so the last one on the page is remembered.
+  testDrawingRef.current = async () => {
+    const on = import.meta.env.DEV || (await safely(() => devTools.getValue(), Promise.resolve(false)));
+    if (!on) return g.setOrb({ state: "idle", line: "Turn on developer tools in settings to test drawing.", meta: "" });
+    const range = lastSelection.current;
+    if (!range || range.collapsed) return g.setOrb({ state: "idle", line: "Select some text on the page, then type “glance test drawing” again.", meta: "" });
+    drawings.current?.clear();
+    const drawn = drawings.current?.drawTest(range) ?? [];
+    g.setOrb({ state: "idle", line: `Drew ${drawn.join(", ").toLowerCase()} on your selection.`, meta: "Test drawing" });
+    drawings.current?.fadeLater(8_000);
+  };
   companiesRef.current = companiesLatest;
   // One quiet-time frame sample: if this page can't hold frame rate on its own, skip the idle breathing pulse.
   useEffect(() => {

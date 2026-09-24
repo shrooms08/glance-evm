@@ -1,8 +1,13 @@
 /**
  * Show me's drawings: a full-viewport SVG overlay inside Glance's shadow root (the page's DOM is never touched), with
- * hand-drawn circles and underlines (@glance/core/sketch) in lime, each stroked in over about 600ms. Marks follow their
- * words as the page scrolls or resizes. After the reply ends they fade out 4 seconds later; Escape clears at once.
+ * hand-drawn marks (@glance/core/sketch), each stroked in over about 600ms. Marks follow their words as the page
+ * scrolls or resizes. After the reply ends they fade out 4 seconds later; Escape clears at once.
+ *
+ * Visible on every page: the color comes from the background under the target (markColors: lime on dark pages, the
+ * darker limeMark on light ones, where lime is 1.3:1 on white), with a faint halo under the stroke. The stroke is heavy
+ * and hand-drawn, so it never reads as the passive dotted company underline.
  */
+import { markColors, isLightColor } from "@glance/design";
 import { circlePath, seedOf, underlinePath, type Box } from "@glance/core/sketch";
 
 export const STROKE_MS = 600;
@@ -12,8 +17,24 @@ const SVG = "http://www.w3.org/2000/svg";
 interface Mark {
   kind: "CIRCLE" | "UNDERLINE";
   range: Range;
-  path: SVGPathElement;
+  paths: SVGPathElement[];
   seed: number;
+}
+
+/** The background color actually behind a node: the nearest ancestor with a mostly opaque background ("" for none). */
+export function backgroundUnder(node: Node, win: Window = window): string {
+  for (let el: Element | null = node.nodeType === 1 ? (node as Element) : node.parentElement; el; el = el.parentElement) {
+    const bg = win.getComputedStyle(el).backgroundColor;
+    const m = /rgba?\([^)]*?([\d.]+)\)$/.exec(bg);
+    const alpha = /rgba/.test(bg) && m ? Number(m[1]) : bg && bg !== "transparent" ? 1 : 0;
+    if (alpha >= 0.5) return bg;
+  }
+  return ""; // nothing opaque: the browser's default canvas, which is white (isLightColor treats "" as light)
+}
+
+/** Lime on dark, limeMark on light: picked from the background under the range. */
+export function marksFor(range: Range, win: Window = window) {
+  return markColors(isLightColor(backgroundUnder(range.startContainer, win)));
 }
 
 /** The bounding box of a range's first line (a quote that wraps is marked on its first line). */
@@ -37,7 +58,6 @@ export class ShowDrawings {
 
   constructor(
     private readonly host: Element,
-    private readonly color: string,
     private readonly win: Window = window,
   ) {
     this.svg = host.ownerDocument.createElementNS(SVG, "svg");
@@ -60,11 +80,22 @@ export class ShowDrawings {
     clearTimeout(this.fadeTimer);
     this.svg.style.opacity = "1";
     const seed = seedOf(range.toString());
+    const d = kind === "CIRCLE" ? circlePath(box, seed) : underlinePath(box, seed);
+    const colors = marksFor(range, this.win);
+    // A faint halo under the stroke, then the stroke: both drawn in together.
+    const halo = this.stroke(d, colors.halo, kind === "CIRCLE" ? 6 : 6.5);
+    const pen = this.stroke(d, colors.stroke, kind === "CIRCLE" ? 3 : 3.4);
+    pen.setAttribute("data-mark", kind.toLowerCase());
+    this.marks.push({ kind, range, paths: [halo, pen], seed });
+    return true;
+  }
+
+  private stroke(d: string, color: string, width: number): SVGPathElement {
     const path = this.host.ownerDocument.createElementNS(SVG, "path");
-    path.setAttribute("d", kind === "CIRCLE" ? circlePath(box, seed) : underlinePath(box, seed));
+    path.setAttribute("d", d);
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", this.color);
-    path.setAttribute("stroke-width", kind === "CIRCLE" ? "2.4" : "2.8");
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", String(width));
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
     this.svg.append(path);
@@ -73,8 +104,19 @@ export class ShowDrawings {
     const reduced = this.win.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     Object.assign(path.style, { strokeDasharray: `${length}`, strokeDashoffset: reduced ? "0" : `${length}`, transition: `stroke-dashoffset ${STROKE_MS}ms cubic-bezier(.3,.7,.2,1)` });
     if (!reduced) this.win.requestAnimationFrame(() => this.win.requestAnimationFrame(() => (path.style.strokeDashoffset = "0")));
-    this.marks.push({ kind, range, path, seed });
-    return true;
+    // Whatever the animation does, the mark is fully drawn once it should have finished.
+    setTimeout(() => (path.style.strokeDashoffset = "0"), STROKE_MS + 100);
+    return path;
+  }
+
+  /**
+   * Developer check: every shape on `range` (the selection), so drawings can be checked by eye in seconds. Returns the
+   * shapes drawn.
+   */
+  drawTest(range: Range): string[] {
+    const drawn: string[] = [];
+    for (const kind of ["CIRCLE", "UNDERLINE"] as const) if (this.draw(kind, range)) drawn.push(kind);
+    return drawn;
   }
 
   /** The reply ended: fade the marks out after FADE_AFTER_MS. */
@@ -109,10 +151,13 @@ export class ShowDrawings {
       for (const m of this.marks) {
         const box = rangeBox(m.range);
         if (!box) continue;
-        m.path.setAttribute("d", m.kind === "CIRCLE" ? circlePath(box, m.seed) : underlinePath(box, m.seed));
-        // Already drawn: no replay of the stroke.
-        m.path.style.transition = "none";
-        m.path.style.strokeDasharray = "none";
+        const d = m.kind === "CIRCLE" ? circlePath(box, m.seed) : underlinePath(box, m.seed);
+        for (const p of m.paths) {
+          p.setAttribute("d", d);
+          // Already drawn: no replay of the stroke.
+          p.style.transition = "none";
+          p.style.strokeDasharray = "none";
+        }
       }
     });
   }

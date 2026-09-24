@@ -145,3 +145,34 @@ describe("pre-recorded common lines", () => {
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("the in-memory phrase cache is keyed by the voice that spoke", () => {
+  it("a phrase that fell through to Harmonia is played but never cached or replayed; Sienna's is", async () => {
+    let fluxDown = true;
+    const calls: string[] = [];
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      const which = String(url).includes("/v2/speak") ? "flux" : "aura";
+      calls.push(which);
+      if (which === "flux" && fluxDown) return new Response("no", { status: 429 });
+      return new Response(new Uint8Array([which === "flux" ? 1 : 2]), { headers: { "content-type": "audio/mpeg" } });
+    });
+    const v = selectVoiceProviders(loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: KEY }), { fetch: fetchFn as unknown as typeof fetch, log: () => {} });
+    const phrase = "Tesla is at $375.81.";
+    expect([...(await v.tts!.speak(phrase)).audio]).toEqual([2]); // Harmonia, after Flux twice
+    expect(v.tts!.has(phrase)).toBe(false); // not kept
+    fluxDown = false;
+    calls.length = 0;
+    expect([...(await v.tts!.speak(phrase)).audio]).toEqual([1]); // asked again: Sienna, not the cached Harmonia
+    expect(calls).toEqual(["flux"]);
+    expect(v.tts!.has(phrase)).toBe(true);
+    calls.length = 0;
+    expect([...(await v.tts!.speak(phrase)).audio]).toEqual([1]);
+    expect(calls).toEqual([]); // Sienna's copy is replayed
+    // The stream path too: a fall-through stream isn't kept.
+    fluxDown = true;
+    const other = "Another short phrase.";
+    const r = (await v.tts!.stream!(other)).getReader();
+    while (!(await r.read()).done);
+    expect(v.tts!.has(other)).toBe(false);
+  });
+});

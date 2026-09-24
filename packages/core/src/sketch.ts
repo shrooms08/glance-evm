@@ -35,12 +35,13 @@ const f = (n: number) => n.toFixed(1);
  * A loose ellipse around `box` (padded), drawn as a smooth closed-ish curve that overshoots its start a little, like a
  * pen circling a word. Two passes, the second slightly offset.
  */
-export function circlePath(box: Box, seed = 1, pad = 6): string {
+export function circlePath(box: Box, seed = 1, pad = 9): string {
   const r = seeded(seed);
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
-  const rx = box.width / 2 + pad;
-  const ry = box.height / 2 + pad * 0.8;
+  // An ellipse's corners cut in: widen it by a share of the text's size too, so the pen clears the first and last letters.
+  const rx = box.width / 2 + pad + box.height * 0.15;
+  const ry = box.height / 2 + pad * 0.7;
   const pass = (start: number, sweep: number, wobble: number) => {
     const steps = 18;
     const pts: Array<[number, number]> = [];

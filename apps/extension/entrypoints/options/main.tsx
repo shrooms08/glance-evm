@@ -26,6 +26,7 @@ import {
   vaultAddress,
   voiceKeyLetter,
   voiceReplies,
+  devTools,
   type Mode,
 } from "../../lib/settings";
 import { sound } from "../../lib/tokens";
@@ -40,6 +41,25 @@ function isLocal(url: string) {
   } catch {
     return false;
   }
+}
+
+/** Developer tools: saved at once. With it on, typing "glance test drawing" in the panel draws every Show me shape. */
+function DevToggle() {
+  const [on, setOn] = useState(false);
+  useEffect(() => void devTools.getValue().then(setOn), []);
+  return (
+    <label className="g-row g-meta" style={{ gap: 8 }}>
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setOn(e.target.checked);
+          void devTools.setValue(e.target.checked);
+        }}
+      />{" "}
+      Developer tools (type “glance test drawing” in the panel to draw every Show me shape on your selection)
+    </label>
+  );
 }
 
 function Settings() {
@@ -190,6 +210,7 @@ function Settings() {
             <input type="checkbox" checked={form.sounds} onChange={(e) => set("sounds", e.target.checked)} /> Sounds (a soft liquid sound when the panel
             opens and closes)
           </label>
+          <DevToggle />
         </div>
       </section>
 

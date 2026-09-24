@@ -31,6 +31,8 @@ export const voiceKeyLetter = storage.defineItem<string>("sync:voiceKeyLetter", 
 export const defaultMode = storage.defineItem<Mode>("sync:defaultMode", { fallback: "floating" });
 export const consoleUrl = storage.defineItem<string>("sync:consoleUrl", { fallback: DEFAULT_CONSOLE_URL });
 export const voiceReplies = storage.defineItem<boolean>("sync:voiceReplies", { fallback: true });
+/** Developer tools (on in dev builds anyway): "glance test drawing" in the panel draws every Show me shape. */
+export const devTools = storage.defineItem<boolean>("local:devTools", { fallback: false });
 /** The water-drop sound as the panel opens and closes (Settings → "Sounds"). */
 export const soundsEnabled = storage.defineItem<boolean>("sync:soundsEnabled", { fallback: sound.enabledByDefault });
 

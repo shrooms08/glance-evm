@@ -52,6 +52,13 @@ export const color = {
   failInkWash: "rgba(180,35,24,.07)",
   failInkLine: "rgba(180,35,24,.30)",
   lightShadow: "rgba(10,10,10,.06)",
+  // Show me's marks on a web page. Lime on a dark page; on a light page lime is nearly invisible (1.3:1 on white), so
+  // marks use limeMark (3.8:1 on white, 3.5:1 on paper) with a faint dark halo. Highlights are washes: text stays readable.
+  limeMark: "#5E9100",
+  markHaloOnLight: "rgba(18,24,6,.16)",
+  markHaloOnDark: "rgba(0,0,0,.55)",
+  highlightOnLight: "rgba(94,145,0,.22)",
+  highlightOnDark: "rgba(196,241,53,.30)",
   // Price charts: the lime (or lime ink) fill fading to transparent, a barely-there grid, the market-closed band.
   chartFillLime: "rgba(196,241,53,.28)",
   chartFillLimeInk: "rgba(79,122,0,.18)",
@@ -315,4 +322,14 @@ export function isLightColor(css: string): boolean {
   if (alpha < 0.5) return true; // mostly transparent: the browser's default white shows through
   const [r, g, b] = [m[1], m[2], m[3]].map((v) => Number(v) / 255) as [number, number, number];
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5;
+}
+
+/**
+ * Show me's mark colors for the background under the target: lime on a dark page; the darker limeMark (3.8:1 on white)
+ * on a light page, each with a faint halo so the stroke separates from busy content. Highlights are translucent washes.
+ */
+export function markColors(onLight: boolean): { stroke: string; halo: string; highlight: string } {
+  return onLight
+    ? { stroke: color.limeMark, halo: color.markHaloOnLight, highlight: color.highlightOnLight }
+    : { stroke: color.lime, halo: color.markHaloOnDark, highlight: color.highlightOnDark };
 }

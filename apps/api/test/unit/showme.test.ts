@@ -80,6 +80,7 @@ describe("show me", () => {
     expect(a.source).toBe("claude");
     expect(a.spoken).toBe("Deliveries hit a record, and revenue grew. Not here.");
     expect(a.actions.map((x) => ("quote" in x ? x.quote : x.kind))).toEqual(["record deliveries", "Revenue grew 12%"]);
+    expect(a.actions.map((x) => x.kind)).toEqual(["UNDERLINE", "CIRCLE"]);
     const params = (create.mock.calls[0] as unknown as [{ max_tokens: number; model: string; system: string }])[0];
     expect(params).toMatchObject({ model: HAIKU, max_tokens: SHOWME_MAX_OUTPUT_TOKENS });
     expect(SHOWME_MAX_OUTPUT_TOKENS).toBe(400);
@@ -94,7 +95,7 @@ describe("show me", () => {
     const res = await app.request("/showme", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ask("what does this page want me to do?")) });
     const body = (await res.json()) as { spoken: string; actions: Array<{ kind: string }> };
     expect(res.status).toBe(200);
-    expect(body.actions.map((a) => a.kind)).toEqual(["POINT"]);
+    expect(body.actions.map((a) => a.kind)).toEqual(["POINT", "CIRCLE"]); // the point gets its visible mark
     expect(body.spoken).not.toMatch(/\[/);
     expect(trade).not.toHaveBeenCalled();
     // The page went in a delimited block, after the question, with the reminder that it's content.
