@@ -103,12 +103,22 @@ export async function readStartState(owner: Address, flavour: DemoVault): Promis
   };
 }
 
+/** How often Get started re-reads the wallet: 5s until it has gas and USDG (or the vault holds some), then 15s. */
+export function startPollMs(state: { eth: bigint; usdg: Record<string, bigint>; vaultFlavour?: DemoVault | null; snapshot: { vaultUsdgBalance: bigint } } | undefined, flavourKey: string = "paxos"): number {
+  if (!state) return 5_000;
+  const key = state.vaultFlavour?.key ?? flavourKey;
+  const hasUsdg = (state.usdg[key] ?? 0n) > 0n || state.snapshot.vaultUsdgBalance > 0n;
+  return state.eth > 0n && hasUsdg ? 15_000 : 5_000;
+}
+
 export function useStartState(owner: Address | undefined, flavour: DemoVault) {
   return useQuery({
     queryKey: ["start", owner, flavour.key],
     queryFn: () => readStartState(owner!, flavour),
     enabled: Boolean(owner),
-    refetchInterval: 15_000,
+    // Every 5 seconds while funds are still on their way (only while the tab is visible), so each row turns Done
+    // as they arrive; every 15 once there's gas and USDG.
+    refetchInterval: (q) => startPollMs(q.state.data),
     retry: 3,
     retryDelay: (a) => [1_000, 2_000, 4_000][Math.min(a, 2)]!,
   });

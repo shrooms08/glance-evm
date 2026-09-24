@@ -8,7 +8,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { getAddress, isAddress } from "viem";
+import { formatEther, getAddress, isAddress } from "viem";
 import { CHART_RANGES } from "@glance/core/chart";
 import { LINES } from "@glance/core/persona";
 
@@ -203,6 +203,15 @@ export function createServerApp(ctx: AppContext) {
   app.use("/resolve/names", rateLimit({ limit: 20, trustProxy: config.TRUST_PROXY, name: "names" }));
 
   app.use("/session/*", rateLimit({ limit: config.SESSION_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "session" }));
+  app.use("/faucet/*", rateLimit({ limit: 10, trustProxy: config.TRUST_PROXY, name: "faucet" }));
+
+  // "Get gas" (src/faucet.ts): off unless FAUCET_PRIVATE_KEY is set.
+  app.get("/faucet", (c) => send(c, { enabled: ctx.faucet !== null, amountEth: ctx.faucet ? formatEther(ctx.faucet.amount) : null }));
+  app.post("/faucet/gas", async (c) => {
+    if (!ctx.faucet) throw new ApiError(404, "FAUCET_OFF", "Glance's gas faucet isn't set up here. Use the public faucet.");
+    const { address: to } = parse(z.object({ address }).strict(), await jsonBody(c));
+    return send(c, await ctx.faucet.gas({ address: to, ip: clientIp(c, config.TRUST_PROXY) }));
+  });
 
   // In production, the public view only (no agent balance, voice decisions or budgets) unless ?admin=<ADMIN_TOKEN>.
   app.get("/health", async (c) => {

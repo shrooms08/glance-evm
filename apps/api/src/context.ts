@@ -3,7 +3,8 @@
  */
 import { dirname, join } from "node:path";
 
-import { getAddress, type Address, type Chain, type PublicClient } from "viem";
+import { createPublicClient, createWalletClient, getAddress, http, parseEther, type Address, type Chain, type PublicClient } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 import { buildCatalog, loadCatalogText, loadPriceSources, type Catalog } from "./catalog.js";
 import { chainFor, createChainClient } from "./chain.js";
@@ -26,6 +27,7 @@ import { glanceVaultAbi } from "./abi.generated.js";
 import { createSessions, JsonSessionStore, type Sessions } from "./sessions.js";
 import { createTradeAuth, type TradeAuth } from "./tradeAuth.js";
 import { voiceMeters } from "./voice/dailyCaps.js";
+import { createFaucet, JsonFaucetStore, type Faucet } from "./faucet.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
 export interface AppContext {
@@ -61,6 +63,8 @@ export interface AppContext {
   sessions: Sessions;
   /** Who may ask the agent to trade a vault: a signed request from a linked browser, or an open demo vault. */
   tradeAuth: TradeAuth;
+  /** "Get gas" (src/faucet.ts), when FAUCET_PRIVATE_KEY is set. */
+  faucet: Faucet | null;
   /** The gitignored .cache dir for persisted caches (portfolio events, news, names); null keeps them in memory (tests). */
   cacheDir: string | null;
 }
@@ -130,6 +134,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     showMe: createShowMe({ apiKey: anthropicKey, model: models.other, budget, symbols: catalog.entries.map((e) => e.symbol), log }),
     cacheDir,
     sessions,
+    faucet: config.FAUCET_PRIVATE_KEY ? faucetFor(config, chain, cacheDir, log) : null,
     tradeAuth: createTradeAuth({
       sessions,
       chainId: deployment.chainId,
@@ -168,4 +173,25 @@ function sessionStoreFile(config: Config, cacheDir: string | null): string | nul
   if (set !== undefined) return set.trim() || null;
   if (config.NODE_ENV === "test") return null;
   return join(cacheDir ?? config.LLM_CACHE_DIR, "sessions.json");
+}
+
+/**
+ * The faucet wallet on one RPC for the whole process (the primary): nonce reads and sends never straddle two nodes.
+ * The key is read here and nowhere else, and never logged.
+ */
+function faucetFor(config: Config, chain: Chain, cacheDir: string | null, log: Log): Faucet {
+  const account = privateKeyToAccount(config.FAUCET_PRIVATE_KEY as `0x${string}`);
+  const primary = rpcUrls(config)[0]!;
+  const reader = createPublicClient({ chain, transport: http(primary, { timeout: 20_000 }) });
+  const wallet = createWalletClient({ account, chain, transport: http(primary, { timeout: 30_000 }) });
+  return createFaucet({
+    chain: {
+      balanceOf: (address) => reader.getBalance({ address }),
+      pendingNonce: () => reader.getTransactionCount({ address: account.address, blockTag: "pending" }),
+      transfer: (to, value, nonce) => wallet.sendTransaction({ to, value, nonce, chain }),
+    },
+    store: new JsonFaucetStore(cacheDir ? join(cacheDir, "faucet.json") : null),
+    dailyCap: parseEther(config.FAUCET_DAILY_ETH),
+    log,
+  });
 }

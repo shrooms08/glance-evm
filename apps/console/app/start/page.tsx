@@ -10,7 +10,7 @@ import { TxStatus } from "@/components/TxStatus";
 import { useGate, useReconnect } from "@/components/useGate";
 import { VaultStep } from "@/components/VaultStep";
 import { CHAIN_ID, demoVaults, primaryVault, type DemoVault } from "@/lib/deployment";
-import { formatUsd, parseDecimal } from "@/lib/format";
+import { parseDecimal } from "@/lib/format";
 import { SingleFlight } from "@/lib/singleFlight";
 import { addMorePlan, setupFlavourKey, setupPlan } from "@/lib/setup";
 import { reportError } from "@/lib/report";
@@ -24,6 +24,7 @@ import { useGlanceExtension } from "@/lib/glanceExtension";
 import { linkAndTell } from "@/lib/linkGlance";
 import { api } from "@/lib/api";
 import { GlanceStep } from "@/components/GlanceStep";
+import { FundingStep } from "@/components/FundingStep";
 
 type RunMode = "setup" | "add-more";
 
@@ -92,6 +93,20 @@ export default function StartPage() {
       setLinkError((err as Error).message.split("\n")[0] ?? "Glance wasn't connected.");
     } finally {
       setLinking(false);
+    }
+  }
+
+  // Step 3's "Get gas": Glance's own faucet, when the API has one (else the public faucet link).
+  const faucet = useQuery({ queryKey: ["faucet"], queryFn: () => api.faucet(), staleTime: 60_000 });
+  const [gas, setGas] = useState<{ state: "idle" } | { state: "sending" } | { state: "sent"; txHash: string } | { state: "failed"; message: string }>({ state: "idle" });
+  async function getGas() {
+    if (!address) return;
+    setGas({ state: "sending" });
+    try {
+      const res = await api.faucetGas(address);
+      setGas({ state: "sent", txHash: res.txHash });
+    } catch (err) {
+      setGas({ state: "failed", message: (err as Error).message });
     }
   }
 
@@ -224,30 +239,17 @@ export default function StartPage() {
         </Step>
 
         <Step n={3} title="Get test ETH and USDG" status={statuses.funds}>
-          <ul className="checks">
-            <Check ok={Boolean(s && s.eth > 0n)}>
-              Test ETH for gas:{" "}
-              <a href="https://faucet.testnet.chain.robinhood.com" target="_blank" rel="noreferrer">
-                faucet.testnet.chain.robinhood.com ↗
-              </a>
-            </Check>
-            <Check ok={Boolean(s && (s.usdg[effective.key] > 0n || s.snapshot.vaultUsdgBalance > 0n))}>
-              {effective.key === "paxos" ? (
-                <>
-                  Paxos USDG:{" "}
-                  <a href="https://faucet.paxos.com/" target="_blank" rel="noreferrer">
-                    faucet.paxos.com ↗
-                  </a>{" "}
-                  (choose Robinhood Chain testnet)
-                </>
-              ) : (
-                "TestUSDG: step 4 takes it from its on-chain faucet for you"
-              )}
-              {s && s.usdg[effective.key] > 0n && (
-                <span className="meta mono"> · your wallet holds {formatUsd(s.usdg[effective.key], s.usdgDecimals[effective.key])}</span>
-              )}
-            </Check>
-          </ul>
+          <FundingStep
+            hasEth={Boolean(s && s.eth > 0n)}
+            hasUsdg={Boolean(s && (s.usdg[effective.key] > 0n || s.snapshot.vaultUsdgBalance > 0n))}
+            usdgKey={effective.key === "paxos" ? "paxos" : "test"}
+            walletUsdg={s?.usdg[effective.key] ?? 0n}
+            usdgDecimals={decimals}
+            faucet={Boolean(faucet.data?.enabled)}
+            connected={isConnected}
+            gas={gas}
+            onGetGas={() => void getGas()}
+          />
         </Step>
 
         <Step n={4} title="Create your vault and fund it" status={statuses.vault}>
@@ -314,15 +316,6 @@ function Step({ n, title, status, children }: { n: number; title: string; status
         </div>
         {children}
       </div>
-    </li>
-  );
-}
-
-function Check({ ok, children }: { ok: boolean; children: ReactNode }) {
-  return (
-    <li className="check" data-ok={ok || undefined}>
-      <span aria-hidden>{ok ? "✓" : "○"}</span>
-      <span>{children}</span>
     </li>
   );
 }

@@ -166,6 +166,20 @@ const envSchema = z.object({
     .min(16, "ADMIN_TOKEN must be at least 16 characters")
     .optional()
     .or(z.literal("").transform(() => undefined)),
+  /**
+   * "Get gas" on the console's Get started: a dedicated faucet wallet that sends 0.0005 test ETH to a new wallet
+   * (src/faucet.ts). Unset: off (the console links the public faucet instead). Never logged, never returned.
+   */
+  FAUCET_PRIVATE_KEY: z
+    .string()
+    .regex(hexKey, "FAUCET_PRIVATE_KEY must be 0x followed by 64 hex characters")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  /** The faucet's total per UTC day, in ETH. */
+  FAUCET_DAILY_ETH: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/, "FAUCET_DAILY_ETH must be a decimal like 0.01")
+    .default("0.01"),
   /** Shown by /health as versions.commit (set by the host, e.g. the deploy's git SHA). */
   GIT_COMMIT: z.string().optional(),
 });
