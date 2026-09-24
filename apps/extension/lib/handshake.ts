@@ -27,6 +27,8 @@ export interface Hello {
   linkedUntil: number | null;
   /** "demo": Glance is on the open demo vault (the default); "own": a vault the console set (or typed by hand). */
   mode: "demo" | "own";
+  /** The keyboard shortcuts as the browser has them ("⌥G"), for the install page. */
+  shortcuts?: { glance: string; talk: string };
 }
 
 export type ConsoleMessage =
@@ -67,6 +69,7 @@ export interface HandshakeDeps {
   /** Posts to the page, to its own origin only. */
   post(message: Hello): void;
   version: string;
+  shortcuts?(): Promise<{ glance: string; talk: string } | null>;
   sessionAddress(): Promise<string>;
   vault(): Promise<string | null>;
   /** Whether a vault is the open demo vault. */
@@ -85,9 +88,9 @@ export function createHandshake(d: HandshakeDeps) {
   const allowed = d.allowedOrigins.includes(d.pageOrigin);
 
   async function hello(): Promise<Hello> {
-    const [sessionAddress, vault, link] = await Promise.all([d.sessionAddress(), d.vault(), d.link()]);
+    const [sessionAddress, vault, link, shortcuts] = await Promise.all([d.sessionAddress(), d.vault(), d.link(), d.shortcuts?.().catch(() => null) ?? null]);
     const linkedUntil = link && vault && same(link.vault, vault) && link.expiresAt > now() ? link.expiresAt : null;
-    return { source: FROM_EXTENSION, type: "GLANCE_HELLO", installed: true, version: d.version, sessionAddress, vault, linkedUntil, mode: !vault || d.isDemo(vault) ? "demo" : "own" };
+    return { source: FROM_EXTENSION, type: "GLANCE_HELLO", installed: true, version: d.version, sessionAddress, vault, linkedUntil, mode: !vault || d.isDemo(vault) ? "demo" : "own", ...(shortcuts ? { shortcuts } : {}) };
   }
 
   async function sayHello() {

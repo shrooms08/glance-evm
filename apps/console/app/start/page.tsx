@@ -24,7 +24,7 @@ import { useGlanceExtension } from "@/lib/glanceExtension";
 import { linkAndTell } from "@/lib/linkGlance";
 import { api } from "@/lib/api";
 import { GlanceStep } from "@/components/GlanceStep";
-import { FundingStep } from "@/components/FundingStep";
+import { FundingStep, PAXOS_FAUCET, PUBLIC_GAS_FAUCET } from "@/components/FundingStep";
 
 type RunMode = "setup" | "add-more";
 
@@ -273,6 +273,12 @@ export default function StartPage() {
             onFinish={() => run("setup", first.raw)}
             runError={runError}
             linkAfter={Boolean(hello) && !glanceLinked && !s?.snapshot.vault}
+            onErrorAction={(kind) => {
+              if (kind === "get-gas") return faucet.data?.enabled ? void getGas() : void window.open(PUBLIC_GAS_FAUCET, "_blank", "noopener");
+              if (kind === "get-usdg") return void window.open(PAXOS_FAUCET, "_blank", "noopener");
+              if (kind === "switch-network") return gate.onSwitchNetwork();
+              run("setup", first.raw);
+            }}
           />
           <TxStatus state={tx.state} onReconnect={() => void reconnect()} />
         </Step>

@@ -7,12 +7,16 @@ import { useState, useSyncExternalStore } from "react";
 
 import { env } from "@/lib/env";
 import { useExtensionInstalled } from "@/lib/extensionPresence";
+import { useGlanceExtension } from "@/lib/glanceExtension";
 import { BROWSERS, detectBrowser, installSteps, type BrowserKey } from "@/lib/install";
 
 const noSubscribe = () => () => {};
 
 export default function InstallPage() {
-  const installed = useExtensionInstalled();
+  const attribute = useExtensionInstalled();
+  const ext = useGlanceExtension();
+  const installed = attribute || ext.state.status === "present";
+  const shortcuts = ext.state.status === "present" ? ext.state.hello.shortcuts : undefined;
   // The browser this page is open in (Chrome on the server render), until the reader picks another.
   const detected = useSyncExternalStore(
     noSubscribe,
@@ -25,10 +29,12 @@ export default function InstallPage() {
     () => "chrome" as BrowserKey,
   );
   const [chosen, setChosen] = useState<BrowserKey | null>(null);
-  return <InstallGuide installed={installed} browser={chosen ?? detected} onBrowser={setChosen} downloadUrl={env.extensionDownloadUrl} />;
+  return <InstallGuide installed={installed} browser={chosen ?? detected} onBrowser={setChosen} downloadUrl={env.extensionDownloadUrl} shortcuts={shortcuts} />;
 }
 
-export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBrowser(b: BrowserKey): void; downloadUrl: string }) {
+export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBrowser(b: BrowserKey): void; downloadUrl: string; shortcuts?: { glance: string; talk: string } }) {
+  const glanceKey = p.shortcuts?.glance || "⌥G (Alt+G)";
+  const talkKey = p.shortcuts?.talk || "⌥V (Alt+V)";
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (text: string) => {
     void navigator.clipboard?.writeText(text).then(() => setCopied(text), () => {});
@@ -42,7 +48,7 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
           <h1 className="title">{p.installed ? "You're set. Open any news article." : "Install Glance in your browser"}</h1>
           <p className="meta">
             {p.installed
-              ? "Glance underlines the companies it knows. Hover one for its price and a buy button, or hold ⌥V (Alt+V) and ask."
+              ? `Glance underlines the companies it knows. Hover one for its price and a buy button, or press ${talkKey} and ask.`
               : "About a minute. Glance starts on the demo vault, so you can try a buy straight away: no wallet needed."}
           </p>
         </div>
@@ -56,7 +62,10 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
             </span>
             <div>
               <p className="ui">Glance is in this browser.</p>
-              <p className="meta">Shortcuts: ⌥G (Alt+G) glances at the page, hold ⌥V (Alt+V) to talk. Change them in your browser&apos;s keyboard shortcuts for extensions.</p>
+              <p className="meta">
+                Shortcuts: {glanceKey} glances at the page, {talkKey} to talk (press again to send). Change them in your browser&apos;s keyboard shortcuts for
+                extensions ({BROWSERS[p.browser].extensionsPage}/shortcuts).
+              </p>
             </div>
           </output>
         </section>

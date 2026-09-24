@@ -14,6 +14,7 @@ import { useGlance } from "./context";
 import { Orb } from "./Orb";
 import { Sparkline } from "./Sparkline";
 import { useTradeFlow, type FlowStep, type PageContextSource } from "./useTradeFlow";
+import { tradeErrorAction } from "../lib/errorAction";
 import { DEMO_VAULT_LABEL, isOpenDemoVault, linkedUntil } from "../lib/linking";
 import { WhyLine } from "./Why";
 
@@ -131,7 +132,7 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
 
       {flow.step === "idle" || flow.step === "failed" ? (
         <div className="g-section">
-          {flow.step === "failed" && <FailedNotice code={flow.code} message={flow.message} />}
+          {flow.step === "failed" && <FailedNotice code={flow.code} message={flow.message} onRetry={() => void start(flow.amount)} />}
           {/* On the open demo vault: one tap to try it (a real testnet buy, inside the demo vault's limits). */}
           {isOpenDemoVault(g.vaultAddress) && (
             <button className="g-btn g-btn-primary" onClick={() => void start("10")} disabled={!price || price.marketState === "STALE"}>
@@ -293,16 +294,18 @@ export function NeedsLink({
   );
 }
 
-export function FailedNotice({ code, message }: { code: string; message: string }) {
+export function FailedNotice({ code, message, onRetry }: { code: string; message: string; onRetry?(): void }) {
   const g = useGlance();
+  const action = tradeErrorAction(code);
+  const run = action.kind === "set-up-vault" ? g.openSetup : action.kind === "link-glance" ? g.openRelink : onRetry;
   return (
     <div className="g-notice" style={{ padding: 0 }} role="status">
       <span className="g-body">{message}</span>
-      {code === "NO_VAULT" || code === "API_OFFLINE" || code === "TIMEOUT" ? (
-        <button className="g-btn" onClick={g.openSettings}>
-          {code === "NO_VAULT" ? "Add your vault" : "Check the API in settings"}
+      {run && (
+        <button className="g-btn" onClick={run}>
+          {action.label}
         </button>
-      ) : null}
+      )}
     </div>
   );
 }

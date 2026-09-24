@@ -11,7 +11,7 @@ import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
 import { forgetSession, linkExpiry, sessionAddress, signTrade, type TradeBody } from "../lib/session";
 import { consoleUrl } from "../lib/settings";
-import type { ConsolePage, SessionInfo, SessionLinkStarted } from "../lib/messages";
+import type { CommandMessage, ConsolePage, SessionInfo, SessionLinkStarted, Shortcuts } from "../lib/messages";
 import { consolePageUrl } from "../lib/consoleOrigins";
 import { SESSION_HEADERS } from "@glance/core/session";
 
@@ -241,6 +241,15 @@ export default defineBackground(() => {
     });
   });
 
+  // The keyboard shortcuts, as browser commands: forwarded to the active tab's Glance (which routes to the side panel
+  // when docked). The key press also grants activeTab for that tab.
+  browser.commands?.onCommand.addListener((command, tab) => {
+    if (command !== "glance" && command !== "talk") return;
+    const id = tab?.id;
+    if (id === undefined) return;
+    void browser.tabs.sendMessage(id, { kind: "command", command } satisfies CommandMessage).catch(() => {});
+  });
+
   browser.runtime.onMessage.addListener((message: Message | VoiceRequest | VoiceEvent | SpeechEvent, sender) => {
     switch (message.kind) {
       case "voice:start":
@@ -302,6 +311,8 @@ export default defineBackground(() => {
         return startLink(message.vault);
       case "session:forget":
         return forgetSession().then(() => true);
+      case "commands:get":
+        return currentShortcuts();
       case "open:console":
         return openConsole(message.page, message.vault).then(() => true);
       case "open:settings":
@@ -322,3 +333,11 @@ export default defineBackground(() => {
     }
   });
 });
+
+/** The two shortcuts as the browser has them now, for the panel and the install page ("⌥G" on a Mac). */
+async function currentShortcuts(): Promise<Shortcuts> {
+  const all = await browser.commands.getAll().catch(() => []);
+  // The browser formats them for its platform already: "⌥G" on a Mac, "Alt+G" elsewhere.
+  const of = (name: string) => all.find((c) => c.name === name)?.shortcut ?? "";
+  return { glance: of("glance"), talk: of("talk") };
+}

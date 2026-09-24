@@ -53,4 +53,12 @@ export interface SessionLinkStarted {
   url: string;
 }
 
-export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | SessionMessage | { kind: "open:settings" };
+/** A browser command (keyboard shortcut), forwarded by the background to the active tab. */
+export type CommandMessage = { kind: "command"; command: "glance" | "talk" };
+/** The shortcuts as the browser has them now ("⌥G"), or "" when the user removed one. */
+export interface Shortcuts {
+  glance: string;
+  talk: string;
+}
+
+export type Message = ApiRequest | PanelMessage | PageMessage | CaptureRequest | ChartAnnotateMessage | SessionMessage | CommandMessage | { kind: "commands:get" } | { kind: "open:settings" };

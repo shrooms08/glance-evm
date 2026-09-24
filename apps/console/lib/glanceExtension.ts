@@ -28,6 +28,8 @@ export interface GlanceHello {
   linkedUntil: number | null;
   /** "demo": Glance is on the open demo vault; "own": a vault the console set (or one typed by hand). */
   mode?: "demo" | "own";
+  /** The keyboard shortcuts as this browser has them ("⌥G"). */
+  shortcuts?: { glance: string; talk: string };
 }
 
 export type ExtensionState =
@@ -47,7 +49,9 @@ export function parseHello(data: unknown): GlanceHello | null {
   const vault = typeof m.vault === "string" && isAddress(m.vault) ? (m.vault as Address) : null;
   const linkedUntil = typeof m.linkedUntil === "number" ? m.linkedUntil : null;
   const mode = m.mode === "demo" || m.mode === "own" ? m.mode : undefined;
-  return { installed: true, version: typeof m.version === "string" ? m.version : "", sessionAddress: m.sessionAddress as Address, vault, linkedUntil, mode };
+  const sc = m.shortcuts as { glance?: unknown; talk?: unknown } | undefined;
+  const shortcuts = sc && typeof sc.glance === "string" && typeof sc.talk === "string" ? { glance: sc.glance.slice(0, 20), talk: sc.talk.slice(0, 20) } : undefined;
+  return { installed: true, version: typeof m.version === "string" ? m.version : "", sessionAddress: m.sessionAddress as Address, vault, linkedUntil, mode, shortcuts };
 }
 
 /** Whether a window message may be read: this very window, this page's origin. */

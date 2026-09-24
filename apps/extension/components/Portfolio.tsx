@@ -7,6 +7,8 @@
 import { BOUGHT_OUTSIDE_PAGE, EMPTY_PORTFOLIO } from "@glance/core/tone";
 import { useCallback, useEffect, useState } from "react";
 
+import { cachedPortfolio, cacheAge, savePortfolio } from "../lib/portfolioCache";
+
 import { api } from "../lib/api";
 import type { Portfolio, PortfolioPosition } from "../lib/api-types";
 import { ageHours, priceUsd, shortHash } from "../lib/format";
@@ -26,13 +28,23 @@ export function PortfolioCard({ initialTab = "positions", onClose }: { initialTa
   const [journal, setJournal] = useState<JournalEntry[]>([]);
   const [otherPrices, setOtherPrices] = useState<Record<string, string>>({});
 
+  // Shown at once from this browser's last copy (with its age), then refreshed in the background.
+  const [staleAt, setStaleAt] = useState<number | null>(null);
   const load = useCallback(async () => {
     setJournal(await listJournal().catch(() => []));
     if (!isAddress(g.vaultAddress)) return;
     setError(null);
+    const cached = await cachedPortfolio(g.vaultAddress);
+    if (cached) {
+      setData((d) => d ?? cached.data);
+      setStaleAt((t) => t ?? cached.at);
+    }
     const res = await api.portfolio(g.vaultAddress);
-    if (res.ok) setData(res.data);
-    else setError(res.message);
+    if (res.ok) {
+      setData(res.data);
+      setStaleAt(null);
+      void savePortfolio(g.vaultAddress, res.data);
+    } else setError(res.message);
   }, [g.vaultAddress]);
 
   useEffect(() => {
@@ -71,7 +83,7 @@ export function PortfolioCard({ initialTab = "positions", onClose }: { initialTa
           )}
         </div>
         {tab === "positions" ? (
-          <Positions data={data} error={error} journal={journal} hasVault={isAddress(g.vaultAddress)} onRetry={() => void load()} />
+          <Positions data={data} error={error} journal={journal} hasVault={isAddress(g.vaultAddress)} onRetry={() => void load()} staleAt={staleAt} />
         ) : (
           <Journal
             entries={journal}
@@ -91,9 +103,26 @@ export function PortfolioCard({ initialTab = "positions", onClose }: { initialTa
   );
 }
 
-export function Positions({ data, error, journal, hasVault, onRetry }: { data: Portfolio | null; error: string | null; journal: JournalEntry[]; hasVault: boolean; onRetry?(): void }) {
-  if (!hasVault) return <span className="g-meta">Add your vault in settings to see your portfolio.</span>;
-  if (error) {
+export function Positions({
+  data,
+  error,
+  journal,
+  hasVault,
+  onRetry,
+  staleAt = null,
+  now = Date.now(),
+}: {
+  data: Portfolio | null;
+  error: string | null;
+  journal: JournalEntry[];
+  hasVault: boolean;
+  onRetry?(): void;
+  /** Showing this browser's last copy, from then (null: fresh). */
+  staleAt?: number | null;
+  now?: number;
+}) {
+  if (!hasVault) return <span className="g-meta">Set up your own vault in the console to see your portfolio.</span>;
+  if (error && !data) {
     return (
       <div className="g-row" style={{ flexWrap: "wrap" }}>
         <span className="g-meta">{error}</span>
@@ -117,6 +146,18 @@ export function Positions({ data, error, journal, hasVault, onRetry }: { data: P
   const t = data.totals;
   return (
     <div className="g-portfolio">
+      {staleAt !== null && (
+        <div className="g-row" style={{ flexWrap: "wrap" }} aria-live="polite">
+          <span className="g-meta">
+            {cacheAge(staleAt, now)} · {error ? "couldn't refresh" : "refreshing…"}
+          </span>
+          {error && onRetry && (
+            <button className="g-link-btn" onClick={onRetry}>
+              Try again
+            </button>
+          )}
+        </div>
+      )}
       <div className="g-between" style={{ alignItems: "flex-end" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span className="g-meta">Total</span>

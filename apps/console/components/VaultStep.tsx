@@ -14,6 +14,7 @@ import type { DemoVault } from "@/lib/deployment";
 import { formatUsd, shortAddress } from "@/lib/format";
 import type { SetupPlan } from "@/lib/setup";
 import type { StepStatus, VaultProgress } from "@/lib/setupStatus";
+import { errorAction, type ErrorActionKind } from "@/lib/errorAction";
 
 import { Notice } from "./Notice";
 
@@ -45,6 +46,19 @@ export interface VaultStepProps {
   runError: string | null;
   /** Glance is in this browser and not linked yet: "Create my vault" goes straight on to linking (one signature). */
   linkAfter?: boolean;
+  /** The one way on from an error (Get gas, Get USDG, Switch network, Try again). */
+  onErrorAction?(kind: ErrorActionKind): void;
+}
+
+/** Exactly one action for an error, chosen from its own words. */
+export function ErrorActionButton({ message, code, onAction }: { message: string; code?: string; onAction?(kind: ErrorActionKind): void }) {
+  if (!onAction) return null;
+  const a = errorAction(message, code);
+  return (
+    <button className="btn btn-primary btn-small" onClick={() => onAction(a.kind)}>
+      {a.label}
+    </button>
+  );
 }
 
 /**
@@ -176,12 +190,12 @@ export function VaultStep(p: VaultStepProps) {
         </ol>
       )}
       {!done && p.plan?.blocked && (
-        <Notice tone="guard" title="Can't finish yet">
+        <Notice tone="guard" title="Can't finish yet" action={<ErrorActionButton message={p.plan.blocked} onAction={p.onErrorAction} />}>
           {p.plan.blocked}
         </Notice>
       )}
       {p.runError && p.runError !== p.plan?.blocked && (
-        <Notice tone="fail" title="Setup stopped">
+        <Notice tone="fail" title="Setup stopped" action={<ErrorActionButton message={p.runError} onAction={p.onErrorAction} />}>
           {p.runError}
         </Notice>
       )}

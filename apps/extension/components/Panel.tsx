@@ -52,8 +52,9 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const { closed, freshestAgeSeconds } = marketClosed(g.health);
-  const glanceLabel = keyLabel(g.glanceKey);
-  const voiceLabel = keyLabel(g.voiceKey);
+  // The browser's own shortcuts when it has them (Settings > keyboard shortcuts for extensions), else the in-page keys.
+  const glanceLabel = g.shortcuts?.glance || keyLabel(g.glanceKey);
+  const voiceLabel = g.shortcuts?.talk || keyLabel(g.voiceKey);
 
   useEffect(() => {
     if (autoFocusInput) input.current?.focus();
@@ -173,6 +174,13 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           </div>
         )}
 
+        {assistant.card?.kind === "spent" && !g.vault && (
+          <div className="g-section" aria-busy="true" style={{ gap: 8 }}>
+            <span className="g-skeleton" style={{ width: "60%" }} />
+            <span className="g-skeleton" style={{ width: "45%" }} />
+            <span className="g-skeleton" style={{ width: "50%" }} />
+          </div>
+        )}
         {assistant.card?.kind === "spent" && g.vault && (
           <div className="g-section">
             <dl className="g-facts">

@@ -185,7 +185,16 @@ export function GlanceCardView(p: {
           )}
 
           {p.problem && (
-            <Notice tone="fail" title="Not done" role="alert">
+            <Notice
+              tone="fail"
+              title="Not done"
+              role="alert"
+              action={
+                <button className="btn btn-small btn-primary" onClick={p.link?.linked && !soon ? p.onUnlink : p.onLink} disabled={off}>
+                  Try again
+                </button>
+              }
+            >
               {p.problem}
             </Notice>
           )}

@@ -11,6 +11,7 @@ import { safely, send } from "../lib/lifecycle";
 import type { CatalogStock, Health, Vault } from "../lib/api-types";
 import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, vaultSource, voiceKeyLetter, voiceReplies, type Mode, type VaultSource } from "../lib/settings";
 import { relinkHint, type RelinkHint } from "../lib/handshake";
+import type { Shortcuts } from "../lib/messages";
 import { openConsolePage } from "../lib/linking";
 import { sessionLink } from "../lib/session";
 import { motion, sound } from "../lib/tokens";
@@ -55,6 +56,8 @@ export interface Glance {
   /** Opens a console page in a new tab ("" for the Dashboard, "/start" for Get started). */
   openConsole(path?: string): void;
   vaultSource: VaultSource | null;
+  /** The keyboard shortcuts as the browser has them now (browser commands), or null until known. */
+  shortcuts: Shortcuts | null;
   /** From 3 days before this browser's link ends: "Relink" on the orb and in the panel. */
   relink: RelinkHint;
   /** Opens the console: Get started, or the Dashboard's link card for this vault (one signature there). */
@@ -99,6 +102,8 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const voice = useSetting(voiceReplies, true);
   const sounds = useSetting(soundsEnabled, sound.enabledByDefault);
   const source = useSetting<VaultSource | null | undefined>(vaultSource as never, undefined);
+  const [shortcuts, setShortcuts] = useState<Shortcuts | null>(null);
+  useEffect(() => void send<Shortcuts | undefined>({ kind: "commands:get" }).then((s) => setShortcuts(s ?? null), () => {}), []);
   const link = useSetting(sessionLink, null);
 
   const [catalog, setCatalog] = useState<CatalogStock[]>([]);
@@ -224,11 +229,12 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
       openConsole: (path = "") => window.open(`${consoleLink.replace(/\/+$/, "")}${path}`, "_blank", "noopener"),
       vaultSource: source ?? null,
+      shortcuts,
       relink: relinkHint(link, vaultAddr, Math.floor(Date.now() / 1000)),
       openSetup: () => void openConsolePage("start"),
       openRelink: () => void openConsolePage("link", vaultAddr),
     }),
-    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link, shortcuts],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

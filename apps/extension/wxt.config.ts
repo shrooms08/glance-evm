@@ -19,6 +19,12 @@ export default defineConfig({
     host_permissions: ["http://localhost/*", "http://127.0.0.1/*"],
     optional_host_permissions: ["https://*/*", "http://*/*"],
     action: { default_title: "Open Glance in the side panel" },
+    // Changeable in the browser's keyboard shortcuts for extensions. A command's key press also grants activeTab, so
+    // Show me can take its screenshot of the page. The in-page listeners remain where a command can't fire.
+    commands: {
+      glance: { suggested_key: { default: "Alt+G", mac: "Alt+G" }, description: "Glance at this page" },
+      talk: { suggested_key: { default: "Alt+V", mac: "Alt+V" }, description: "Talk to Glance (press again to send)" },
+    },
     icons: { 16: "icon/16.png", 32: "icon/32.png", 48: "icon/48.png", 128: "icon/128.png" },
     // chart-mount.js: the floating panel's chart, loaded by the content script on first use.
     web_accessible_resources: [{ resources: ["fonts/*", "glance-mark.png", "sfx/*", "chart-mount.js"], matches: ["<all_urls>"] }],

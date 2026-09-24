@@ -33,6 +33,7 @@ import StockChart from "../../components/StockChart";
 import { greeted } from "../../components/useGreeting";
 import { Tour, Welcome } from "../../components/Onboarding";
 import { firstRun, prefersReducedMotion, tick, tourDone, tourSteps } from "../../lib/onboarding";
+import { createCommandTalk } from "../../lib/commandTalk";
 import { GREETING, SPOKEN_GREETING } from "@glance/core/persona";
 import { api } from "../../lib/api";
 import { findQuote, nextSentence, revealRange } from "../../lib/anchor";
@@ -318,11 +319,28 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       if (msg.kind === "page:ask") askRef.current(msg.question);
       // The side panel is placing a buy: this page, and the sentence that named the company (kept in this browser).
       if (msg.kind === "page:context") return Promise.resolve(pageContextFor(msg.symbol)) as never;
+      // A keyboard shortcut, as a browser command (lib/commandTalk.ts for talk's press / press-again).
+      if (msg.kind === "command") {
+        if (msg.command === "glance") void glanceRef.current();
+        else talkCommand.current.press();
+      }
       return undefined;
     };
     safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
     return () => safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
   }, [host, underliner, g.catalog]);
+
+  // Browser commands arrive in the listener above; these refs always hold the latest glance and talk handlers.
+  const glanceRef = useRef<() => Promise<void>>(async () => {});
+  const talkHandlers = useRef({ start: () => {}, stop: () => {} });
+  const talkCommand = useRef(
+    createCommandTalk({
+      start: () => talkHandlers.current.start(),
+      stop: () => talkHandlers.current.stop(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+    }),
+  );
 
   // ---- glance (Option+G, tap) --------------------------------------------------------------------------------
   const glance = useCallback(async () => {
@@ -371,6 +389,12 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   }, [panelOpen]);
 
   // Capture phase, so the keys work even while focus is inside our shadow root, and the page never sees them.
+  glanceRef.current = glance;
+  talkHandlers.current = { start: startTalking, stop: stopTalking };
+  // Listening ended some other way (Escape, silence, the panel): the next talk command starts afresh.
+  useEffect(() => {
+    if (!assistant.listening) talkCommand.current.reset();
+  }, [assistant.listening]);
   useHotkeys(
     { glance: g.glanceKey, voice: g.voiceKey },
     {

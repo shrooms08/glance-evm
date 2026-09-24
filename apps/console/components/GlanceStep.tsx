@@ -42,7 +42,7 @@ export function GlanceStep(p: {
       )}
       <div className="row">
         <button className="btn btn-primary" onClick={p.onConnect} disabled={p.busy || !p.ready}>
-          {p.busy ? "Check your wallet…" : "Connect Glance"}
+          {p.busy ? "Check your wallet…" : p.error ? "Try again" : "Connect Glance"}
         </button>
       </div>
     </>

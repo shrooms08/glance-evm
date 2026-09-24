@@ -25,6 +25,7 @@ export default defineContentScript({
       pageOrigin: location.origin,
       post: (m) => window.postMessage(m, location.origin),
       version: browser.runtime.getManifest().version,
+      shortcuts: async () => (await browser.runtime.sendMessage({ kind: "commands:get" })) as { glance: string; talk: string },
       sessionAddress: async () => ((await browser.runtime.sendMessage({ kind: "session:info" })) as SessionInfo).address,
       // The vault Glance uses: the one the console set, or one typed by hand; the open demo vault by default.
       vault: () => vaultAddress.getValue(),
