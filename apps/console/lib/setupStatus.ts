@@ -19,7 +19,7 @@ export const STEP_TITLES: Record<StepKey, string> = {
   network: "Add Robinhood Chain testnet",
   funds: "Get test ETH and USDG",
   vault: "Create your vault and fund it",
-  extension: "Install the Glance extension",
+  extension: "Connect Glance to your vault",
 };
 
 export const STATUS_LABELS: Record<StepStatus, string> = {
@@ -51,6 +51,7 @@ export interface StatusInputs {
   };
   /** A deposit confirmed in this session (its receipt), in case the RPC's balance read lags behind it. */
   depositConfirmed: boolean;
+  /** Glance in this browser is linked to the vault (the API's word). */
   extension: boolean;
   activity: Activity;
 }

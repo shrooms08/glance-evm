@@ -1,10 +1,9 @@
 "use client";
 import { isRpcTrouble, RPC_TROUBLE_MESSAGE } from "@glance/core/rpc";
-import { useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
 import type { Address, Hex } from "viem";
-import { useAccount } from "wagmi";
+import { useAccount, useSignTypedData } from "wagmi";
 
 import { Notice } from "@/components/Notice";
 import { TxStatus } from "@/components/TxStatus";
@@ -21,7 +20,10 @@ import { describeTxError } from "@/lib/txMessages";
 import { useOwnerTx } from "@/lib/useOwnerTx";
 import { readStartState, useStartState } from "@/lib/useSetupSnapshot";
 import { useDevMode, useHref } from "@/lib/vault";
-import { useExtensionInstalled } from "@/lib/extensionPresence";
+import { useGlanceExtension } from "@/lib/glanceExtension";
+import { linkAndTell } from "@/lib/linkGlance";
+import { api } from "@/lib/api";
+import { GlanceStep } from "@/components/GlanceStep";
 
 type RunMode = "setup" | "add-more";
 
@@ -45,7 +47,8 @@ export default function StartPage() {
   const flavourKey = setupFlavourKey(dev, chosenKey);
   const flavour = demoVaults.find((d) => d.key === flavourKey)!;
   const q = useStartState(address, flavour);
-  const extension = useExtensionInstalled();
+  const ext = useGlanceExtension();
+  const hello = ext.state.status === "present" ? ext.state.hello : null;
   const onChain = chainId === CHAIN_ID;
   const s = q.data;
   const effective = s?.vaultFlavour ?? flavour;
@@ -53,6 +56,44 @@ export default function StartPage() {
   const tx = useOwnerTx(decimals);
   const queryClient = useQueryClient();
   const href = useHref();
+
+  // Step 5: is Glance in this browser linked to this wallet's vault (the API's word)?
+  const myVault = s?.snapshot.vault ?? null;
+  const glanceLink = useQuery({
+    queryKey: ["glance-link", myVault, hello?.sessionAddress],
+    queryFn: () => api.sessionStatus(myVault!, hello!.sessionAddress),
+    enabled: Boolean(myVault && hello),
+  });
+  const glanceLinked = glanceLink.data?.linked ? glanceLink.data.expiresAt : null;
+  const { signTypedDataAsync } = useSignTypedData();
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  /**
+   * One signature links Glance in this browser to the wallet's own vault (the API checks the signer is its owner on
+   * chain), then tells Glance which vault to use: nothing to paste.
+   */
+  async function connectGlance(vault: Address) {
+    if (!hello) return;
+    setLinking(true);
+    setLinkError(null);
+    try {
+      await linkAndTell({
+        vault,
+        session: hello.sessionAddress,
+        sign: ((t: Parameters<typeof signTypedDataAsync>[0]) => signTypedDataAsync(t)) as never,
+        // This is the connected wallet's own vault (found by its owner), on the right network.
+        ownerVerified: gate.reason === null,
+        tell: ext,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["glance-link"] });
+    } catch (err) {
+      reportError("Connect Glance", err);
+      setLinkError((err as Error).message.split("\n")[0] ?? "Glance wasn't connected.");
+    } finally {
+      setLinking(false);
+    }
+  }
 
   const [deposit, setDeposit] = useState("10");
   const [addMore, setAddMore] = useState("");
@@ -80,7 +121,7 @@ export default function StartPage() {
     onChain,
     chain: s ? { eth: s.eth, walletUsdg: s.usdg[effective.key], snapshot: s.snapshot, flavour: effective, usdgDecimals: decimals } : undefined,
     depositConfirmed,
-    extension,
+    extension: glanceLinked !== null,
     activity,
   };
   const statuses = stepStatuses(inputs);
@@ -123,6 +164,11 @@ export default function StartPage() {
           if (mode === "add-more") setAddMore("");
         },
       });
+      // Glance is in this browser: creating the vault goes straight on to linking it (one signature, the last prompt).
+      if (outcome.kind === "done" && mode === "setup" && hello && !glanceLinked) {
+        const fresh = await readStartState(owner, flavour);
+        if (fresh.snapshot.vault) await connectGlance(fresh.snapshot.vault);
+      }
       // Every ending but "done" is shown; a failed transaction already shows its own reason in TxStatus.
       if (outcome.kind === "blocked" || outcome.kind === "stopped") {
         reportError(`Get started (${mode}): ${outcome.kind}`, new Error(outcome.reason));
@@ -224,21 +270,21 @@ export default function StartPage() {
             addMore={{ value: addMore, error: more.error, plan: morePlan, onChange: setAddMore, onSubmit: () => run("add-more", more.raw) }}
             onFinish={() => run("setup", first.raw)}
             runError={runError}
+            linkAfter={Boolean(hello) && !glanceLinked && !s?.snapshot.vault}
           />
           <TxStatus state={tx.state} onReconnect={() => void reconnect()} />
         </Step>
 
-        <Step n={5} title="Install the Glance extension" status={statuses.extension}>
-          <p className="meta">
-            {extension ? (
-              "Detected in this browser."
-            ) : (
-              <>
-                About a minute, step by step for Chrome, Brave, Arc and Edge: <Link href="/install">Get Glance</Link>. This page notices by itself when it&apos;s
-                installed. (This step isn&apos;t on chain.)
-              </>
-            )}
-          </p>
+        <Step n={5} title="Connect Glance to your vault" status={statuses.extension}>
+          <GlanceStep
+            ext={ext.state.status}
+            vault={myVault}
+            linkedUntil={glanceLinked}
+            busy={linking || busy}
+            ready={gate.reason === null}
+            error={linkError}
+            onConnect={() => myVault && void connectGlance(myVault)}
+          />
         </Step>
       </ol>
     </div>

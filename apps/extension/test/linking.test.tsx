@@ -46,12 +46,12 @@ const flow = (link: "idle" | "waiting" | "linked" | "failed", until?: number) =>
 });
 
 describe("the card when a trade needs a linked browser", () => {
-  it("says 'Link this browser to your vault first.' with a button that starts linking", () => {
+  it("says 'Link this browser to your vault first.' with 'Link Glance', which starts linking", () => {
     const onLink = vi.fn();
     const { host, unmount } = render(createElement(NeedsLink, { flow: flow("idle"), symbol: "TSLA", onLink, onRetry: () => {}, onCancel: () => {} }));
     expect(host.textContent).toContain("Link this browser to your vault first.");
     expect(host.textContent).toContain("It can never withdraw.");
-    act(() => button(host, "Link this browser")!.click());
+    act(() => button(host, "Link Glance")!.click());
     expect(onLink).toHaveBeenCalledTimes(1);
     unmount();
   });

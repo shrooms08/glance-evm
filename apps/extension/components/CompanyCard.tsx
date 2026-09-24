@@ -237,8 +237,9 @@ function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash:
 }
 
 /**
- * The API wants this browser linked to the vault before it asks the agent to trade: nothing was sent. One button opens
- * the console, where the owner signs (no transaction); once linked, one tap sends the same buy.
+ * The API wants this browser linked to the vault before it asks the agent to trade: nothing was sent. "Link Glance" opens
+ * the console's Dashboard with its link card focused, where the owner signs (no transaction); once linked, one tap sends
+ * the same buy. Never shown for the demo vault (it's open).
  */
 export function NeedsLink({
   flow,
@@ -274,13 +275,13 @@ export function NeedsLink({
         <>
           <span className="g-meta">
             {flow.link === "waiting"
-              ? "Waiting for your vault owner's signature in the console tab…"
-              : "Nothing was sent. Your vault's owner signs once in the console (a signature, not a transaction), and this browser can then ask Glance to trade within your vault's limits. It can never withdraw."}
+              ? "Waiting for your signature on the console's Dashboard…"
+              : "Nothing was sent. Link Glance opens your console's Dashboard: one signature from your vault's owner (not a transaction), and this browser can then ask Glance to trade within your vault's limits. It can never withdraw."}
           </span>
-          {flow.link === "failed" && <span className="g-meta">Not linked yet. Try again, and sign in the console with the vault owner's wallet.</span>}
+          {flow.link === "failed" && <span className="g-meta">Not linked yet. Try again, and sign on the console's Dashboard with the vault owner's wallet.</span>}
           <div className="g-row">
             <button className="g-btn g-btn-primary g-grow" onClick={onLink} disabled={flow.link === "waiting"}>
-              {flow.link === "waiting" ? "Waiting for the signature…" : "Link this browser"}
+              {flow.link === "waiting" ? "Waiting for the signature…" : "Link Glance"}
             </button>
             <button className="g-btn g-btn-ghost" onClick={onCancel}>
               Cancel

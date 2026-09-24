@@ -257,6 +257,9 @@ export const api = {
   health: () => apiGet<HealthView>("/health"),
   /** The vault's linked browsers (public: addresses and dates only). */
   linkedBrowsers: (vault: string) => apiGet<{ sessions: LinkedBrowser[] }>(`/session/list?vault=${vault}`),
+  /** Whether this browser's Glance session is linked to the vault (the API's word). */
+  sessionStatus: (vault: string, session: string) =>
+    apiGet<{ linked: true; expiresAt: number; linkedAt: number } | { linked: false; reason: string; expiresAt?: number }>(`/session/status?vault=${vault}&session=${session}`),
   linkBrowser: (body: unknown) => apiPost<{ linked: true; expiresAt: number }>("/session/link", body),
   unlinkBrowser: (body: unknown) => apiPost<{ revoked: true }>("/session/revoke", body),
   catalog: () => apiGet<CatalogView>("/catalog"),

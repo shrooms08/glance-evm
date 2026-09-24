@@ -12,6 +12,7 @@ import { checklistRows, dismissChecklist } from "../lib/onboarding";
 import { Checklist, DemoNotice, EmptyPage } from "./Onboarding";
 import { useChecklist } from "./useChecklist";
 import type { PageContext } from "../lib/journal";
+import { RelinkNotice } from "./Setup";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
 import { WhyCard } from "./Why";
@@ -118,13 +119,15 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           <div className="g-notice" role="status" style={{ borderTop: "1px solid var(--g-line)" }}>
             <span className="g-ui">No vault yet</span>
             <span className="g-meta">You can look up prices now. To trade, set up your own vault in the console.</span>
-            <button className="g-btn" onClick={() => g.openConsole("/start")}>
+            <button className="g-btn" onClick={g.openSetup}>
               Set up my own vault
             </button>
           </div>
         ) : isOpenDemoVault(g.vaultAddress) ? (
-          <DemoNotice onSetup={() => g.openConsole("/start")} />
-        ) : null}
+          <DemoNotice onSetup={g.openSetup} />
+        ) : (
+          <RelinkNotice hint={g.relink} onRelink={g.openRelink} />
+        )}
 
         {checklistState && !checklistState.dismissed && <Checklist rows={checklistRows(checklistState, isAddress(g.vaultAddress) && !isOpenDemoVault(g.vaultAddress))} onDismiss={() => void dismissChecklist()} />}
 

@@ -41,7 +41,9 @@ export type ChartAnnotateMessage = { kind: "chart:annotate"; annotation: import(
  * This browser's session (the key stays in the background worker): its address; open the console to link it to a vault
  * (the owner signs there); forget it ("Unlink this browser").
  */
-export type SessionMessage = { kind: "session:info" } | { kind: "session:link"; vault: string } | { kind: "session:forget" };
+export type SessionMessage = { kind: "session:info" } | { kind: "session:link"; vault: string } | { kind: "session:forget" } | { kind: "open:console"; page: ConsolePage; vault?: string };
+/** Console pages the extension opens: Get started, or the Dashboard with its "Glance in this browser" card focused. */
+export type ConsolePage = "start" | "link";
 export interface SessionInfo {
   address: string;
 }

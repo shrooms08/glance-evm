@@ -2,7 +2,7 @@
  * Settings: API base URL, vault address, the glance and voice keys, floating or docked default, console URL, voice replies, sounds, the
  * "Enable voice" microphone grant with voice diagnostics, and a connection test against GET /health.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
@@ -27,10 +27,12 @@ import {
   voiceKeyLetter,
   voiceReplies,
   devTools,
+  vaultSource,
   type Mode,
+  type VaultSource,
 } from "../../lib/settings";
 import { sound } from "../../lib/tokens";
-import { DEMO_VAULT_LABEL, forgetThisBrowser, isOpenDemoVault, linkedUntil, linkStatus, sessionInfo, startLinking, waitForLink } from "../../lib/linking";
+import { BrowserLink, vaultSourceLine } from "../../components/BrowserLink";
 
 type Test = { state: "idle" } | { state: "running" } | { state: "ok"; health: Health } | { state: "failed"; message: string };
 
@@ -63,92 +65,37 @@ function DevToggle() {
   );
 }
 
-type LinkView = { state: "checking" } | { state: "linked"; until: number } | { state: "not-linked"; reason: string } | { state: "waiting" } | { state: "unreachable" };
-
-/**
- * "This browser": its session address, whether the vault's owner has linked it (and until when), a button that opens
- * the console to link it, and "Unlink this browser" (forgets its key; the owner can also unlink it from the console).
- * The demo vault needs no link: it's open for trying Glance.
- */
-function BrowserLink({ vault }: { vault: string }) {
-  const [address, setAddress] = useState<string | null>(null);
-  const [view, setView] = useState<LinkView>({ state: "checking" });
-  const valid = isAddress(vault);
-
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      const a = await sessionInfo();
-      if (!live) return;
-      setAddress(a);
-      if (!a || !valid) return setView({ state: "not-linked", reason: "unknown" });
-      const s = await linkStatus(vault, a);
-      if (!live) return;
-      setView(s.linked ? { state: "linked", until: s.expiresAt } : s.reason === "unreachable" ? { state: "unreachable" } : { state: "not-linked", reason: s.reason });
-    })();
-    return () => {
-      live = false;
-    };
-  }, [vault, valid]);
-
-  const link = async () => {
-    setView({ state: "waiting" });
-    const started = await startLinking(vault);
-    if (!started) return setView({ state: "not-linked", reason: "unknown" });
-    setAddress(started.address);
-    const s = await waitForLink(vault, started.address);
-    setView(s.linked ? { state: "linked", until: s.expiresAt } : { state: "not-linked", reason: s.reason });
-  };
-
-  const unlink = async () => {
-    await forgetThisBrowser();
-    setAddress(await sessionInfo());
-    setView({ state: "not-linked", reason: "unknown" });
-  };
-
-  return (
-    <div className="g-field">
-      <span className="g-ui">This browser</span>
-      {isOpenDemoVault(vault) && <span className="g-meta">{DEMO_VAULT_LABEL}. Linking is optional here.</span>}
-      <span className="g-meta">
-        {view.state === "linked"
-          ? `${linkedUntil(view.until)}. It may ask Glance to trade this vault within its limits. It can never withdraw.`
-          : view.state === "waiting"
-            ? "Waiting for your vault owner's signature in the console tab…"
-            : view.state === "unreachable"
-              ? "Can't reach the Glance API to check this browser's link."
-              : view.state === "checking"
-                ? "Checking…"
-                : view.reason === "expired"
-                  ? "This browser's link has expired. Link it again."
-                  : "Not linked. Your vault's owner signs once in the console (a signature, not a transaction)."}
-      </span>
-      {address && (
-        <span className="g-meta">
-          Session <span className="g-mono">{address.slice(0, 6)}…{address.slice(-4)}</span> (only this address leaves the extension; its key never does)
-        </span>
-      )}
-      <div className="g-row">
-        <button className="g-btn g-btn-primary" onClick={() => void link()} disabled={!valid || view.state === "waiting"}>
-          {view.state === "linked" ? "Link again" : "Link this browser to my vault"}
-        </button>
-        <button className="g-btn g-btn-ghost" onClick={() => void unlink()} disabled={view.state === "waiting"}>
-          Unlink this browser
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function Settings() {
   const [form, setForm] = useState({ api: DEFAULT_API_URL, vault: DEFAULT_VAULT as string, hotkey: "G", voiceKey: "V", mode: "floating" as Mode, console: "", voice: true, sounds: sound.enabledByDefault as boolean });
   const [saved, setSaved] = useState<string>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [test, setTest] = useState<Test>({ state: "idle" });
+  const [source, setSource] = useState<VaultSource | null>(null);
+  const [loadedVault, setLoadedVault] = useState<string>("");
+  const loadedRef = useRef("");
+
+  // The console's handshake can set the vault while this page is open: show it (unless it's being edited here).
+  useEffect(() => {
+    void vaultSource.getValue().then(setSource);
+    const a = vaultSource.watch((v) => setSource(v));
+    const b = vaultAddress.watch((v) => {
+      setLoadedVault(v);
+      setForm((f) => (f.vault === loadedRef.current ? { ...f, vault: v } : f));
+      loadedRef.current = v;
+    });
+    return () => {
+      a();
+      b();
+    };
+  }, []);
 
   useEffect(() => {
     void Promise.all([apiBaseUrl.getValue(), vaultAddress.getValue(), hotkeyLetter.getValue(), voiceKeyLetter.getValue(), defaultMode.getValue(), consoleUrl.getValue(), voiceReplies.getValue(), soundsEnabled.getValue()]).then(
-      ([api, vault, hotkey, voiceKey, mode, console, voice, sounds]) => setForm({ api, vault, hotkey, voiceKey, mode, console, voice, sounds }),
+      ([api, vault, hotkey, voiceKey, mode, console, voice, sounds]) => {
+        setForm({ api, vault, hotkey, voiceKey, mode, console, voice, sounds });
+        setLoadedVault(vault);
+        loadedRef.current = vault;
+      },
     );
   }, []);
 
@@ -186,9 +133,11 @@ function Settings() {
         return;
       }
     }
+    // The vault is saved only if it was changed here (by hand, under Advanced).
+    const vaultChanged = form.vault.trim() !== loadedVault;
     await Promise.all([
       apiBaseUrl.setValue(form.api.replace(/\/+$/, "")),
-      vaultAddress.setValue(form.vault.trim()),
+      ...(vaultChanged ? [vaultAddress.setValue(form.vault.trim()), vaultSource.setValue(sameAddress(form.vault, DEMO_VAULTS.paxosUSDG) ? "demo" : "manual")] : []),
       hotkeyLetter.setValue(form.hotkey),
       voiceKeyLetter.setValue(form.voiceKey),
       defaultMode.setValue(form.mode),
@@ -224,20 +173,21 @@ function Settings() {
           <Field label="API base URL" hint="Where the Glance API runs. Default http://localhost:8790." error={errors.api}>
             <input className="g-input" value={form.api} onChange={(e) => set("api", e.target.value.trim())} spellCheck={false} />
           </Field>
-          <Field
-            label="Vault address"
-            hint="The vault the agent trades for. The default is the demo vault on real Paxos USDG. No Paxos USDG? The TestUSDG demo vault works the same, funded from its own on-chain faucet."
-            error={errors.vault}
-          >
-            <input className="g-input g-mono" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
-            <div className="g-chips" role="group" aria-label="Demo vaults">
-              <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.paxosUSDG)} onClick={() => set("vault", DEMO_VAULTS.paxosUSDG)} style={{ fontFamily: "var(--g-font)" }}>
-                Demo vault · Paxos USDG
-              </button>
-              <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.testUSDG)} onClick={() => set("vault", DEMO_VAULTS.testUSDG)} style={{ fontFamily: "var(--g-font)" }}>
-                Demo vault · TestUSDG
-              </button>
-            </div>
+          <Field label="Vault" hint={vaultSourceLine(source, form.vault)} error={errors.vault}>
+            <span className="g-mono">{isAddress(form.vault) ? form.vault : "None yet"}</span>
+            {/* Filled by the console when you connect Glance there: typing an address is for developers. */}
+            <details>
+              <summary className="g-meta">Advanced: enter a vault address by hand</summary>
+              <input className="g-input g-mono" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
+              <div className="g-chips" role="group" aria-label="Demo vaults">
+                <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.paxosUSDG)} onClick={() => set("vault", DEMO_VAULTS.paxosUSDG)} style={{ fontFamily: "var(--g-font)" }}>
+                  Demo vault · Paxos USDG
+                </button>
+                <button className="g-chip" aria-pressed={sameAddress(form.vault, DEMO_VAULTS.testUSDG)} onClick={() => set("vault", DEMO_VAULTS.testUSDG)} style={{ fontFamily: "var(--g-font)" }}>
+                  Demo vault · TestUSDG
+                </button>
+              </div>
+            </details>
           </Field>
           <BrowserLink vault={form.vault} />
           <div className="g-row">

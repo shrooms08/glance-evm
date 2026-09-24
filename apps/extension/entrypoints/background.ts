@@ -11,17 +11,27 @@ import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
 import { forgetSession, linkExpiry, sessionAddress, signTrade, type TradeBody } from "../lib/session";
 import { consoleUrl } from "../lib/settings";
-import type { SessionInfo, SessionLinkStarted } from "../lib/messages";
-import { linkUrl, SESSION_HEADERS } from "@glance/core/session";
+import type { ConsolePage, SessionInfo, SessionLinkStarted } from "../lib/messages";
+import { consolePageUrl } from "../lib/consoleOrigins";
+import { SESSION_HEADERS } from "@glance/core/session";
 
-/** Opens the console's /link page for this browser's session and the vault (the owner signs there). */
+/**
+ * Opens the console's Dashboard with its "Glance in this browser" card focused: the owner signs once there, and the
+ * console tells this extension (lib/handshake.ts). The console's /link page still works for linking by hand.
+ */
 async function startLink(vault: string): Promise<SessionLinkStarted | null> {
   if (!/^0x[0-9a-fA-F]{40}$/.test(vault)) return null;
   const address = await sessionAddress();
-  const expiresAt = linkExpiry();
-  const url = linkUrl(await consoleUrl.getValue(), vault as `0x${string}`, address, expiresAt);
+  const url = await openConsole("link", vault);
+  return { address, expiresAt: linkExpiry(), url };
+}
+
+/** A console page in a new tab: Get started, or the Dashboard's link card (for a vault). */
+async function openConsole(page: ConsolePage, vault?: string): Promise<string> {
+  const base = (await consoleUrl.getValue()).replace(/\/+$/, "");
+  const url = consolePageUrl(base, page, vault);
   await browser.tabs.create({ url });
-  return { address, expiresAt, url };
+  return url;
 }
 import { relayShowMe, SHOWME_PORT } from "../lib/showStream";
 import type { ShowMeRequest } from "../lib/api";
@@ -292,6 +302,8 @@ export default defineBackground(() => {
         return startLink(message.vault);
       case "session:forget":
         return forgetSession().then(() => true);
+      case "open:console":
+        return openConsole(message.page, message.vault).then(() => true);
       case "open:settings":
         return browser.runtime.openOptionsPage().then(() => true);
       case "panel:isOpen":

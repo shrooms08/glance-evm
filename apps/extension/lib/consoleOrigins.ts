@@ -18,3 +18,17 @@ export function consoleMatchPatterns(value: string | undefined = DEFAULT_CONSOLE
   });
   return [...new Set(patterns)];
 }
+
+/** The allowed console origins themselves ("http://localhost:3000"), for checking postMessage origins at runtime. */
+export function consoleOrigins(value: string | undefined = DEFAULT_CONSOLE_ORIGINS): string[] {
+  return consoleMatchPatterns(value).map((p) => p.slice(0, -2));
+}
+
+/** A console page: Get started, or the Dashboard with the "Glance in this browser" card focused (for that vault). */
+export function consolePageUrl(base: string, page: "start" | "link", vault?: string): string {
+  const root = base.replace(/\/+$/, "");
+  if (page === "start") return `${root}/start`;
+  const q = new URLSearchParams({ glance: "link" });
+  if (vault) q.set("vault", vault);
+  return `${root}/?${q.toString()}`;
+}

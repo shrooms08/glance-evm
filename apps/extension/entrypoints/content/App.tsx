@@ -5,6 +5,7 @@
  * cover the page's own controls) and speech started here is handed to the side panel. Speech itself never runs in the
  * page: lib/voiceClient runs it in Glance's offscreen document.
  */
+import { relinkLine } from "../../components/Setup";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { browser } from "wxt/browser";
 
@@ -673,6 +674,17 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               onNext={() => (onboard.step + 1 < steps.length ? setOnboard({ phase: "tour", step: onboard.step + 1 }) : endTour())}
               onSkip={endTour}
             />
+          )}
+          {/* This browser's link ends within 3 days (or has ended): a small "Relink" above the orb (one signature). */}
+          {g.relink.show && !panelOpen && !orbFlying && (
+            <button
+              className="g-chip"
+              style={{ position: "fixed", right: pos.right, bottom: pos.bottom + orbTokens.floating + 8, zIndex: 1, pointerEvents: "auto" }}
+              title={relinkLine(g.relink)}
+              onClick={g.openRelink}
+            >
+              Relink
+            </button>
           )}
         </>
       )}

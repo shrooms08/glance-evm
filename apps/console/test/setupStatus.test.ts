@@ -103,7 +103,7 @@ describe("stepStatuses", () => {
     const st = stepStatuses(inputs(funded, { extension: false }));
     const s = summarize(st);
     expect(s.complete).toBe(false);
-    expect(s.text).toBe("Next: Install the Glance extension");
+    expect(s.text).toBe("Next: Connect Glance to your vault");
     // Funded, and the wallet has no USDG left for another deposit: Finish setup has nothing to do, so nothing to block.
     const plan = setupPlan(funded, paxos, 6, 10_000_000n, false, V2);
     expect(plan).toMatchObject({ steps: [], blocked: null });

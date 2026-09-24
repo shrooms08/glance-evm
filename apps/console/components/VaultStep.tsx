@@ -43,6 +43,19 @@ export interface VaultStepProps {
   addMore: { value: string; error: string | null; plan: SetupPlan | null; onChange(v: string): void; onSubmit(): void };
   onFinish(): void;
   runError: string | null;
+  /** Glance is in this browser and not linked yet: "Create my vault" goes straight on to linking (one signature). */
+  linkAfter?: boolean;
+}
+
+/**
+ * The wallet prompts a run will ask for, named: "3 wallet prompts: approve, create, sign" (the last is the signature
+ * that links Glance, when it follows), "2 wallet prompts: create, sign" when the allowance already covers the deposit.
+ */
+export function promptPlan(labels: string[], linkAfter: boolean): string {
+  const names: string[] = labels.map((l) => (/^Approve/.test(l) ? "approve" : /^Create/.test(l) ? "create" : /^Take/.test(l) ? "faucet" : /^Deposit|^Let the vault/.test(l) ? "deposit" : "confirm"));
+  if (linkAfter) names.push("sign");
+  const n = names.length;
+  return `${n} wallet prompt${n === 1 ? "" : "s"}${linkAfter ? `: ${names.join(", ")}` : ""}`;
 }
 
 export function VaultStep(p: VaultStepProps) {
@@ -52,7 +65,8 @@ export function VaultStep(p: VaultStepProps) {
   const oneTx = p.plan?.mode === "one-tx" && !p.vault;
   const showFinish = steps.length > 0 && !p.plan?.blocked;
   const finishLabel = p.busy ? "Working…" : p.vault ? "Finish setup" : "Create my vault";
-  const prompts = steps.length === 1 ? "1 wallet prompt" : `${steps.length} wallet prompts`;
+  // With Glance in this browser (and not yet linked), creating the vault goes straight on to linking: one signature more.
+  const prompts = promptPlan(steps.map((s) => s.label), Boolean(p.linkAfter));
 
   return (
     <div className="create">
@@ -178,7 +192,13 @@ export function VaultStep(p: VaultStepProps) {
             {finishLabel}
           </button>
           {!p.ready && <span className="meta">Connect and switch to Robinhood Chain testnet first.{oneTx ? ` Then ${prompts}.` : ""}</span>}
-          {p.ready && <span className="meta">{oneTx ? `${prompts}.` : steps.length === 1 ? "One wallet confirmation." : `${steps.length} wallet confirmations, one at a time.`}</span>}
+          {p.ready && (
+            <span className="meta">
+              {oneTx
+                ? `${prompts}.`
+                : `${steps.length === 1 ? "One wallet confirmation" : `${steps.length} wallet confirmations, one at a time`}${p.linkAfter ? ", then one signature to connect Glance" : ""}.`}
+            </span>
+          )}
         </div>
       )}
 

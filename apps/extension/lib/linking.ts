@@ -9,6 +9,12 @@ import { send } from "./lifecycle";
 import type { SessionInfo, SessionLinkStarted } from "./messages";
 import { sessionLink } from "./session";
 import { DEMO_VAULTS } from "./settings";
+export { consolePageUrl } from "./consoleOrigins";
+
+/** Opens a console page (from any surface; the background opens the tab). */
+export async function openConsolePage(page: "start" | "link", vault?: string): Promise<void> {
+  await send({ kind: "open:console", page, vault }).catch(() => {});
+}
 
 /** A trade refused for want of a linked browser: the card offers to link it. */
 export const LINK_CODES = new Set(["SESSION_REQUIRED", "SESSION_EXPIRED"]);

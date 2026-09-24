@@ -9,7 +9,10 @@ import { api } from "../lib/api";
 import { chainStatus, onChainStatus } from "../lib/chainStatus";
 import { safely, send } from "../lib/lifecycle";
 import type { CatalogStock, Health, Vault } from "../lib/api-types";
-import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, voiceKeyLetter, voiceReplies, type Mode } from "../lib/settings";
+import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, vaultSource, voiceKeyLetter, voiceReplies, type Mode, type VaultSource } from "../lib/settings";
+import { relinkHint, type RelinkHint } from "../lib/handshake";
+import { openConsolePage } from "../lib/linking";
+import { sessionLink } from "../lib/session";
 import { motion, sound } from "../lib/tokens";
 import type { OrbState } from "./Orb";
 
@@ -51,6 +54,12 @@ export interface Glance {
   openSettings(): void;
   /** Opens a console page in a new tab ("" for the Dashboard, "/start" for Get started). */
   openConsole(path?: string): void;
+  vaultSource: VaultSource | null;
+  /** From 3 days before this browser's link ends: "Relink" on the orb and in the panel. */
+  relink: RelinkHint;
+  /** Opens the console: Get started, or the Dashboard's link card for this vault (one signature there). */
+  openSetup(): void;
+  openRelink(): void;
 }
 
 const Ctx = createContext<Glance | null>(null);
@@ -89,6 +98,8 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const mode = useSetting<Mode>(defaultMode, "floating");
   const voice = useSetting(voiceReplies, true);
   const sounds = useSetting(soundsEnabled, sound.enabledByDefault);
+  const source = useSetting<VaultSource | null | undefined>(vaultSource as never, undefined);
+  const link = useSetting(sessionLink, null);
 
   const [catalog, setCatalog] = useState<CatalogStock[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
@@ -212,8 +223,12 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       refreshVault,
       openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
       openConsole: (path = "") => window.open(`${consoleLink.replace(/\/+$/, "")}${path}`, "_blank", "noopener"),
+      vaultSource: source ?? null,
+      relink: relinkHint(link, vaultAddr, Math.floor(Date.now() / 1000)),
+      openSetup: () => void openConsolePage("start"),
+      openRelink: () => void openConsolePage("link", vaultAddr),
     }),
-    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

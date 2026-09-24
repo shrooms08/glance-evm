@@ -1,10 +1,12 @@
 "use client";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { Address } from "viem";
 
 import { MarketChip } from "@/components/MarketChip";
 import { OwnVaultGate } from "@/components/OwnVaultGate";
 import { PositionsTable } from "@/components/PositionsCard";
+import { GlanceCard } from "@/components/GlanceCard";
 import { LinkedBrowsers } from "@/components/LinkedBrowsers";
 import { Meter } from "@/components/Meter";
 import { Notice } from "@/components/Notice";
@@ -24,6 +26,8 @@ export default function Dashboard() {
 function DashboardFor({ vault }: { vault: Address }) {
   const q = useVaultView(vault);
   const href = useHref();
+  // Opened from Glance ("Link Glance", "Relink"): the Glance card comes into view, its button ready.
+  const focusGlance = useSearchParams().get("glance") === "link";
 
   return (
     <div className="page">
@@ -51,6 +55,7 @@ function DashboardFor({ vault }: { vault: Address }) {
             <Agent v={q.data} limitsHref={href("/limits")} />
             <AgentPromise v={q.data} />
           </div>
+          <GlanceCard vault={q.data.address} owner={q.data.owner} focus={focusGlance} />
           <LinkedBrowsers vault={q.data.address} owner={q.data.owner} />
         </>
       )}

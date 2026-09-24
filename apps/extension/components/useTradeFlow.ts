@@ -101,7 +101,7 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
     } else if (res.guard) {
       setFlow({ step: "blocked", amount, guard: res.guard, quote });
       g.setOrb({ state: "blocked", line: res.guard.message, meta: `Guard · ${res.guard.code}` });
-    } else if (LINK_CODES.has(res.code)) {
+    } else if (LINK_CODES.has(res.code) && !isOpenDemoVault(g.vaultAddress)) {
       // Nothing was sent: this browser isn't linked to the vault yet (or its link ran out).
       setFlow({ step: "needs-link", amount, quote, code: res.code, message: res.message, link: "idle" });
       g.setOrb({ state: "idle", line: res.message, meta: "" });

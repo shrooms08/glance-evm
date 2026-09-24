@@ -18,6 +18,7 @@ import { GateNotice, type GateReason } from "@/components/WriteGate";
 import { api } from "@/lib/api";
 import { addressUrl } from "@/lib/chain";
 import { CHAIN_ID } from "@/lib/deployment";
+import { useGlanceExtension } from "@/lib/glanceExtension";
 import { parseLinkParams } from "@/lib/link";
 import { reportError } from "@/lib/report";
 import { useVaultChain } from "@/lib/vault";
@@ -55,6 +56,7 @@ function LinkFor({ vault, session, expiresAt }: { vault: Address; session: Addre
   const gate = useGate(chain.data?.owner);
   const { signTypedDataAsync } = useSignTypedData();
   const [state, setState] = useState<LinkState>({ step: "ready" });
+  const ext = useGlanceExtension();
 
   const sign = async () => {
     const message = { vault, sessionKey: session, expiresAt: BigInt(expiresAt), issuedAt: BigInt(Math.floor(Date.now() / 1000)), nonce: randomNonce(256) };
@@ -71,6 +73,11 @@ function LinkFor({ vault, session, expiresAt }: { vault: Address; session: Addre
     try {
       const res = await api.linkBrowser({ typedData: { domain: typed.domain, primaryType: typed.primaryType, message }, signature });
       setState({ step: "linked", expiresAt: res.expiresAt });
+      // Glance in this browser, when it's the session being linked: tell it (it confirms with the API itself).
+      if (ext.state.status === "present" && ext.state.hello.sessionAddress.toLowerCase() === session.toLowerCase()) {
+        ext.setVault(vault);
+        ext.linked(vault, session, res.expiresAt);
+      }
     } catch (err) {
       setState({ step: "failed", message: (err as Error).message });
     }

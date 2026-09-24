@@ -22,8 +22,16 @@ export const DEMO_VAULTS = {
 } as const;
 export const DEFAULT_VAULT = DEMO_VAULTS.paxosUSDG;
 
-/** The vault the agent trades for. Defaults to the Paxos USDG demo vault; set your own in settings. */
+/** The vault the agent trades for. Defaults to the Paxos USDG demo vault; set by the console (or by hand, under Advanced). */
 export const vaultAddress = storage.defineItem<string>("sync:vaultAddress", { fallback: DEFAULT_VAULT });
+
+/**
+ * Where the vault came from: the console's handshake (the owner connected Glance), or typed under settings' Advanced.
+ * Null: nothing chose one, so Glance uses the open demo vault (the default).
+ */
+export type VaultSource = "console" | "demo" | "manual";
+export const vaultSource = storage.defineItem<VaultSource | null>("sync:vaultSource", { fallback: null });
+
 /** Letter tapped with Option/Alt to glance at the page (scan and show what was found). Kept under its old storage key. */
 export const hotkeyLetter = storage.defineItem<string>("sync:hotkeyLetter", { fallback: "G" });
 /** Letter held with Option/Alt to talk. V by default; remappable because Option+V is taken in some macOS apps. */
