@@ -121,5 +121,11 @@
     "real": false,
     "source": "TestUSDG (public faucet)"
   },
-  "primaryVault": "demoVaultPaxosUSDG"
+  "primaryVault": "demoVaultPaxosUSDG",
+  "factoryV2": {
+    "address": "0xA76C3E2fe629889D8Bc83b285394eC62673B02E4",
+    "kind": "glance-v2",
+    "note": "One-transaction vaults: createVaultWithConfig(config, deposit). The original factory stays in .factory.",
+    "deployedAt": "2026-09-24T00:11Z"
+  }
 }
