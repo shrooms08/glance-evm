@@ -263,6 +263,67 @@ export function speak(
   });
 }
 
+/**
+ * A reply spoken in parts, one per sentence, as they're written (Show me, streamed): push() each sentence, end() when
+ * there are no more. The first part plays as soon as it's pushed; the rest follow back to back, in the voice that spoke
+ * the first. Resolves like speak(): "cut" if a part stopped (the rest is shown), never another voice.
+ */
+export interface PartsHandlers {
+  onStart?(): void;
+  onPart?(index: number): void;
+  onPartEnd?(index: number): void;
+  onProgress?(index: number, t: number, d: number | null): void;
+  onCut?(index: number): void;
+  onEnd?(): void;
+}
+
+export function speakParts(enabled: boolean, h: PartsHandlers = {}): { push(text: string): number | null; end(): void; result: Promise<SpeakOutcome> } {
+  if (!enabled) return { push: () => null, end: () => {}, result: Promise.resolve("off") };
+  const id = newId();
+  let count = 0;
+  let started = false;
+  let resolveResult: (o: SpeakOutcome) => void = () => {};
+  const result = new Promise<SpeakOutcome>((r) => (resolveResult = r));
+  let timer = setTimeout(() => finish(started ? "cut" : "unavailable"), 45_000);
+  const finish = (o: SpeakOutcome) => {
+    safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
+    clearTimeout(timer);
+    if (started) h.onEnd?.();
+    resolveResult(o);
+  };
+  const onMessage = (msg: SpeechEvent) => {
+    if (msg?.kind !== "voice:speech" || msg.id !== id) return undefined;
+    clearTimeout(timer);
+    timer = setTimeout(() => finish(started ? "cut" : "unavailable"), 45_000);
+    if (msg.type === "start") {
+      started = true;
+      h.onStart?.();
+    } else if (msg.type === "part") h.onPart?.(msg.index);
+    else if (msg.type === "part-end") h.onPartEnd?.(msg.index);
+    else if (msg.type === "part-progress") h.onProgress?.(msg.index, msg.t, msg.d);
+    else if (msg.type === "cut") {
+      h.onCut?.(msg.part ?? 0);
+      finish("cut");
+    } else if (msg.type === "unavailable") finish("unavailable");
+    else if (msg.type === "end") finish("ended");
+    return undefined;
+  };
+  safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
+  return {
+    push(text) {
+      if (!text.trim()) return null;
+      const index = count++;
+      void sendSafe({ kind: "voice:speak-part", id, index, text } satisfies VoiceRequest).catch(() => {});
+      return index;
+    },
+    end() {
+      void sendSafe({ kind: "voice:speak-end", id, total: count } satisfies VoiceRequest).catch(() => {});
+      if (count === 0) finish("ended");
+    },
+    result,
+  };
+}
+
 /** The panel opened: have the API warm its provider connections, so a command that follows skips the handshakes. */
 export function warmVoice() {
   void sendSafe({ kind: "voice:warm" } satisfies VoiceRequest).catch(() => {});

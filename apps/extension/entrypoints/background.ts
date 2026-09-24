@@ -9,6 +9,8 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
+import { relayShowMe, SHOWME_PORT } from "../lib/showStream";
+import type { ShowMeRequest } from "../lib/api";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
 
 const READ_TIMEOUT_MS = 15_000;
@@ -20,6 +22,14 @@ const cache = new Map<string, { at: number; base: string; reply: ApiResponse<unk
 
 /** Windows whose side panel is open (the panel connects a port named sidepanel:<windowId>). */
 const openPanels = new Set<number>();
+
+function safePost(port: { postMessage(m: unknown): void }, m: unknown) {
+  try {
+    port.postMessage(m);
+  } catch {
+    // the page went away
+  }
+}
 
 async function callApi(req: ApiRequest): Promise<ApiResponse<unknown>> {
   const base = (await apiBaseUrl.getValue()).replace(/\/+$/, "");
@@ -130,6 +140,21 @@ async function speakVoice(req: Extract<VoiceRequest, { kind: "voice:speak" }>, t
   return true;
 }
 
+/** A reply spoken in parts: each sentence goes to the offscreen document as it's written. */
+async function speakPart(req: Extract<VoiceRequest, { kind: "voice:speak-part" | "voice:speak-end" }>, tabId: number | undefined): Promise<boolean> {
+  if (tabId !== undefined) speechTabs.set(req.id, tabId);
+  try {
+    await ensureOffscreen();
+  } catch {
+    speechTabs.delete(req.id);
+    return false;
+  }
+  const msg: OffscreenRequest =
+    req.kind === "voice:speak-part" ? { kind: "offscreen:speak-part", id: req.id, index: req.index, text: req.text, api: await apiBase() } : { kind: "offscreen:speak-end", id: req.id, total: req.total };
+  await browser.runtime.sendMessage(msg).catch(() => {});
+  return true;
+}
+
 function relayVoice(event: VoiceEvent) {
   const tabId = voiceTabs.get(event.session);
   if (event.type === "end") voiceTabs.delete(event.session);
@@ -138,7 +163,7 @@ function relayVoice(event: VoiceEvent) {
 
 function relaySpeech(event: SpeechEvent) {
   const tabId = speechTabs.get(event.id);
-  if (event.type !== "start" && event.type !== "progress") speechTabs.delete(event.id);
+  if (event.type === "end" || event.type === "cut" || event.type === "unavailable") speechTabs.delete(event.id);
   if (tabId !== undefined) browser.tabs.sendMessage(tabId, event).catch(() => {});
 }
 
@@ -162,6 +187,19 @@ export default defineBackground(() => {
   });
 
   browser.runtime.onConnect.addListener((port) => {
+    // Show me, streamed: the page sends the request once; each Server-Sent Event comes back as it arrives.
+    if (port.name === SHOWME_PORT) {
+      const abort = new AbortController();
+      port.onDisconnect.addListener(() => abort.abort());
+      port.onMessage.addListener((body: ShowMeRequest) => {
+        void (async () => {
+          const base = (await apiBaseUrl.getValue()).replace(/\/+$/, "");
+          await relayShowMe(base, body, (m) => safePost(port, m), abort.signal);
+          safePost(port, { event: "done", data: { source: "end" } });
+        })();
+      });
+      return;
+    }
     // Content scripts hold a "glance:content" port only to notice promptly when this extension is reloaded; its
     // disconnect is their signal. Nothing to do here.
     const match = /^sidepanel:(\d+)$/.exec(port.name);
@@ -181,6 +219,9 @@ export default defineBackground(() => {
         return startVoice(message, sender.tab?.id);
       case "voice:speak":
         return speakVoice(message, sender.tab?.id);
+      case "voice:speak-part":
+      case "voice:speak-end":
+        return speakPart(message, sender.tab?.id);
       case "voice:warm":
         // Only if the offscreen document already exists: warming must never create one (or ask for the mic).
         void (async () => {

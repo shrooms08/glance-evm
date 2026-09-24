@@ -48,7 +48,11 @@ export type SpeechEvent =
   /** While it plays (about 4 a second): where playback is, and the audio's length once the player knows it. */
   | { kind: "voice:speech"; id: string; type: "progress"; t: number; d: number | null }
   /** The audio stopped mid-reply (a stall or an error), at `t` seconds: the rest is shown, never said in another voice. */
-  | { kind: "voice:speech"; id: string; type: "cut"; t: number; d: number | null };
+  | { kind: "voice:speech"; id: string; type: "cut"; t: number; d: number | null; part?: number }
+  /** A reply spoken in parts (one per sentence): part `index` started, or ended. */
+  | { kind: "voice:speech"; id: string; type: "part" | "part-end"; index: number }
+  /** Progress within part `index` of a reply spoken in parts. */
+  | { kind: "voice:speech"; id: string; type: "part-progress"; index: number; t: number; d: number | null };
 
 /** What the page (or side panel) knows that helps the API understand a command. */
 export interface VoiceCommandContext {
@@ -67,6 +71,10 @@ export type VoiceRequest =
   | { kind: "voice:hush" }
   /** The panel opened: have the API warm its provider connections for a command that may be coming. */
   | { kind: "voice:warm" }
+  /** One sentence of a reply spoken in parts, as soon as it's written (the first starts playing at once). */
+  | { kind: "voice:speak-part"; id: string; index: number; text: string }
+  /** No more parts: the reply has `total` of them. */
+  | { kind: "voice:speak-end"; id: string; total: number }
   /** From the offscreen document: getUserMedia failed with this error name. The background answers with the code. */
   | { kind: "voice:mic-failed"; name: string }
   /** From the offscreen document: the microphone opened. */
@@ -79,4 +87,6 @@ export type OffscreenRequest =
   | { kind: "offscreen:abort"; session: string }
   | { kind: "offscreen:speak"; id: string; text: string; api: string }
   | { kind: "offscreen:hush" }
-  | { kind: "offscreen:warm"; api: string };
+  | { kind: "offscreen:warm"; api: string }
+  | { kind: "offscreen:speak-part"; id: string; index: number; text: string; api: string }
+  | { kind: "offscreen:speak-end"; id: string; total: number };

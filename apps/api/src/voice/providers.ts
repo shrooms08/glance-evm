@@ -804,6 +804,7 @@ export function fish(opts: FishOptions): Speaker {
  */
 export type CachedSpeaker = Speaker & { readonly cached: number; hits: number; has(text: string): boolean };
 
+
 export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200, configuredVoice: string = speaker.voice): CachedSpeaker {
   // Each entry remembers the voice that spoke it. Only the configured voice's audio is kept, and only it is served: a
   // phrase that once fell through to another voice is never replayed in that voice.
@@ -835,13 +836,15 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200, conf
       return lookup(text.trim()) !== undefined;
     },
     /** Streams a new phrase through as it arrives, and caches it once complete (if the configured voice spoke it). */
-    stream: speaker.stream
+    stream: speaker.stream ? async (text: string) => (await self.streamDetailed!(text)).stream : undefined,
+    /** As stream(), with the voice that speaks it (the rest of a reply is pinned to it). */
+    streamDetailed: speaker.stream
       ? async (text: string) => {
           const key = text.trim();
           const { stream: source, voice } = await detailedStream(key);
-          if (key.length > maxChars || voice !== configuredVoice) return source;
+          if (key.length > maxChars || voice !== configuredVoice) return { stream: source, voice };
           const parts: Uint8Array[] = [];
-          return source.pipeThrough(
+          const stream = source.pipeThrough(
             new TransformStream<Uint8Array, Uint8Array>({
               transform(chunk, ctrl) {
                 parts.push(chunk);
@@ -858,6 +861,7 @@ export function withPhraseCache(speaker: Speaker, max = 64, maxChars = 200, conf
               },
             }),
           );
+          return { stream, voice };
         }
       : undefined,
     async speak(text: string) {
@@ -937,6 +941,11 @@ export interface VoiceProviders {
   chain: (Speaker & { speakDetailed(text: string): Promise<{ audio: Uint8Array; mime: string; voice: string }> }) | null;
   /** The last 20 voice decisions, for /health. */
   decisions: VoiceDecisions;
+  /**
+   * The chain narrowed to one voice (its attempt and retry): the rest of a reply is spoken only in the voice that spoke
+   * its first sentence, or not at all. Null when no speaker has that voice.
+   */
+  pinned(voice: string): (Speaker & Required<Pick<Speaker, "speakDetailed" | "streamDetailed">>) | null;
   /** The speech chain in order (first is the voice in use while it answers), and which one served the last reply. */
   speech: { chain: SpeechLink[]; lastServedBy(): SpeechLink | null };
   /** Opens the speech provider's HTTPS connection ahead of time (kept alive), so the reply skips the TLS handshake. */
@@ -960,6 +969,7 @@ export function selectVoiceProviders(
       tts: withPhraseCache(fakeSpeaker(delay)),
       chain: null,
       decisions: new VoiceDecisions(),
+      pinned: () => null,
       speech: { chain: [], lastServedBy: () => null },
       prewarmSpeech() {},
       status: {
@@ -1022,11 +1032,19 @@ export function selectVoiceProviders(
   const origin = order[0] ? (order[0].name === "deepgram" ? "https://api.deepgram.com/" : "https://api.fish.audio/") : null;
   const doFetch = deps.fetch ?? providerFetch;
   let lastWarm = 0;
+  const pinnedChains = new Map<string, ReturnType<typeof withFallThrough>>();
   return {
     stt,
     tts,
     chain,
     decisions,
+    pinned(wanted) {
+      const same = order.filter((s) => s.voice === wanted);
+      if (same.length === 0) return null;
+      let p = pinnedChains.get(wanted);
+      if (!p) pinnedChains.set(wanted, (p = withFallThrough(same, log, (s) => (lastServed = s), decisions)));
+      return p;
+    },
     speech: { chain: order.map(link), lastServedBy: () => (lastServed ? link(lastServed) : null) },
     prewarmSpeech() {
       // A bare request to the origin leaves a kept-alive TLS connection in the pool for the real one (no key sent).

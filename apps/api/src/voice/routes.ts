@@ -21,6 +21,7 @@ import { LINES } from "@glance/core/persona";
 import { ApiError, portfolioView, priceView, vaultView, whyView } from "../services.js";
 import { spokenSummary } from "../why.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
+import { warmAnthropic } from "../anthropicHttp.js";
 
 const MAX_AUDIO_BYTES = 2_000_000; // ~60s of opus: far more than a command
 const MAX_STREAM_MS = 60_000;
@@ -185,8 +186,10 @@ export function registerVoice(
    * the speech provider's HTTPS connection. The extension calls it when the panel opens and when Option+V goes down.
    */
   app.post("/voice/warm", (c) => {
+    // Key down: the transcription stream, the speech provider's connection, and Claude's, all ready by the release.
     v.stt?.warm?.(keyterms(ctx));
     v.prewarmSpeech();
+    if (ctx.showMe || ctx.intentModel) warmAnthropic();
     return send(c, { ok: true });
   });
 
@@ -258,16 +261,31 @@ export function registerVoice(
     if (!v.tts) unavailable("speech");
     const { text } = parse(speakBody, { text: c.req.query("text") ?? "" });
     const headers = { "content-type": "audio/mpeg", "cache-control": "no-store" };
+    // ?voice=: a later sentence of a reply, in the voice that spoke its first sentence, and no other. If that voice
+    // can't answer (after its retry), 503: the page stops speaking there and shows the rest.
+    const pin = c.req.query("voice");
+    if (pin) {
+      const pinned = v.pinned(pin);
+      if (!pinned) unavailable("speech");
+      const pre = pin === ctx.prerecorded?.voice ? await prerecorded(text) : null;
+      if (pre) return c.body(pre.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "prerecorded", "x-voice": pre.voice });
+      try {
+        const out = await pinned!.streamDetailed(text);
+        return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
+      } catch {
+        return c.json({ error: { code: "VOICE_UNAVAILABLE", message: "That voice isn't answering right now." } }, 503);
+      }
+    }
     const pre = await prerecorded(text);
     if (pre) return c.body(pre.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": pre.prerecorded ? "prerecorded" : "generated", "x-voice": pre.voice });
     const streamer = v.tts.stream;
     if (!streamer || v.tts.has(text)) {
       const out = await v.tts.speak(text);
-      return c.body(out.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "hit" });
+      return c.body(out.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "hit", "x-voice": v.tts.voice });
     }
-    const stream = await streamer(text);
-    // Which voice answered (the decision just recorded), for the extension's debug log. Never the text.
-    return c.body(stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": v.decisions.list().at(-1)?.voice ?? "" });
+    // Which voice answered: the rest of a reply is pinned to it, and the extension's debug log names it. Never the text.
+    const out = v.tts.streamDetailed ? await v.tts.streamDetailed(text) : { stream: await streamer(text), voice: v.tts.voice };
+    return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
   });
 
   if (upgradeWebSocket) {

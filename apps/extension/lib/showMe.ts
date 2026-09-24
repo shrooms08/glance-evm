@@ -9,6 +9,8 @@ import type { ChartRange } from "@glance/core/chart";
 import type { ChartAnnotation, ShowAction } from "@glance/core/showme";
 
 import type { ShowMeReply, ShowMeRequest } from "./api";
+import type { StreamSentence } from "./showStream";
+import type { PartsHandlers } from "./voiceClient";
 import { wantsScreenshot, type PageRead } from "./pageRead";
 import { ShowScheduler } from "./showScheduler";
 
@@ -52,6 +54,12 @@ export interface ShowMeDeps {
   /** The reply ended (or was cancelled): fade the drawings (or clear them). */
   done(cancelled: boolean): void;
   lastGuard?: () => { code: string; message: string } | null;
+  /**
+   * Streamed answers (preferred when given): each sentence arrives as soon as Claude has written it, and is spoken as
+   * one part of the reply while the next is still being written.
+   */
+  askStream?(body: ShowMeRequest, onSentence: (s: StreamSentence) => void): Promise<{ ok: true; source: string } | { ok: false; message: string }>;
+  speakParts?(h: PartsHandlers): { push(text: string): number | null; end(): void; result: Promise<"ended" | "cut" | "unavailable" | "off"> };
 }
 
 export interface ShowMeRun {
@@ -101,6 +109,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
   };
 
   const finished = (async () => {
+    if (d.askStream && d.speakParts) return streamed();
     d.say("Let me look…", "thinking");
     const page = d.readPage();
     let screenshot: string | undefined;
@@ -141,12 +150,67 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
     d.done(false);
   })();
 
+  /**
+   * Streamed: each sentence has its own scheduler, started when its part starts playing and driven by that part's
+   * progress, so its tags fire relative to its own audio. A cut stops the drawings where the words got to.
+   */
+  const perPart: ShowScheduler[] = [];
+  const everyScheduler: ShowScheduler[] = [];
+  async function streamed() {
+    d.say("Let me look…", "thinking");
+    const page = d.readPage();
+    let screenshot: string | undefined;
+    if (wantsScreenshot(question)) {
+      const shot = await d.capture().catch(() => null);
+      screenshot = (shot ? await d.downscale(shot).catch(() => null) : null) ?? undefined;
+    }
+    if (cancelled) return;
+    let full = "";
+    let cutAt: number | null = null;
+    const voice = d.speakParts!({
+      onPart: (i) => perPart[i]?.start(),
+      onProgress: (i, t, dur) => perPart[i]?.progress(t, dur),
+      onPartEnd: (i) => perPart[i]?.finish(),
+      onCut: (i) => (cutAt = i),
+    });
+    const res = await d.askStream!({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null }, (sentence) => {
+      if (cancelled) return;
+      if (sentence.chart) chartRange = sentence.chart.range;
+      const sched = new ShowScheduler(sentence.actions, sentence.spoken, act);
+      everyScheduler.push(sched);
+      if (sentence.spoken) full = full ? `${full} ${sentence.spoken}` : sentence.spoken;
+      d.say(full, "speaking");
+      const part = voice.push(sentence.spoken);
+      if (part === null) sched.finish(); // no words (tags only), or spoken replies off: act now
+      else perPart[part] = sched;
+    });
+    voice.end();
+    if (cancelled) return;
+    if (!res.ok && !full) {
+      d.say(res.message, "idle");
+      return d.done(false);
+    }
+    const outcome = await voice.result;
+    if (cancelled) return;
+    if (outcome === "cut") {
+      // Stopped part way: what was said keeps its drawings; nothing after the cut fires; the whole answer is written.
+      for (const [i, sched] of perPart.entries()) if (cutAt === null || i >= cutAt) sched?.cancel();
+      d.say(full, "idle", CUT_NOTE);
+    } else {
+      for (const sched of everyScheduler) sched.finish();
+      d.say(full, "idle", outcome === "unavailable" ? NO_VOICE_NOTE : undefined);
+    }
+    d.point(null);
+    d.done(false);
+  }
+
   return {
     finished,
     cancel() {
       if (cancelled) return;
       cancelled = true;
       scheduler?.cancel();
+      for (const sched of everyScheduler) sched.cancel();
       d.hush();
       d.point(null);
       d.done(true);

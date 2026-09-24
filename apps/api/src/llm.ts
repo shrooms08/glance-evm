@@ -12,6 +12,7 @@
  * resolver's own daily budget. When Claude can't be asked, uncached names answer null: the dictionary's result stands.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicFetch } from "./anthropicHttp.js";
 import { z } from "zod";
 
 import type { CatalogText } from "./catalog.js";
@@ -98,7 +99,7 @@ export function selectCandidates(names: readonly string[], max = MAX_NAMES): str
 export function createLlmResolver(o: LlmResolverOptions): LlmResolver | null {
   if (!o.apiKey && !o.client) return null;
   const log = o.log ?? ((l: string) => console.log(l));
-  const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 10_000, maxRetries: 0 });
+  const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 10_000, maxRetries: 0, fetch: anthropicFetch });
   const companies = o.catalog.map((c) => `${c.symbol}: ${c.legalName}`).join("\n");
   const symbols = new Set(o.catalog.map((c) => c.symbol));
   const system =

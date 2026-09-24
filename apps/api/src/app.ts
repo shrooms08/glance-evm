@@ -19,6 +19,8 @@ import { attemptLabel } from "./refusals.js";
 import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 import { chartContextFor } from "./showmeChart.js";
+import type { ShowMeEvent } from "./showme.js";
+import { streamSSE } from "hono/streaming";
 
 const MAX_RESOLVE_CHARS = 20_000;
 
@@ -133,6 +135,8 @@ export function createServerApp(ctx: AppContext) {
   app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
   app.use("/resolve/names", rateLimit({ limit: 20, trustProxy: config.TRUST_PROXY, name: "names" }));
   app.use("/why/*", rateLimit({ limit: config.WHY_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "why" }));
+  // One limit for both Show me routes (the whole answer, and the streamed one).
+  app.use("/showme/*", rateLimit({ limit: config.SHOWME_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "showme" }));
   app.use("/showme", rateLimit({ limit: config.SHOWME_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "showme" }));
   app.use("/chart/*", rateLimit({ limit: config.CHART_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "chart" }));
   app.use("/portfolio/*", rateLimit({ limit: config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "portfolio" }));
@@ -179,6 +183,27 @@ export function createServerApp(ctx: AppContext) {
     // A question about a stock's move (or with its chart open) gets the chart's summary, to draw on (cached reads only).
     const charts = await chartContextFor(ctx, input);
     return send(c, await ctx.showMe.answer({ ...input, charts }));
+  });
+
+  // The same, streamed as Server-Sent Events: a "sentence" event the moment each sentence is complete (with its tags),
+  // then "done". The extension speaks the first sentence while Claude is still writing the rest.
+  app.post("/showme/stream", async (c) => {
+    const input = parse(showMeBody, await jsonBody(c));
+    return streamSSE(c, async (sse) => {
+      // Events go out in order, and the stream stays open until the last one is written.
+      let sent = Promise.resolve();
+      const emit = (e: ShowMeEvent) => {
+        sent = sent.then(() => sse.writeSSE({ event: e.type, data: JSON.stringify(e.type === "sentence" ? e.sentence : { source: e.source }) }));
+      };
+      if (!ctx.showMe) {
+        emit({ type: "sentence", sentence: { i: 0, spoken: LINES.cantThink, actions: [] } });
+        emit({ type: "done", source: "unavailable" });
+      } else {
+        const charts = await chartContextFor(ctx, input);
+        await ctx.showMe.answerStream({ ...input, charts }, emit);
+      }
+      await sent;
+    });
   });
 
   app.get("/chart/:symbol", async (c) => {

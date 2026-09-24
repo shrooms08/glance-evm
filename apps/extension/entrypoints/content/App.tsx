@@ -38,7 +38,8 @@ import { chartAnnotations } from "../../lib/chartAnnotations";
 import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
 import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
-import { hush, speak, warmVoice } from "../../lib/voiceClient";
+import { hush, speak, speakParts, warmVoice } from "../../lib/voiceClient";
+import { askStream } from "../../lib/showStreamClient";
 import { capturePage, type PageContext } from "../../lib/journal";
 import { rememberOrbAnchor } from "../../lib/updatedNotice";
 
@@ -85,6 +86,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     onTestDrawing: () => void testDrawingRef.current(),
   });
   const testDrawingRef = useRef<() => Promise<void>>(async () => {});
+  const preread = useRef<() => void>(() => {});
   const lastSelection = useRef<Range | null>(null);
   useEffect(() => {
     const onSelection = () => {
@@ -180,6 +182,20 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   );
   /** The visible figures listed with the last Show me question, for [BOX_FIGURE:n]. */
   const figureElements = useRef<Element[]>([]);
+  /** The page as read on Option+V key down, so a question's context is ready by the release. */
+  const prereadPage = useRef<{ at: number; page: ReturnType<typeof readPage>; elements: Element[] } | null>(null);
+  const readPageNow = () => {
+    const { figures, elements } = listFigures(document);
+    figureElements.current = elements;
+    return { at: Date.now(), page: readPage(document, { companies: companiesRef.current.map((c) => c.symbol), figures }), elements };
+  };
+  preread.current = () => {
+    try {
+      prereadPage.current = readPageNow();
+    } catch {
+      prereadPage.current = null;
+    }
+  };
   showChartRef.current = showChart;
 
   const ask = useCallback(
@@ -193,11 +209,18 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         }
       })();
       showRun.current = runShowMe(question, {
+        // Read on key down (while the user is still talking), else now.
         readPage: () => {
-          const { figures, elements } = listFigures(document);
-          figureElements.current = elements;
-          return readPage(document, { companies: companiesRef.current.map((c) => c.symbol), figures });
+          const ready = prereadPage.current;
+          prereadPage.current = null;
+          if (ready && Date.now() - ready.at < 20_000) {
+            figureElements.current = ready.elements;
+            return ready.page;
+          }
+          return readPageNow().page;
         },
+        askStream,
+        speakParts: (h) => speakParts(g.voiceReplies, h),
         surface: onConsole ? "console" : "page",
         capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null),
         downscale: downscaleJpeg,
@@ -319,10 +342,13 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       // The side panel owns the conversation (and the voice session, recorded in the offscreen document either way).
       heldForPanel.current = true;
       void send({ kind: "assistant:hold", down: true } satisfies AssistantMessage).catch(() => {});
+      setTimeout(() => preread.current(), 0); // a question about the page will be answered here
       return;
     }
     setPanelOpen(true);
     assistant.startListening();
+    // While they talk: read the page now, so if it's a question about it, the context is ready at the release.
+    setTimeout(() => preread.current(), 0);
   }, [docked, assistant, dockAnim]);
 
   const stopTalking = useCallback(() => {

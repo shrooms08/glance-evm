@@ -345,6 +345,16 @@ export function isAsk(text: string): boolean {
   );
 }
 
+/**
+ * Requests that take Claude more than a second to answer (Show me, teach, guide, "why did it move"): these get an
+ * instant spoken acknowledgment. Prices, the portfolio, buys and cancels don't: they should just be fast.
+ */
+export function isSlowRequest(text: string): boolean {
+  const t = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ").trim();
+  if (isAsk(t)) return true;
+  return /\bwhy\b/.test(t) && /\b(move|moved|moving|up|down|drop|dropped|fell|fall|rise|rose|jump|jumped|rally|rallied|slid|surge|surged|plunge|plunged|climb|climbed)\b/.test(t);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Timing: when each action fires during playback
 // ---------------------------------------------------------------------------------------------------------------------

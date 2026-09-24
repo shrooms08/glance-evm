@@ -8,6 +8,7 @@
  * same on-chain preflight and vault guards. Nothing here can trade.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicFetch } from "../anthropicHttp.js";
 import { z } from "zod";
 
 import type { CatalogEntry } from "../catalog.js";
@@ -254,7 +255,7 @@ export function createClaudeIntent(
 ): IntentModel | null {
   if (!apiKey && !opts.client) return null;
   const log = opts.log ?? ((l: string) => console.log(l));
-  const client: MessagesClient = opts.client ?? new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 0 });
+  const client: MessagesClient = opts.client ?? new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 0, fetch: anthropicFetch });
   const companies = catalog.map((c) => `${c.symbol}: ${c.legalName} (also: ${[c.name, ...c.aliases].join(", ")})`).join("\n");
   const system = [
     PERSONA,

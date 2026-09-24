@@ -14,7 +14,9 @@ import { takeGreeting } from "../components/useGreeting";
 import { findQuote, revealRange } from "../lib/anchor";
 import { parseCommand } from "../lib/commands";
 import { readPage, readableText, SHOW_ME_MAX_CHARS, wantsScreenshot } from "../lib/pageRead";
-import { runShowMe, type ShowMeDeps } from "../lib/showMe";
+import { CUT_NOTE, runShowMe, type ShowMeDeps } from "../lib/showMe";
+import { parseSse, type StreamSentence } from "../lib/showStream";
+import type { PartsHandlers } from "../lib/voiceClient";
 import { ShowScheduler } from "../lib/showScheduler";
 
 const ARTICLE = `
@@ -353,6 +355,89 @@ describe("the new tags, end to end", () => {
     d.end();
     await run.finished;
     expect(d.calls.filter((c) => c.startsWith("CHART_"))).toEqual(["CHART_RANGE", "CHART_POINT", "CHART_LEVEL"]);
+  });
+});
+
+describe("Show me, streamed: speaking from the first sentence", () => {
+  /** A streamed answer the test writes sentence by sentence, and a parts voice the test plays. */
+  function streamedDeps() {
+    let onSentence: (s: StreamSentence) => void = () => {};
+    let finishAnswer: () => void = () => {};
+    let h: PartsHandlers = {};
+    let resolveVoice: (o: "ended" | "cut" | "unavailable" | "off") => void = () => {};
+    const pushed: string[] = [];
+    const d = deps({
+      askStream: vi.fn((_body: unknown, cb: (s: StreamSentence) => void) => {
+        onSentence = cb;
+        return new Promise<{ ok: true; source: string }>((r) => (finishAnswer = () => r({ ok: true, source: "claude" })));
+      }),
+      speakParts: vi.fn((handlers) => {
+        h = handlers;
+        return {
+          push: (text: string) => (text ? pushed.push(text) - 1 : null),
+          end: () => {},
+          result: new Promise<"ended" | "cut" | "unavailable" | "off">((r) => (resolveVoice = r)),
+        };
+      }),
+    });
+    return { d, pushed, sentence: (s: StreamSentence) => onSentence(s), answerDone: () => finishAnswer(), voice: () => h, voiceDone: (o: "ended" | "cut" | "unavailable" | "off") => resolveVoice(o) };
+  }
+
+  it("each sentence is spoken as it arrives; its tags fire with its own audio; no tag is ever spoken", async () => {
+    const t = streamedDeps();
+    const run = runShowMe("show me the key numbers", t.d);
+    await flush();
+    expect(t.d.ask).not.toHaveBeenCalled();
+    const first = "Revenue grew twelve percent, right here.";
+    t.sentence({ i: 0, spoken: first, actions: [{ kind: "CIRCLE", quote: "Revenue grew 12%", at: first.indexOf("right") }] });
+    // Spoken straight away, while the rest is still being written.
+    expect(t.pushed).toEqual([first]);
+    expect(t.d.calls).toEqual([]); // nothing fires before its audio starts
+    t.voice().onPart!(0);
+    t.voice().onProgress!(0, 1.5, 2.5);
+    expect(t.d.calls).toEqual(["reveal", "CIRCLE", "point:Revenue grew 12%"]);
+    const second = "And the margin.";
+    t.sentence({ i: 1, spoken: second, actions: [{ kind: "UNDERLINE", quote: "gross margin", at: 0 }] });
+    expect(t.d.calls).not.toContain("UNDERLINE"); // part 1 hasn't started playing
+    t.voice().onPartEnd!(0);
+    t.voice().onPart!(1);
+    expect(t.d.calls).toContain("UNDERLINE");
+    for (const text of t.pushed) expect(text).not.toMatch(/\[|\]/);
+    t.answerDone();
+    t.voice().onPartEnd!(1);
+    t.voiceDone("ended");
+    await run.finished;
+    expect(t.d.say).toHaveBeenLastCalledWith(`${first} ${second}`, "idle", undefined);
+    expect(t.d.calls.slice(-2)).toEqual(["home", "fade"]);
+  });
+
+  it("a later sentence that can't be said stops the reply there: its drawings never come, the rest stays written", async () => {
+    const t = streamedDeps();
+    const run = runShowMe("show me the key numbers", t.d);
+    await flush();
+    t.sentence({ i: 0, spoken: "Deliveries hit a record.", actions: [{ kind: "UNDERLINE", quote: "record deliveries", at: 0 }] });
+    t.voice().onPart!(0);
+    t.sentence({ i: 1, spoken: "Revenue grew.", actions: [{ kind: "CIRCLE", quote: "Revenue grew 12%", at: 0 }] });
+    t.answerDone();
+    t.voice().onPartEnd!(0);
+    t.voice().onCut!(1);
+    t.voiceDone("cut");
+    await run.finished;
+    expect(t.d.draw).toHaveBeenCalledTimes(1);
+    expect(t.d.calls).not.toContain("CIRCLE");
+    expect(t.d.say).toHaveBeenLastCalledWith("Deliveries hit a record. Revenue grew.", "idle", CUT_NOTE);
+  });
+
+  it("server-sent events survive being split anywhere", () => {
+    const wire = 'event: sentence\ndata: {"i":0,"spoken":"One.","actions":[]}\n\nevent: done\ndata: {"source":"claude"}\n\n';
+    const events: string[] = [];
+    let rest = "";
+    for (const ch of wire.match(/[\s\S]{1,7}/g)!) {
+      const out = parseSse(rest + ch);
+      rest = out.rest;
+      events.push(...out.events.map((e) => `${e.event}:${e.data}`));
+    }
+    expect(events).toEqual(['sentence:{"i":0,"spoken":"One.","actions":[]}', 'done:{"source":"claude"}']);
   });
 });
 

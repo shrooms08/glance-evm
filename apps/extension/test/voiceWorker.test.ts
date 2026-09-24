@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ListenHandlers } from "../lib/voice";
-import { FIXED_LINES, LINES } from "@glance/core/persona";
+import { ACKS, FIXED_LINES, LINES } from "@glance/core/persona";
 import type { SpeechEvent, VoiceEvent } from "../lib/voiceMessages";
 import { toPcm16, VoiceWorker, wav, type WorkerDeps } from "../lib/voiceWorker";
 
@@ -102,6 +102,8 @@ interface Setup {
   /** The configured voice the API reports. */
   voice?: string;
   listen?: (h: ListenHandlers) => void;
+  /** Answers /voice/speak itself (the default: a clip, always). */
+  speak?: (url: string) => Response | undefined;
 }
 
 function setup(o: Setup = {}) {
@@ -125,6 +127,8 @@ function setup(o: Setup = {}) {
       if (o.transcribe === "fail") throw new TypeError("Failed to fetch");
       return Response.json(o.transcribe ?? { text: "what's Tesla at", confidence: 0.9 });
     }
+    const own = u.includes("/voice/speak?") ? o.speak?.(u) : undefined;
+    if (own) return own;
     if (u.includes("/voice/speak?")) return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "audio/mpeg", "x-voice": o.voice ?? "flux-sienna-en", "x-voice-cache": "prerecorded" } });
     throw new Error(`unexpected ${u}`);
   });
@@ -436,6 +440,115 @@ describe("voice worker: spoken replies", () => {
     FakeAudio.all.at(-1)!.onended!();
     await p;
     expect(u.requests.filter((r) => r.url.includes("/voice/speak?"))).toHaveLength(1);
+  });
+});
+
+describe("voice worker: a reply spoken sentence by sentence", () => {
+  const speakUrls = (t: ReturnType<typeof setup>) => t.requests.filter((r) => r.url.includes("/voice/speak?")).map((r) => decodeURIComponent(r.url));
+
+  it("plays the sentences in order, back to back, each later one preloaded in the first one's voice", async () => {
+    const t = setup();
+    t.worker.speakPart("m1", 0, "Revenue grew twelve percent.", API);
+    await flush();
+    expect(FakeAudio.all).toHaveLength(1);
+    // The first sentence plays as soon as it arrives; the rest haven't been written yet.
+    FakeAudio.all[0]!.onplaying!();
+    t.worker.speakPart("m1", 1, "The margin was eighteen percent.", API);
+    t.worker.speakPart("m1", 2, "Deliveries were a record.", API);
+    t.worker.speakEnd("m1", 3);
+    await flush();
+    // The second sentence is fetched (pinned to the first one's voice) while the first is still playing.
+    expect(FakeAudio.all[0]!.src).toBe(`${API}/voice/speak?text=${encodeURIComponent("Revenue grew twelve percent.")}`);
+    expect(speakUrls(t)).toEqual([`${API}/voice/speak?text=The margin was eighteen percent.&voice=flux-sienna-en`]);
+    FakeAudio.all[0]!.onended!();
+    await flush();
+    expect(FakeAudio.all).toHaveLength(2);
+    expect(FakeAudio.all[1]!.src).toBe("blob:clip"); // already downloaded: no gap
+    FakeAudio.all[1]!.onplaying!();
+    await flush();
+    expect(speakUrls(t).at(-1)).toBe(`${API}/voice/speak?text=Deliveries were a record.&voice=flux-sienna-en`);
+    FakeAudio.all[1]!.onended!();
+    await flush();
+    FakeAudio.all[2]!.onplaying!();
+    FakeAudio.all[2]!.onended!();
+    await flush();
+    expect(t.speech()).toEqual(["start", "part", "part-end", "part", "part-end", "part", "part-end", "end"]);
+    expect(t.speechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it("a later sentence its voice can't say (after one retry) stops the reply there: no other voice, the rest stays written", async () => {
+    const t = setup({ speak: (u) => (u.includes("&voice=") ? new Response("", { status: 503 }) : undefined) });
+    t.worker.speakPart("m2", 0, "Tesla fell this week.", API);
+    t.worker.speakPart("m2", 1, "It dropped on Tuesday.", API);
+    t.worker.speakEnd("m2", 2);
+    await flush();
+    FakeAudio.all[0]!.onplaying!();
+    await flush();
+    FakeAudio.all[0]!.onended!();
+    await flush(10);
+    const tries = speakUrls(t).filter((u) => u.includes("It dropped"));
+    expect(tries).toHaveLength(2); // one retry, same voice
+    expect(tries.every((u) => u.endsWith("&voice=flux-sienna-en"))).toBe(true);
+    expect(FakeAudio.all).toHaveLength(1); // nothing else played
+    expect(t.events.filter((e) => e.kind === "voice:speech").at(-1)).toMatchObject({ type: "cut", part: 1 });
+    expect(t.speechSynthesis.speak).not.toHaveBeenCalled();
+    expect(t.errorTone).not.toHaveBeenCalled();
+  });
+
+  it("a new key press drops the rest of the reply", async () => {
+    const t = setup();
+    t.worker.speakPart("m3", 0, "One.", API);
+    await flush();
+    FakeAudio.all[0]!.onplaying!();
+    t.worker.hush();
+    t.worker.speakPart("m3", 1, "Two.", API);
+    await flush();
+    expect(FakeAudio.all[0]!.paused).toBe(true);
+    expect(speakUrls(t).some((u) => u.includes("Two."))).toBe(false);
+  });
+});
+
+describe("voice worker: the instant acknowledgment", () => {
+  async function ask(text: string) {
+    const t = setup({ command: { intent: "ask", symbol: null, amount: null, reply: "" } });
+    void t.worker.start("k", "en-US", API, {});
+    await flush();
+    FakeWS.last.open();
+    const stopping = t.worker.stop("k");
+    await flush();
+    FakeWS.last.reply({ type: "transcript", text });
+    await stopping;
+    await flush();
+    return t.requests.filter((r) => r.url.includes("/voice/speak?")).map((r) => decodeURIComponent(r.url.split("text=")[1]!));
+  }
+
+  it("a slow request (Show me, teach, guide, why) gets a pre-recorded 'One sec.' straight away", async () => {
+    const said = await ask("show me the key numbers in this article");
+    expect(said).toHaveLength(1);
+    expect(ACKS as readonly string[]).toContain(said[0]);
+  });
+
+  it("the acknowledgments rotate", async () => {
+    const t = setup();
+    for (let i = 0; i < 3; i++) {
+      void t.worker.start(`k${i}`, "en-US", API, {});
+      await flush();
+      FakeWS.last.open();
+      const stopping = t.worker.stop(`k${i}`);
+      await flush();
+      FakeWS.last.reply({ type: "transcript", text: "why did Tesla drop?" });
+      await stopping;
+      await flush();
+      FakeAudio.all.at(-1)?.onplaying?.();
+      FakeAudio.all.at(-1)?.onended?.();
+      await flush();
+    }
+    const acks = t.requests.filter((r) => r.url.includes("/voice/speak?")).map((r) => decodeURIComponent(r.url.split("text=")[1]!)).filter((x) => (ACKS as readonly string[]).includes(x));
+    expect(new Set(acks).size).toBe(3);
+  });
+
+  it("a price, the portfolio or a buy gets none", async () => {
+    for (const q of ["what's Tesla at", "how am I doing", "buy ten dollars of Tesla"]) expect(await ask(q)).toEqual([]);
   });
 });
 

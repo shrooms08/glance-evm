@@ -24,7 +24,8 @@
 import type { Listener, ListenHandlers } from "./voice";
 import type { FallbackReason, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceTiming } from "./voiceMessages";
 import type { VoiceCode } from "./voiceReasons";
-import { FIXED_LINES } from "@glance/core/persona";
+import { ACKS, FIXED_LINES } from "@glance/core/persona";
+import { isSlowRequest } from "@glance/core/showme";
 
 const FIXED = new Set(FIXED_LINES);
 
@@ -338,6 +339,9 @@ export class VoiceWorker {
       this.emit(s, { type: "timing", timing });
       return this.emit(s, { type: "end" });
     }
+    // A request that takes Claude a moment (Show me, teach, guide, why): an instant "One sec." in Glance's voice,
+    // pre-recorded, while the answer is worked out. Prices, the portfolio and buys get none: they should just be fast.
+    if (isSlowRequest(text)) void this.speak(`ack-${s.id}`, ACKS[this.ackTurn++ % ACKS.length]!, s.api);
 
     // What was meant, and the reply. If the API can't answer, the page falls back to its own parser (no intent).
     let intent: VoiceIntent | null = null;
@@ -500,8 +504,8 @@ export class VoiceWorker {
           } else this.d.debug?.(`[glance] reply voice: ${status.voice ?? "?"} (this session's copy)`);
           el.src = this.d.objectUrl(blob);
         } else if (this.d.streamInto) {
-          await this.d.streamInto(el, url, (voice) => this.d.debug?.(`[glance] reply voice: ${voice ?? "?"}`)).catch(failed);
-          return;
+          // Not awaited: play() starts on the first bytes, while the rest streams in.
+          void this.d.streamInto(el, url, (voice) => this.d.debug?.(`[glance] reply voice: ${voice ?? "?"}`)).catch(failed);
         } else el.src = url;
       })().then(
         () => void el.play().catch(failed),
@@ -511,9 +515,197 @@ export class VoiceWorker {
     if (outcome === "unavailable") unavailable();
   }
 
+  private ackTurn = 0;
+
+  // ---- A reply in parts (Show me, streamed): one sentence at a time, back to back, in one voice ------------------
+
+  private replies = new Map<string, { api: string; parts: string[]; total: number | null; wake: (() => void) | null; running: boolean }>();
+
+  /** A sentence of reply `id`. The first one starts the reply (queued behind anything already speaking). */
+  speakPart(id: string, index: number, text: string, api: string) {
+    let r = this.replies.get(id);
+    if (!r) {
+      r = { api, parts: [], total: null, wake: null, running: false };
+      this.replies.set(id, r);
+    }
+    r.parts[index] = text;
+    r.wake?.();
+    if (!r.running) {
+      r.running = true;
+      const gen = this.gen;
+      const reply = r;
+      this.chain = this.chain.then(async () => {
+        if (gen === this.gen) await this.playParts(id, reply);
+        else this.d.emit({ kind: "voice:speech", id, type: "unavailable" });
+      });
+    }
+  }
+
+  /** No more parts for reply `id`. */
+  speakEnd(id: string, total: number) {
+    const r = this.replies.get(id);
+    if (!r) {
+      // Nothing was ever pushed: an empty reply.
+      if (total === 0) this.d.emit({ kind: "voice:speech", id, type: "end" });
+      return;
+    }
+    r.total = total;
+    r.wake?.();
+  }
+
+  /** Part `index`'s text once it has been pushed, or null when the reply ended before it. */
+  private async partText(r: { parts: string[]; total: number | null; wake: (() => void) | null }, index: number, gen: number): Promise<string | null> {
+    for (;;) {
+      if (gen !== this.gen) return null;
+      if (r.parts[index] !== undefined) return r.parts[index]!;
+      if (r.total !== null && index >= r.total) return null;
+      await new Promise<void>((resolve) => {
+        r.wake = resolve;
+        setTimeout(resolve, 250); // a hush elsewhere also wakes us
+      });
+      r.wake = null;
+    }
+  }
+
+  private async playParts(id: string, r: { api: string; parts: string[]; total: number | null; wake: (() => void) | null }) {
+    const gen = this.gen;
+    const status = await this.apiStatus(r.api);
+    const done = (type: "end" | "unavailable") => {
+      this.replies.delete(id);
+      if (type === "unavailable") this.d.errorTone();
+      this.d.emit({ kind: "voice:speech", id, type });
+    };
+    if (!status.speech) return done("unavailable");
+    let voice: string | null = null;
+    // Each later part is fetched whole while the one before it plays, pinned to the first part's voice (one retry).
+    const fetchPart = async (text: string): Promise<Blob | null> => {
+      const url = `${r.api}/voice/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice ?? "")}`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await this.d.fetch(url).catch(() => null);
+        if (res?.ok) return res.blob();
+      }
+      return null;
+    };
+    const preloaded = new Map<number, Promise<Blob | null>>();
+    const preload = async (index: number) => {
+      if (preloaded.has(index) || voice === null) return;
+      const text = await this.partText(r, index, gen);
+      if (text === null || preloaded.has(index)) return;
+      preloaded.set(index, fetchPart(text));
+    };
+    for (let index = 0; ; index++) {
+      const text = await this.partText(r, index, gen);
+      if (text === null) return gen === this.gen ? done(index === 0 ? "unavailable" : "end") : done("end");
+      // A later part's audio is ready first (preloaded while the one before played): no element for a part never said.
+      const blob = index === 0 ? null : await (preloaded.get(index) ?? fetchPart(text));
+      if (index > 0 && !blob) {
+        // This voice can't say the next sentence: stop here, in the same voice; the rest stays written.
+        this.replies.delete(id);
+        this.d.emit({ kind: "voice:speech", id, type: "cut", t: 0, d: null, part: index });
+        return;
+      }
+      const el = this.d.createAudio();
+      this.playing = { el, id };
+      let setup: (fail: () => void) => Promise<boolean>;
+      if (index === 0) {
+        // The first part streams, so it starts on the first bytes (play() isn't held for the download); the voice
+        // that answers is kept for the rest.
+        const url = `${r.api}/voice/speak?text=${encodeURIComponent(text)}`;
+        setup = async (fail) => {
+          if (this.d.streamInto) {
+            void this.d
+              .streamInto(el, url, (v) => {
+                voice = v;
+                void preload(1);
+              })
+              .catch(fail);
+            return true;
+          }
+          el.src = url;
+          voice = status.voice;
+          void preload(1);
+          return true;
+        };
+      } else {
+        setup = async () => {
+          el.src = this.d.objectUrl(blob!);
+          void preload(index + 1);
+          return true;
+        };
+      }
+      const outcome = await this.playOne(id, el, index, setup);
+      if (outcome === "cut") {
+        this.replies.delete(id);
+        return;
+      }
+      if (outcome === "unavailable") return done(index === 0 ? "unavailable" : "end");
+      if (gen !== this.gen) return done("end");
+    }
+  }
+
+  /** Plays one part: its own start, progress and end events; a stall or an error after it started is a cut. */
+  private playOne(id: string, el: HTMLAudioElement, index: number, setup: (fail: () => void) => Promise<boolean>): Promise<"ended" | "cut" | "unavailable"> {
+    return new Promise((resolve) => {
+      let begun = false;
+      let settled = false;
+      let lastTime = -1;
+      let lastMove = this.d.now();
+      let watch: ReturnType<typeof setInterval> | undefined;
+      const settle = (o: "ended" | "cut" | "unavailable") => {
+        if (settled) return;
+        settled = true;
+        clearInterval(watch);
+        if (this.playing?.el === el) this.playing = null;
+        resolve(o);
+      };
+      const cut = () => {
+        if (settled) return;
+        const t = el.currentTime;
+        const d = Number.isFinite(el.duration) ? el.duration : null;
+        settle("cut");
+        try {
+          el.pause();
+        } catch {
+          // already stopped
+        }
+        this.d.emit({ kind: "voice:speech", id, type: "cut", t, d, part: index });
+      };
+      el.onplaying = () => {
+        if (begun) return;
+        begun = true;
+        lastMove = this.d.now();
+        if (index === 0) this.d.emit({ kind: "voice:speech", id, type: "start" });
+        this.d.emit({ kind: "voice:speech", id, type: "part", index });
+        watch = setInterval(() => {
+          if (el.currentTime !== lastTime) {
+            lastTime = el.currentTime;
+            lastMove = this.d.now();
+          } else if (this.d.now() - lastMove > STALL_MS) cut();
+        }, 250);
+      };
+      el.ontimeupdate = () => this.d.emit({ kind: "voice:speech", id, type: "part-progress", index, t: el.currentTime, d: Number.isFinite(el.duration) ? el.duration : null });
+      const ended = () => {
+        if (settled) return;
+        if (begun) this.d.emit({ kind: "voice:speech", id, type: "part-end", index });
+        settle(begun ? "ended" : "unavailable");
+      };
+      el.onended = ended;
+      el.onpause = ended;
+      el.onerror = () => (begun ? cut() : settle("unavailable"));
+      // A failure before the voice started means no voice; after, the stall watch decides (never another voice).
+      const fail = () => (begun ? undefined : settle("unavailable"));
+      void setup(fail).then(
+        (ok) => (ok ? void el.play().catch(fail) : settle("unavailable")),
+        () => settle("unavailable"),
+      );
+    });
+  }
+
   /** Stops any reply that is playing, and drops any queued (a new command, or the user talking over it). */
   hush() {
     this.gen++;
+    for (const r of this.replies.values()) r.wake?.();
+    this.replies.clear();
     if (!this.playing) return;
     const { el } = this.playing;
     this.playing = null;

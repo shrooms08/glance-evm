@@ -17,6 +17,7 @@ import { formatSignedPercent } from "@glance/core/format";
 import { PERSONA } from "@glance/core/persona";
 import { usTicker } from "@glance/core/tickers";
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicFetch } from "./anthropicHttp.js";
 
 import type { MessagesClient } from "./llm.js";
 import { logUsage, MAX_OUTPUT_TOKENS, type LlmBudget, type Log } from "./llmBudget.js";
@@ -103,7 +104,7 @@ export interface Summarizer {
 export function createWhySummarizer(o: { apiKey?: string; model: string; budget: LlmBudget; log?: Log; client?: MessagesClient }): Summarizer | null {
   if (!o.apiKey && !o.client) return null;
   const log = o.log ?? ((l: string) => console.log(l));
-  const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 10_000, maxRetries: 0 });
+  const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 10_000, maxRetries: 0, fetch: anthropicFetch });
   const system = [
     PERSONA,
     "",

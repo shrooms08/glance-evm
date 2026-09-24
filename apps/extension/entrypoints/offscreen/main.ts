@@ -151,6 +151,12 @@ browser.runtime.onMessage.addListener((msg: OffscreenRequest) => {
     case "offscreen:speak":
       void worker.speak(msg.id, msg.text, msg.api);
       break;
+    case "offscreen:speak-part":
+      worker.speakPart(msg.id, msg.index, msg.text, msg.api);
+      break;
+    case "offscreen:speak-end":
+      worker.speakEnd(msg.id, msg.total);
+      break;
     case "offscreen:hush":
       worker.hush();
       break;

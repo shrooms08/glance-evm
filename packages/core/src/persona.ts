@@ -65,6 +65,12 @@ export const LINES = {
   nothingToRead: "I can't find much to read on this page. Select the part you mean and ask again.",
 } as const;
 
+/**
+ * Said the moment the key is released for a request that takes a moment (Show me, teach, guide, why), rotated.
+ * Pre-recorded, so they play at once.
+ */
+export const ACKS = ["Let me look.", "One sec.", "Okay, checking."] as const;
+
 /** The greeting as spoken (the key names said out loud): pre-recorded for the default keys. */
 export const SPOKEN_GREETING = (glanceLetter = "G", voiceLetter = "V") => GREETING(`Option ${glanceLetter}`, `Option ${voiceLetter}`);
 
@@ -74,6 +80,7 @@ export const SPOKEN_GREETING = (glanceLetter = "G", voiceLetter = "V") => GREETI
  */
 export const FIXED_LINES: readonly string[] = [
   SPOKEN_GREETING(),
+  ...ACKS,
   ...(Object.values(LINES) as unknown[]).filter((v): v is string => typeof v === "string" && !v.endsWith(" ")),
   EMPTY_PORTFOLIO,
   NEWS_UNAVAILABLE,

@@ -17,7 +17,8 @@
     "./chart-mount": "./src/chart-mount.ts",
     "./showme": "./src/showme.ts",
     "./sketch": "./src/sketch.ts",
-    "./persona": "./src/persona.ts"
+    "./persona": "./src/persona.ts",
+    "./sentences": "./src/sentences.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

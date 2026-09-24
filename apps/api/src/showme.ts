@@ -16,6 +16,7 @@
  *   - about 6k tokens in (the page text is cut to SHOWME_MAX_PAGE_CHARS) and at most 400 out
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { anthropicFetch } from "./anthropicHttp.js";
 
 import { GLANCE_FACTS, LINES, PERSONA } from "@glance/core/persona";
 import {
@@ -30,11 +31,26 @@ import {
   parseTagged,
   rangeFor,
   validateChartTags,
+  DRAWING_KINDS,
   type ShowAction,
+  type Tagged,
 } from "@glance/core/showme";
 import { containsAdvice, containsChartAdvice } from "@glance/core/tone";
 
+import { SentenceSplitter } from "@glance/core/sentences";
+
 import { chartBlock, type ChartSummary } from "./showmeChart.js";
+
+/** Anthropic's stream events we read (text as it's written, and the token counts). */
+interface StreamEvent {
+  type: string;
+  message?: { usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number | null } };
+  usage?: { output_tokens?: number };
+  delta?: { type: string; text?: string };
+}
+interface StreamingClient {
+  messages: { create(params: Anthropic.MessageCreateParamsStreaming): Promise<AsyncIterable<StreamEvent>> };
+}
 
 import type { MessagesClient } from "./llm.js";
 import { logUsage, type LlmBudget, type Log } from "./llmBudget.js";
@@ -80,9 +96,25 @@ export interface ShowMeAnswer {
   chart?: { symbol: string; range: "1D" | "1W" | "1M" };
 }
 
+/** One streamed sentence: what to say, and the actions it carries (at offsets within this sentence). */
+export interface ShowMeSentence {
+  i: number;
+  spoken: string;
+  actions: ShowAction[];
+  /** On the sentence that opens a chart: the chart and its range. */
+  chart?: { symbol: string; range: "1D" | "1W" | "1M" };
+}
+
+export type ShowMeEvent = { type: "sentence"; sentence: ShowMeSentence } | { type: "done"; source: ShowMeAnswer["source"] };
+
 export interface ShowMe {
   readonly model: string;
   answer(input: ShowMeInput): Promise<ShowMeAnswer>;
+  /**
+   * The same answer, streamed: each sentence is sent the moment it's complete (so its speech can start while Claude is
+   * still writing), checked on its own with the same rules as a whole answer.
+   */
+  answerStream(input: ShowMeInput, emit: (e: ShowMeEvent) => void): Promise<void>;
 }
 
 const plain = (spoken: string, source: ShowMeAnswer["source"]): ShowMeAnswer => ({ reply: spoken, spoken, actions: [], source });
@@ -171,19 +203,92 @@ export function showMeUserText(input: ShowMeInput): string {
 export function createShowMe(o: { apiKey?: string; model: string; budget: LlmBudget; symbols: readonly string[]; log?: Log; client?: MessagesClient }): ShowMe | null {
   if (!o.apiKey && !o.client) return null;
   const log = o.log ?? ((l: string) => console.log(l));
-  const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 15_000, maxRetries: 0 });
+  const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 15_000, maxRetries: 0, fetch: anthropicFetch });
   const symbols = new Set(o.symbols);
   const system = showMeSystem(o.symbols);
+  const request = (input: ShowMeInput) => {
+    const content: Anthropic.ContentBlockParam[] = [];
+    if (input.screenshot) content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: input.screenshot } });
+    content.push({ type: "text", text: showMeUserText(input) });
+    return { model: o.model, max_tokens: SHOWME_MAX_OUTPUT_TOKENS, system, messages: [{ role: "user" as const, content }] };
+  };
+
+  /** Checks one piece of an answer (a whole reply, or one sentence) with every rule, given what came before it. */
+  const checker = (input: ShowMeInput) => {
+    const charts = input.charts ?? [];
+    const page = input.page ?? {};
+    const pageText = `${page.title ?? ""}\n${page.selection ?? ""}\n${(page.text ?? "").slice(0, SHOWME_MAX_PAGE_CHARS)}`;
+    const figures = page.figures?.length ?? 0;
+    let opened: string | null = input.openChart?.symbol ?? null;
+    let drawings = 0;
+    const onChartReply = () => charts.length > 0;
+    return (raw: string): { tagged: Tagged; guarded: boolean; chart?: ShowMeSentence["chart"] } => {
+      let tagged = keepQuotesOnPage(parseTagged(raw, { symbols }), pageText);
+      tagged = { ...tagged, actions: tagged.actions.filter((a) => a.kind !== "BOX_FIGURE" || a.figure <= figures) };
+      tagged = validateChartTags(tagged, charts, containsChartAdvice);
+      tagged = openChartsFirst(pairMarks(tagged), opened);
+      // The drawing cap runs across the whole reply.
+      tagged = { ...tagged, actions: tagged.actions.filter((a) => !DRAWING_KINDS.has(a.kind) || drawings++ < MAX_DRAWINGS) };
+      const onChart = onChartReply() || tagged.actions.some((a) => a.kind.startsWith("CHART"));
+      const guarded = onChart ? containsChartAdvice(tagged.spoken) : containsAdvice(tagged.spoken);
+      const open = tagged.actions.find((a): a is Extract<ShowAction, { kind: "CHART" }> => a.kind === "CHART");
+      if (open) opened = open.symbol;
+      const chart = open ? { symbol: open.symbol, range: charts.find((c) => c.symbol === open.symbol)?.range ?? rangeFor(input.question) } : undefined;
+      return { tagged, guarded, ...(chart ? { chart } : {}) };
+    };
+  };
+
   return {
     model: o.model,
+    async answerStream(input, emit) {
+      const say = (spoken: string, source: ShowMeAnswer["source"], i = 0) => {
+        emit({ type: "sentence", sentence: { i, spoken, actions: [] } });
+        emit({ type: "done", source });
+      };
+      if (!o.budget.tryAcquire("other")) return say(LINES.outOfThinking, "budget");
+      const check = checker(input);
+      const splitter = new SentenceSplitter();
+      let i = 0;
+      let stopped = false;
+      const send = (raw: string) => {
+        if (stopped) return;
+        const { tagged, guarded, chart } = check(raw);
+        if (guarded) {
+          // A sentence that advises or forecasts: said instead is the safe line, and the answer ends there.
+          stopped = true;
+          emit({ type: "sentence", sentence: { i: i++, spoken: LINES.noAdvice, actions: [] } });
+          return;
+        }
+        if (!tagged.spoken && tagged.actions.length === 0) return;
+        emit({ type: "sentence", sentence: { i: i++, spoken: tagged.spoken, actions: tagged.actions, ...(chart ? { chart } : {}) } });
+      };
+      let usage: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number | null } = {};
+      try {
+        const stream = (await (client as unknown as StreamingClient).messages.create({ ...request(input), stream: true })) as AsyncIterable<StreamEvent>;
+        for await (const ev of stream) {
+          if (ev.type === "message_start" && ev.message) usage = { ...ev.message.usage };
+          else if (ev.type === "message_delta" && ev.usage) usage = { ...usage, output_tokens: ev.usage.output_tokens };
+          else if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
+            for (const sentence of splitter.push(ev.delta.text ?? "")) send(sentence);
+            if (stopped) break;
+          }
+        }
+      } catch (err) {
+        o.budget.failed(err);
+        if (i === 0) return say(LINES.cantThink, "unavailable");
+        emit({ type: "done", source: "unavailable" });
+        return;
+      }
+      for (const sentence of splitter.flush()) send(sentence);
+      logUsage(log, "other/showme", o.model, usage); // purpose, model, tokens: never the page or the question
+      if (i === 0) return say(LINES.cantThink, "unavailable");
+      emit({ type: "done", source: stopped ? "guarded" : "claude" });
+    },
     async answer(input) {
       if (!o.budget.tryAcquire("other")) return plain(LINES.outOfThinking, "budget");
-      const content: Anthropic.ContentBlockParam[] = [];
-      if (input.screenshot) content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: input.screenshot } });
-      content.push({ type: "text", text: showMeUserText(input) });
       let response;
       try {
-        response = await client.messages.create({ model: o.model, max_tokens: SHOWME_MAX_OUTPUT_TOKENS, system, messages: [{ role: "user", content }] });
+        response = await client.messages.create(request(input));
       } catch (err) {
         o.budget.failed(err);
         return plain(LINES.cantThink, "unavailable");
