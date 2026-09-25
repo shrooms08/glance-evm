@@ -265,8 +265,8 @@ export default defineBackground(() => {
         void (async () => {
           const url = browser.runtime.getURL("/offscreen.html");
           const existing = await browser.runtime.getContexts?.({ contextTypes: ["OFFSCREEN_DOCUMENT" as never], documentUrls: [url] });
-          if (existing?.length) await browser.runtime.sendMessage({ kind: "offscreen:warm", api: await apiBase() } satisfies OffscreenRequest).catch(() => {});
-          else await fetch(`${await apiBase()}/voice/warm`, { method: "POST" }).catch(() => {});
+          if (existing?.length) await browser.runtime.sendMessage({ kind: "offscreen:warm", api: await apiBase(), panel: message.panel } satisfies OffscreenRequest).catch(() => {});
+          else await fetch(`${await apiBase()}/voice/warm${message.panel ? "?for=panel" : ""}`, { method: "POST" }).catch(() => {});
         })();
         return undefined;
       case "voice:mic-failed":

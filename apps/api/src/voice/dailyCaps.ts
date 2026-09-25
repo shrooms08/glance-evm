@@ -61,14 +61,27 @@ export class DailyMeter {
   }
 }
 
+/** Why an AssemblyAI session was opened: the key going down, conversation mode starting, or ahead of time (/voice/warm). */
+export type AaiOpened = "key-down" | "conversation" | "warm";
+/** One AssemblyAI session, as it closed: seconds billed, and whether it carried speech (or was wasted). */
+export interface AaiSessionUse {
+  opened: AaiOpened;
+  seconds: number;
+  speech: boolean;
+}
+
 /**
- * The meters in one file: { day, sttSeconds, ttsChars, aaiSeconds }. `assemblyai` counts AssemblyAI streaming seconds
- * as it bills them (session wall-clock; ASSEMBLYAI_STT_SECONDS_PER_DAY): when it's used up, Deepgram listens instead,
- * and `stt` (every provider's audio seconds) still decides when voice rests.
+ * The meters in one file: { day, sttSeconds, ttsChars, aaiSeconds, aaiBy, aaiTestSeconds }. `assemblyai` counts
+ * AssemblyAI streaming seconds as it bills them (session wall-clock; ASSEMBLYAI_STT_SECONDS_PER_DAY): when it's used up,
+ * Deepgram listens instead, and `stt` (every provider's audio seconds) still decides when voice rests. `aaiBy` breaks
+ * the day's seconds down by why each session opened and whether it carried speech ("warm/wasted": 12.5). Live tests
+ * and benchmarks (VOICE_LIVE_TESTS=1) count under `assemblyaiTest` (aaiTestSeconds), which no cap reads.
  */
 export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: number; assemblyaiSecondsPerDay?: number; file: string | null; now?: () => number }) {
   const now = o.now ?? Date.now;
-  let data: { day: string; sttSeconds: number; ttsChars: number; aaiSeconds?: number } = { day: today(now()), sttSeconds: 0, ttsChars: 0, aaiSeconds: 0 };
+  type Data = { day: string; sttSeconds: number; ttsChars: number; aaiSeconds?: number; aaiTestSeconds?: number; aaiBy?: Record<string, number> };
+  const fresh = (): Data => ({ day: today(now()), sttSeconds: 0, ttsChars: 0, aaiSeconds: 0, aaiTestSeconds: 0, aaiBy: {} });
+  let data: Data = fresh();
   if (o.file && existsSync(o.file)) {
     try {
       const read = JSON.parse(readFileSync(o.file, "utf8")) as typeof data;
@@ -83,10 +96,13 @@ export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: numbe
     writeFileSync(`${o.file}.tmp`, JSON.stringify(data));
     renameSync(`${o.file}.tmp`, o.file);
   };
-  const field = (k: "sttSeconds" | "ttsChars" | "aaiSeconds") => ({
+  const roll = () => {
+    if (data.day !== today(now())) data = fresh();
+  };
+  const field = (k: "sttSeconds" | "ttsChars" | "aaiSeconds" | "aaiTestSeconds") => ({
     load: () => data[k] ?? 0,
     save: (used: number) => {
-      if (data.day !== today(now())) data = { day: today(now()), sttSeconds: 0, ttsChars: 0, aaiSeconds: 0 };
+      roll();
       data[k] = used;
       write();
     },
@@ -94,11 +110,43 @@ export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: numbe
   return {
     stt: new DailyMeter(o.sttSecondsPerDay, field("sttSeconds"), now),
     tts: new DailyMeter(o.ttsCharsPerDay, field("ttsChars"), now),
-    assemblyai: new DailyMeter(o.assemblyaiSecondsPerDay ?? 1_800, field("aaiSeconds"), now),
+    assemblyai: new DailyMeter(o.assemblyaiSecondsPerDay ?? 3_600, field("aaiSeconds"), now),
+    /** Live tests and benchmarks: counted, never capped. */
+    assemblyaiTest: new DailyMeter(Number.POSITIVE_INFINITY, field("aaiTestSeconds"), now),
+    /** The day's AssemblyAI seconds by why each session opened and whether it carried speech. */
+    assemblyaiUse: {
+      record(u: AaiSessionUse, test = false) {
+        roll();
+        const k = `${test ? "test/" : ""}${u.opened}/${u.speech ? "speech" : "wasted"}`;
+        data.aaiBy = { ...data.aaiBy, [k]: +((data.aaiBy?.[k] ?? 0) + u.seconds).toFixed(2) };
+        write();
+      },
+      breakdown(): Record<string, number> {
+        roll();
+        return { ...data.aaiBy };
+      },
+    },
   };
 }
 
 export type VoiceMeters = ReturnType<typeof voiceMeters>;
+
+/** Today's AssemblyAI seconds against the cap, the breakdown, and the (uncapped) test seconds: for /health and the banner. */
+export function assemblyaiToday(m: VoiceMeters) {
+  const r = (n: number) => Math.round(n * 10) / 10;
+  return {
+    usedSeconds: r(m.assemblyai.usedToday),
+    capSeconds: m.assemblyai.limit,
+    resets: "00:00 UTC",
+    resting: m.assemblyai.resting,
+    /** "key-down/speech", "warm/wasted", "test/warm/speech"...: seconds, from the sessions closed today. */
+    bySession: m.assemblyaiUse.breakdown(),
+    testSeconds: r(m.assemblyaiTest.usedToday),
+  };
+}
+
+/** The banner's line: "assemblyai today: 312/3600 s (resets 00:00 UTC)". */
+export const assemblyaiBanner = (m: VoiceMeters) => `assemblyai today: ${Math.round(m.assemblyai.usedToday)}/${m.assemblyai.limit} s (resets 00:00 UTC)`;
 
 /** One daily meter in its own small file ({ day, used }): e.g. chart-calibration vision calls. */
 export function fileMeter(limit: number, file: string | null, now: () => number = Date.now): DailyMeter {

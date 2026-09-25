@@ -107,8 +107,10 @@ printed.
   (`x-glance-session`), the same limit also applies per session.
 - **Daily caps.** Speech-to-text is capped at 1,800 seconds a day (`VOICE_STT_SECONDS_PER_DAY`, every provider's audio)
   and text-to-speech at 60,000 characters a day (`VOICE_TTS_CHARS_PER_DAY`), per UTC day, surviving restarts.
-  AssemblyAI has its own 1,800 seconds (`ASSEMBLYAI_STT_SECONDS_PER_DAY`, counted as it bills: session wall-clock);
-  when those run out, Deepgram listens instead. When a direction runs out altogether, it rests until midnight UTC and
+  AssemblyAI has its own 3,600 seconds (`ASSEMBLYAI_STT_SECONDS_PER_DAY`, counted as it bills: session wall-clock);
+  when those run out, Deepgram listens instead. A session opened ahead of time is held 5 seconds, one per browser,
+  and only for the panel opening or ⌥V going down (`ASSEMBLYAI_WARM`); live tests and benchmarks run only with
+  `VOICE_LIVE_TESTS=1` and count under a separate test counter that no cap reads. When a direction runs out altogether, it rests until midnight UTC and
   Glance shows, in text only, "Voice is resting for today. You can still type." Pre-recorded lines and phrases served
   from memory never reach a provider, so they never count.
   Claude has its own daily budget (`LLM_DAILY_CALL_LIMIT`, see the API README).

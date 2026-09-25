@@ -162,7 +162,7 @@ browser.runtime.onMessage.addListener((msg: OffscreenRequest) => {
       worker.hush();
       break;
     case "offscreen:warm":
-      worker.warm(msg.api);
+      worker.warm(msg.api, msg.panel ? "panel" : undefined);
       break;
   }
   return undefined;

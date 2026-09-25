@@ -100,6 +100,9 @@ export function keyterms(ctx: AppContext, session: readonly string[] = []): stri
   );
 }
 
+/** The extension's random id for this browser (one warm AssemblyAI session each, at most). Anything else: none. */
+const clientId = (raw: string | undefined) => (raw && /^[A-Za-z0-9-]{8,64}$/.test(raw) ? raw : undefined);
+
 function unavailable(what: "transcription" | "speech"): never {
   throw new ApiError(503, "VOICE_UNAVAILABLE", `No ${what} provider is configured on the Glance API.`);
 }
@@ -231,8 +234,12 @@ export function registerVoice(
    * the speech provider's HTTPS connection. The extension calls it when the panel opens and when Option+V goes down.
    */
   app.post("/voice/warm", (c) => {
-    // Key down: the transcription stream, the speech provider's connection, and Claude's, all ready by the release.
-    v.stt?.warm?.(keyterms(ctx));
+    // The speech provider's connection and Claude's, ready by the release (idle, they cost nothing). An AssemblyAI
+    // session (billed from the moment it opens) only with ?for=key-down or ?for=conversation, or ?for=panel when
+    // ASSEMBLYAI_WARM=panel: never for the panel's 45s refresh, focus or polls (they send no reason).
+    const why = c.req.query("for");
+    const opened = why === "key-down" || why === "conversation" || (why === "panel" && ctx.config.ASSEMBLYAI_WARM === "panel") ? why : undefined;
+    v.stt?.warm?.(keyterms(ctx), { opened, client: clientId(c.req.query("client")) });
     v.prewarmSpeech();
     if (ctx.showMe || ctx.intentModel) warmAnthropic();
     return send(c, { ok: true });
@@ -370,6 +377,7 @@ export function registerVoice(
               return ws.close(1000);
             }
             const socket = ws;
+            const meta = { opened: conversation ? ("conversation" as const) : ("key-down" as const), client: clientId(c.req.query("client")) };
             live = v.stt.stream(keyterms(ctx, extra), {
               // The words so far, for the panel's live transcript (sent to this browser only; never logged).
               onPartial: (text) => {
@@ -387,7 +395,7 @@ export function registerVoice(
               onEndOfTurn: () => {
                 if (conversation) void finish(socket, "end-of-turn");
               },
-            });
+            }, meta);
             // The reply will need the speech provider soon: open its connection while the user is still speaking, and
             // keep it open through a long hold (the provider's edge drops idle connections after about 5s).
             v.prewarmSpeech();

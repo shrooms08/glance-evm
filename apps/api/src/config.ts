@@ -175,7 +175,22 @@ const envSchema = z.object({
   /** universal-3-5-pro (default: fastest, best on names) or universal-streaming-english. */
   ASSEMBLYAI_MODEL: z.string().default("universal-3-5-pro"),
   /** AssemblyAI streaming seconds a UTC day (billed as session time). */
-  ASSEMBLYAI_STT_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1_800),
+  ASSEMBLYAI_STT_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(3_600),
+  /**
+   * When an AssemblyAI session (billed from the moment it opens, held 5s for a stream to take) is opened ahead of time:
+   * "panel" (default): when Glance's panel opens, and when ⌥V goes down; "key-down": only when ⌥V goes down (or
+   * conversation mode starts). Measured 25 Sep: key-down only is ~155ms slower from key release to text (401 vs
+   * 245ms median), because the session's 1.4s handshake overlaps the start of the command.
+   */
+  ASSEMBLYAI_WARM: z.enum(["panel", "key-down"]).default("panel"),
+  /**
+   * "1": this API serves live tests and benchmarks (scripts/stt-compare.ts): AssemblyAI seconds are counted under a
+   * separate test counter that no daily cap reads. Refused in production.
+   */
+  VOICE_LIVE_TESTS: z
+    .string()
+    .optional()
+    .transform((v) => v === "1"),
   VOICE_TTS_CHARS_PER_DAY: z.coerce.number().int().min(0).default(60_000),
   /** /health?admin=<ADMIN_TOKEN> shows the full view in production (agent balance, voice, budgets). Unset: never. */
   ADMIN_TOKEN: z

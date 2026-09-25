@@ -2,7 +2,9 @@
  * The voice worker, run by Glance's offscreen document for every surface (the floating orb, the docked side panel,
  * the settings test). It never runs in a web page.
  *
- *   key down   warm the API's provider connections (/voice/warm), check the microphone, open a WebSocket to the
+ *   key down   warm the API's provider connections and open this browser's AssemblyAI session
+ *              (/voice/warm?for=key-down; the panel opening warms only what costs nothing idle), check the microphone,
+ *              open a WebSocket to the
  *              API's /voice/stream, and stream raw 16kHz PCM in 40ms slices as it is captured (an AudioWorklet: no
  *              encoder buffering, and a format the API's warm Deepgram connection can take utterance after utterance)
  *   key up     flush the capture, send {"type":"stop"} (the API ends the turn at once: AssemblyAI's ForceEndpoint, or
@@ -154,6 +156,12 @@ export class VoiceWorker {
   private status: { at: number; api: string; value: Status } | null = null;
   private playing: { el: HTMLAudioElement; id: string } | null = null;
 
+  /**
+   * This browser, to the API: a random id for as long as the offscreen document lives. The API keeps at most one warm
+   * AssemblyAI session per id, and the stream takes that one.
+   */
+  readonly client = `g-${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`;
+
   constructor(private readonly d: WorkerDeps) {}
 
   private emit(s: Session, body: EventBody) {
@@ -193,14 +201,20 @@ export class VoiceWorker {
     return value;
   }
 
-  /** Asks the API to warm its provider connections (fire and forget). Called on key down and when the panel opens. */
-  warm(api: string) {
-    void this.d.fetch(`${api}/voice/warm`, { method: "POST", signal: AbortSignal.timeout(2_000) }).catch(() => {});
+  /**
+   * Asks the API to warm its provider connections (fire and forget). With `why` (the key went down, conversation mode
+   * started, or the panel opened) the API may also open this browser's AssemblyAI session, billed from then on and
+   * held 5s (the panel only with ASSEMBLYAI_WARM=panel). The panel's refresh passes nothing: only the connections that
+   * cost nothing idle.
+   */
+  warm(api: string, why?: "key-down" | "conversation" | "panel") {
+    const q = why ? `?for=${why}&client=${this.client}` : "";
+    void this.d.fetch(`${api}/voice/warm${q}`, { method: "POST", signal: AbortSignal.timeout(2_000) }).catch(() => {});
   }
 
   async start(id: string, lang: string, api: string, context: VoiceCommandContext, vault?: string, listen: ListenOptions = {}) {
     this.hush();
-    this.warm(api);
+    this.warm(api, listen.conversation ? "conversation" : "key-down");
     const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", conversation: Boolean(listen.conversation), pending: null, chunks: [], capturing: false, released: 0, ended: false };
     this.sessions.set(id, s);
 
@@ -238,9 +252,10 @@ export class VoiceWorker {
     if (status.stream) {
       const params = new URLSearchParams();
       if (s.vault) params.set("vault", s.vault);
+      params.set("client", this.client);
       if (s.conversation) params.set("mode", "conversation");
       if (listen.keyterms?.length) params.set("keyterms", JSON.stringify(listen.keyterms.slice(0, 10)));
-      const q = params.size ? `?${params.toString()}` : "";
+      const q = `?${params.toString()}`;
       const ws = new this.d.WebSocket(`${httpToWs(api)}/voice/stream${q}`);
       ws.binaryType = "arraybuffer";
       s.ws = ws;

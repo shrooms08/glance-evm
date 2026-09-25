@@ -7,8 +7,10 @@
  *   firstAudio   key release to the reply's first audio byte (transcript, then /voice/command, then GET /voice/speak)
  *   heard        the words (reference words found), and what the API understood: the intent, ticker and amount
  *
- * Run it against one API per provider (STT_PROVIDER=assemblyai / deepgram), then compare the JSON. Live, opt-in:
- *   pnpm exec tsx scripts/stt-compare.ts --api http://localhost:8795 --label assemblyai --runs 5 --out /tmp/aai.json
+ * Run it against one API per provider (STT_PROVIDER=assemblyai / deepgram), then compare the JSON. Live and opt-in:
+ * it runs only with VOICE_LIVE_TESTS=1, against an API started with VOICE_LIVE_TESTS=1 (so its AssemblyAI seconds go
+ * to the test counter, never the daily cap; /voice/status says "metering": "test"), and at most 10 real runs:
+ *   VOICE_LIVE_TESTS=1 pnpm exec tsx scripts/stt-compare.ts --api http://localhost:8795 --label keydown --runs 1
  * The API's own logs carry timings and lengths only; this report has the fixture transcripts (TTS phrases, not users).
  */
 import { readFileSync, writeFileSync } from "node:fs";
@@ -19,11 +21,19 @@ const arg = (name: string, fallback: string) => {
   return i > 0 ? process.argv[i + 1]! : fallback;
 };
 const API = arg("api", "http://localhost:8790");
-const RUNS = Number(arg("runs", "5"));
+const RUNS = Number(arg("runs", "1"));
 const LABEL = arg("label", "api");
 const OUT = arg("out", "");
-/** "panel": the panel was open before the key went down (/voice/warm 2s earlier), as in normal use; "cold": not. */
-const WARM = arg("warm", "panel");
+/**
+ * How the AssemblyAI session is opened:
+ *   early    a session opened 2s before the key goes down (what the panel opening used to do)
+ *   keydown  /voice/warm?for=key-down as the key goes down, alongside the stream (the extension now)
+ *   cold     no warm at all: the stream opens its own session
+ */
+const WARM = arg("warm", "keydown");
+/** Real sessions cost real seconds: never more than this many runs in one go. */
+export const MAX_REAL_RUNS = 10;
+const CLIENT = `bench-${Math.random().toString(36).slice(2, 10)}`;
 /**
  * Pause between runs (ms). AssemblyAI's free tier opens 5 new sessions a minute (paid: 100+; over it, close 1008 "Too
  * many concurrent sessions"), so a fair AssemblyAI measurement on a free key spaces runs about 13s apart.
@@ -83,13 +93,14 @@ const median = (xs: number[]) => {
 };
 
 async function once(c: Case, pcm: Uint8Array) {
-  if (WARM === "panel") {
-    await fetch(`${API}/voice/warm`, { method: "POST" });
+  const warm = () => fetch(`${API}/voice/warm?for=key-down&client=${CLIENT}`, { method: "POST" });
+  if (WARM === "early") {
+    await warm();
     await sleep(2_000);
   }
   // Key down: the extension warms and opens the stream at the same moment.
-  void fetch(`${API}/voice/warm`, { method: "POST" });
-  const ws = new WebSocket(`${API.replace(/^http/, "ws")}/voice/stream`);
+  if (WARM === "keydown") void warm();
+  const ws = new WebSocket(`${API.replace(/^http/, "ws")}/voice/stream?client=${CLIENT}`);
   ws.binaryType = "arraybuffer";
   const opened = new Promise<void>((resolve, reject) => {
     ws.onopen = () => resolve();
@@ -139,6 +150,19 @@ async function once(c: Case, pcm: Uint8Array) {
 }
 
 if (process.argv[1]?.endsWith("stt-compare.ts")) {
+  if (process.env.VOICE_LIVE_TESTS !== "1") {
+    console.error("stt-compare: live runs spend real AssemblyAI and Deepgram seconds. Run with VOICE_LIVE_TESTS=1.");
+    process.exit(1);
+  }
+  if (RUNS * STT_CASES.length > MAX_REAL_RUNS) {
+    console.error(`stt-compare: ${RUNS * STT_CASES.length} runs asked for; at most ${MAX_REAL_RUNS} real runs at a time.`);
+    process.exit(1);
+  }
+  const status = (await (await fetch(`${API}/voice/status`)).json()) as { stt?: { provider: string; metering?: string } | null };
+  if (status.stt?.provider === "assemblyai" && status.stt.metering !== "test") {
+    console.error("stt-compare: that API counts AssemblyAI seconds against the daily cap. Start it with VOICE_LIVE_TESTS=1.");
+    process.exit(1);
+  }
   const report: Record<string, unknown> = {};
   for (const c of STT_CASES) {
     const pcm = wavPcm(new Uint8Array(readFileSync(join(DIR, `${c.file}.wav`))));

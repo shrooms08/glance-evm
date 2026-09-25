@@ -99,8 +99,8 @@ function SidePanel() {
 
   // Docked, Glance is always one key away: keep the API's provider connections warm while the panel is open.
   useEffect(() => {
-    warmVoice();
-    const t = setInterval(warmVoice, 45_000);
+    warmVoice(true);
+    const t = setInterval(() => warmVoice(), 45_000);
     return () => clearInterval(t);
   }, []);
 

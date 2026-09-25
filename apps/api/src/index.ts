@@ -4,6 +4,7 @@ import { createServerApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { redactUrl, rpcUrls } from "./rpc.js";
 import { createContext } from "./context.js";
+import { assemblyaiBanner } from "./voice/dailyCaps.js";
 
 const config = loadConfig();
 const ctx = createContext(config);
@@ -20,6 +21,7 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   console.log(`  LLM budgets per day: ${Object.entries(llm.byPurpose).map(([p, b]) => `${p} ${b.used}/${b.limit}`).join(", ")}`);
   // Which voice providers are active. Names and models only: keys are never logged.
   console.log(`  voice transcription: ${ctx.voice.status.transcription}`);
+  if (ctx.voice.meters && ctx.voice.status.stt?.provider === "assemblyai") console.log(`  ${assemblyaiBanner(ctx.voice.meters)}`);
   console.log(`  voice speech:        ${ctx.voice.status.speech}`);
   console.log(`  voice speech chain:  ${ctx.voice.status.speechFallbacks}`);
   console.log(`  voice intent:        ${ctx.voice.status.intent}`);

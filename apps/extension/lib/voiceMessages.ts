@@ -84,7 +84,7 @@ export type VoiceRequest =
   | { kind: "voice:speak"; id: string; text: string }
   | { kind: "voice:hush" }
   /** The panel opened: have the API warm its provider connections for a command that may be coming. */
-  | { kind: "voice:warm" }
+  | { kind: "voice:warm"; panel?: boolean }
   /** One sentence of a reply spoken in parts, as soon as it's written (the first starts playing at once). */
   | { kind: "voice:speak-part"; id: string; index: number; text: string }
   /** No more parts: the reply has `total` of them. */
@@ -101,6 +101,6 @@ export type OffscreenRequest =
   | { kind: "offscreen:abort"; session: string }
   | { kind: "offscreen:speak"; id: string; text: string; api: string }
   | { kind: "offscreen:hush" }
-  | { kind: "offscreen:warm"; api: string }
+  | { kind: "offscreen:warm"; api: string; panel?: boolean }
   | { kind: "offscreen:speak-part"; id: string; index: number; text: string; api: string }
   | { kind: "offscreen:speak-end"; id: string; total: number };

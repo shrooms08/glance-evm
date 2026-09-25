@@ -21,8 +21,8 @@
  * (numbers and currency as digits, which our parser reads directly). universal-streaming-english is "Fast" with
  * "Okay" entity accuracy. ASSEMBLYAI_MODEL overrides it.
  */
-import type { DailyMeter } from "./dailyCaps.js";
-import { ProviderError, type LiveTranscription, type StreamHooks, type Transcriber, type Transcript } from "./providers.js";
+import type { AaiOpened, AaiSessionUse, DailyMeter } from "./dailyCaps.js";
+import { ProviderError, type ListenMeta, type LiveTranscription, type StreamHooks, type Transcriber, type Transcript } from "./providers.js";
 
 /** The extension's audio: 16kHz, 16-bit, mono (providers.ts STREAM_SAMPLE_RATE; not imported, which would be a cycle at load). */
 const STREAM_SAMPLE_RATE = 16_000;
@@ -42,11 +42,13 @@ const QUIET_SETTLE_MS = 350;
 /** After Terminate, the longest wait for Termination before the socket is closed anyway. */
 const TERMINATION_WAIT_MS = 2_000;
 /**
- * A session opened ahead of time (/voice/warm: the panel opening, the key going down) waits this long for a stream to
- * take it, then ends. Opening one takes about 1.4s from here (0.9s for the socket, 0.5s more for Begin), longer than
- * "What's Tesla at?" takes to say. It is billed while it waits, so it counts against the daily seconds too.
+ * A session opened ahead of time (/voice/warm for the key going down, or conversation mode starting; never for the
+ * panel opening) waits this long for a stream to take it, then ends. It is billed while it waits, so it counts against
+ * the daily seconds too (and is logged as wasted when nothing took it).
  */
-export const WARM_HOLD_MS = 20_000;
+export const WARM_HOLD_MS = 5_000;
+/** One spare per browser (repeat warm calls reuse it), and never more than this many at once in all. */
+export const MAX_SPARES = 2;
 
 type WebSocketCtor = new (url: string, init?: { headers?: Record<string, string> }) => WebSocket;
 
@@ -61,6 +63,10 @@ export interface AssemblyAiOptions {
   meter?: DailyMeter | null;
   beginTimeoutMs?: number;
   finishTimeoutMs?: number;
+  /** For tests: how long an unused warm session is held (WARM_HOLD_MS). */
+  warmHoldMs?: number;
+  /** Each session as it closes: why it opened, the seconds billed, and whether it carried speech. */
+  onSession?: (use: AaiSessionUse) => void;
 }
 
 export function assemblyAiQuery(model: string, keyterms: readonly string[]): string {
@@ -100,31 +106,37 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
   const finishTimeoutMs = opts.finishTimeoutMs ?? FINISH_TIMEOUT_MS;
   const open = (keyterms: readonly string[]) => new WS(`${url}?${assemblyAiQuery(opts.model, keyterms)}`, { headers: { Authorization: opts.apiKey } });
 
-  /** One session opened ahead of time, for the next stream to take. */
-  let spare: { ws: WebSocket; started: number; began: boolean; beganAt: number; keyterms: string; timer: ReturnType<typeof setTimeout> } | null = null;
-  /** Streams open right now: while one is, no spare is opened (the key-down warm arrives as the stream takes the last one). */
-  let active = 0;
-  const dropSpare = () => {
-    if (!spare) return;
-    const { ws, started } = spare;
-    clearTimeout(spare.timer);
-    spare = null;
+  const used = (u: AaiSessionUse) => {
+    opts.meter?.add(u.seconds);
+    opts.onSession?.(u);
+  };
+  type Spare = { ws: WebSocket; started: number; began: boolean; beganAt: number; keyterms: string; timer: ReturnType<typeof setTimeout> };
+  /** Sessions opened ahead of time, one per browser (ListenMeta.client), for that browser's next stream to take. */
+  const spares = new Map<string, Spare>();
+  /** Streams open right now, per browser: while one is, that browser gets no spare (the stream has its session). */
+  const active = new Map<string, number>();
+  const clientOf = (meta?: ListenMeta) => meta?.client ?? "";
+  const dropSpare = (client: string) => {
+    const s = spares.get(client);
+    if (!s) return;
+    clearTimeout(s.timer);
+    spares.delete(client);
     try {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ type: "Terminate" }));
-      ws.close();
+      if (s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: "Terminate" }));
+      s.ws.close();
     } catch {
       // closed
     }
-    opts.meter?.add((now() - started) / 1000);
+    used({ opened: "warm", seconds: (now() - s.started) / 1000, speech: false });
   };
-  const takeSpare = () => {
-    const s = spare;
+  const takeSpare = (client: string) => {
+    const s = spares.get(client);
     if (!s || s.ws.readyState > 1) {
-      if (s) dropSpare();
+      if (s) dropSpare(client);
       return null;
     }
     clearTimeout(s.timer);
-    spare = null;
+    spares.delete(client);
     return s;
   };
 
@@ -132,11 +144,14 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
     name: "assemblyai",
     model: opts.model,
     turnDetection: true,
-    warm(keyterms) {
-      if (active > 0 || (spare && spare.ws.readyState <= 1)) return;
+    warm(keyterms, meta) {
+      // Billed from the moment it opens: only for a key going down, conversation mode starting, or the panel opening.
+      if (!meta?.opened) return;
+      const client = clientOf(meta);
+      if ((active.get(client) ?? 0) > 0 || (spares.get(client)?.ws.readyState ?? 9) <= 1 || spares.size >= MAX_SPARES) return;
       const ws = open(keyterms);
       ws.binaryType = "arraybuffer";
-      const s = { ws, started: now(), began: false, beganAt: 0, keyterms: JSON.stringify(keyterms), timer: setTimeout(dropSpare, WARM_HOLD_MS) };
+      const s: Spare = { ws, started: now(), began: false, beganAt: 0, keyterms: JSON.stringify(keyterms), timer: setTimeout(() => dropSpare(client), opts.warmHoldMs ?? WARM_HOLD_MS) };
       ws.onmessage = (m) => {
         try {
           if ((JSON.parse(String(m.data)) as { type?: string }).type === "Begin") {
@@ -148,26 +163,30 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
         }
       };
       ws.onerror = () => {
-        if (spare === s) dropSpare();
+        if (spares.get(client) === s) dropSpare(client);
       };
       ws.onclose = () => {
-        if (spare === s) dropSpare();
+        if (spares.get(client) === s) dropSpare(client);
       };
-      spare = s;
+      spares.set(client, s);
     },
     async transcribe() {
       // Streaming only (it refuses audio faster than real time): a whole recording goes to the fallback provider.
       throw new ProviderError("assemblyai", 0, "AssemblyAI is used for live streams only", "connection");
     },
-    stream(keyterms, hooks: StreamHooks = {}): LiveTranscription {
+    stream(keyterms, hooks: StreamHooks = {}, meta?: ListenMeta): LiveTranscription {
       // A session opened ahead of time, if there is one (its keyterms are brought up to date); else a new one.
-      const warm = takeSpare();
-      active++;
+      const client = clientOf(meta);
+      const warm = takeSpare(client);
+      const opened: AaiOpened = warm ? "warm" : meta?.opened === "conversation" ? "conversation" : "key-down";
+      active.set(client, (active.get(client) ?? 0) + 1);
       let counted = true;
       const release = () => {
         if (!counted) return;
         counted = false;
-        active--;
+        const n = (active.get(client) ?? 1) - 1;
+        if (n > 0) active.set(client, n);
+        else active.delete(client);
       };
       const started = warm?.started ?? now();
       const ws = warm?.ws ?? open(keyterms);
@@ -201,7 +220,7 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
       const meter = (seconds: number) => {
         if (metered) return;
         metered = true;
-        opts.meter?.add(Math.max(0, seconds));
+        used({ opened, seconds: Math.max(0, seconds), speech: Boolean(text(true)) });
       };
       const close = () => {
         release();

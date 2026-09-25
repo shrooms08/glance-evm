@@ -12,7 +12,9 @@
  *   keyterms     tickers, names, Glance's words and verbs, within 100 terms of 50 characters
  * No network beyond 127.0.0.1, no real keys.
  */
-import { resolve } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 
 import { serve } from "@hono/node-server";
@@ -26,8 +28,10 @@ import { VOICE_RESTING } from "@glance/core/session";
 import { createServerApp } from "../../src/app.js";
 import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
-import { aaiError, assemblyai, MAX_FRAME_BYTES, MIN_FRAME_BYTES } from "../../src/voice/assemblyai.js";
-import { DailyMeter } from "../../src/voice/dailyCaps.js";
+import { aaiError, assemblyai, MAX_FRAME_BYTES, MAX_SPARES, MIN_FRAME_BYTES, WARM_HOLD_MS } from "../../src/voice/assemblyai.js";
+import { assemblyaiBanner, assemblyaiToday, DailyMeter, voiceMeters, type AaiSessionUse } from "../../src/voice/dailyCaps.js";
+import { publicHealth } from "../../src/app.js";
+import { voiceHealth } from "../../src/services.js";
 import { selectVoiceProviders, withSttFallback, type LiveTranscription, type StreamHooks, type Transcriber } from "../../src/voice/providers.js";
 import { keyterms } from "../../src/voice/routes.js";
 
@@ -139,8 +143,17 @@ const until = async (ok: () => boolean, ms = 2_000) => {
 };
 /** 40ms of 16kHz 16-bit mono, as the extension sends it. */
 const slice = (fill = 1) => new Uint8Array(1_280).fill(fill);
-const make = (o: { meter?: DailyMeter; beginTimeoutMs?: number; url?: string } = {}) =>
-  assemblyai({ apiKey: KEY, model: "universal-3-5-pro", url: o.url ?? aaiUrl, meter: o.meter, beginTimeoutMs: o.beginTimeoutMs ?? 1_000, finishTimeoutMs: 1_000 });
+const make = (o: { meter?: DailyMeter; beginTimeoutMs?: number; url?: string; warmHoldMs?: number; onSession?: (u: AaiSessionUse) => void } = {}) =>
+  assemblyai({
+    apiKey: KEY,
+    model: "universal-3-5-pro",
+    url: o.url ?? aaiUrl,
+    meter: o.meter,
+    beginTimeoutMs: o.beginTimeoutMs ?? 1_000,
+    finishTimeoutMs: 1_000,
+    warmHoldMs: o.warmHoldMs,
+    onSession: o.onSession,
+  });
 
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -211,7 +224,7 @@ describe("AssemblyAI adapter (fake server)", () => {
 
   it("a warm session is taken over by the next stream (one session), its keyterms brought up to date", async () => {
     const aai = make();
-    aai.warm!(["Tesla"]);
+    aai.warm!(["Tesla"], { opened: "key-down" });
     await until(() => sessions.length === 1);
     await sleep(50); // Begin arrives
     const live = aai.stream(["Tesla", "My Basket"]);
@@ -335,10 +348,10 @@ describe("provider selection", () => {
 
   it("AssemblyAI by default when its key is set, Deepgram as the fallback; status names both, never a key", () => {
     const config = loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, ASSEMBLYAI_API_KEY: KEY, DEEPGRAM_API_KEY: DG });
-    expect([config.STT_PROVIDER, config.ASSEMBLYAI_MODEL, config.ASSEMBLYAI_STT_SECONDS_PER_DAY]).toEqual(["assemblyai", "universal-3-5-pro", 1_800]);
+    expect([config.STT_PROVIDER, config.ASSEMBLYAI_MODEL, config.ASSEMBLYAI_STT_SECONDS_PER_DAY]).toEqual(["assemblyai", "universal-3-5-pro", 3_600]);
     const v = selectVoiceProviders(config, { log: () => {} });
     expect(v.stt).toMatchObject({ name: "assemblyai", model: "universal-3-5-pro" });
-    expect(v.status.stt).toEqual({ provider: "assemblyai", model: "universal-3-5-pro", fallback: "deepgram (nova-3)" });
+    expect(v.status.stt).toEqual({ provider: "assemblyai", model: "universal-3-5-pro", fallback: "deepgram (nova-3)", metering: "daily" });
     expect(JSON.stringify(v.status)).not.toContain(KEY);
   });
 
@@ -424,6 +437,37 @@ describe("/voice/stream with AssemblyAI", () => {
     expect(transcript()).toBeUndefined();
   });
 
+  it("POST /voice/warm: no AssemblyAI session for the panel opening; one for ?for=key-down, reused by that browser's stream", async () => {
+    ctx.voice.stt = withSttFallback(make(), null);
+    const warm = (q = "") => fetch(`http://127.0.0.1:${port}/voice/warm${q}`, { method: "POST" });
+    await warm();
+    await warm("?client=browser-a1");
+    await sleep(80);
+    expect(sessions).toHaveLength(0);
+    await warm("?for=key-down&client=browser-a1");
+    await warm("?for=key-down&client=browser-a1");
+    await until(() => sessions.length === 1);
+    await sleep(50);
+    const { ws, transcript } = await connect("?client=browser-a1");
+    for (let i = 0; i < 5; i++) ws.send(slice());
+    ws.send(JSON.stringify({ type: "stop" }));
+    await until(() => Boolean(transcript()));
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("ASSEMBLYAI_WARM: \"panel\" (default) opens one for the panel opening; \"key-down\" doesn't", async () => {
+    expect(loadConfig({}).ASSEMBLYAI_WARM).toBe("panel");
+    ctx.voice.stt = withSttFallback(make(), null);
+    const warm = (q: string) => fetch(`http://127.0.0.1:${port}/voice/warm${q}`, { method: "POST" });
+    (ctx.config as { ASSEMBLYAI_WARM: string }).ASSEMBLYAI_WARM = "key-down";
+    await warm("?for=panel&client=browser-p1");
+    await sleep(80);
+    expect(sessions).toHaveLength(0);
+    (ctx.config as { ASSEMBLYAI_WARM: string }).ASSEMBLYAI_WARM = "panel";
+    await warm("?for=panel&client=browser-p1");
+    await until(() => sessions.length === 1);
+  });
+
   it("every provider's seconds used up: \"Voice is resting for today\" at open", async () => {
     ctx.voice.stt = make();
     ctx.voice.meters!.stt.add(1e6);
@@ -470,5 +514,107 @@ describe("keyterms", () => {
       ...Array.from({ length: 8 }, (_, i) => `B${i}`),
     ]);
     expect(sessionKeyterms("nope")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe("warm sessions: only for a key going down, one per browser, 5 seconds", () => {
+  it("an unused warm session closes after 5s and is recorded as wasted", async () => {
+    expect(WARM_HOLD_MS).toBe(5_000);
+    const uses: AaiSessionUse[] = [];
+    const meter = new DailyMeter(3_600);
+    const aai = make({ warmHoldMs: 120, meter, onSession: (u) => uses.push(u) });
+    aai.warm!([], { opened: "key-down", client: "browser-a1" });
+    await until(() => sessions.length === 1);
+    await until(() => uses.length === 1);
+    expect(uses[0]).toMatchObject({ opened: "warm", speech: false });
+    expect(uses[0]!.seconds).toBeLessThan(1);
+    expect(meter.usedToday).toBeCloseTo(uses[0]!.seconds, 5);
+  });
+
+  it("repeat warm calls from one browser reuse its session; another browser gets its own; never more than 2 in all", async () => {
+    const aai = make();
+    for (let i = 0; i < 4; i++) aai.warm!([], { opened: "key-down", client: "browser-a1" });
+    await until(() => sessions.length === 1);
+    aai.warm!([], { opened: "key-down", client: "browser-b2" });
+    aai.warm!([], { opened: "key-down", client: "browser-c3" });
+    await sleep(80);
+    expect(sessions).toHaveLength(MAX_SPARES);
+    // Browser A's stream takes A's session (no new one), and it carried speech.
+    const uses: AaiSessionUse[] = [];
+    const b = make({ onSession: (u) => uses.push(u) });
+    b.warm!([], { client: "browser-z9", opened: "key-down" });
+    await until(() => sessions.length === 3);
+    await sleep(50);
+    const live = b.stream([], {}, { client: "browser-z9", opened: "key-down" });
+    live.send(new Uint8Array(3_200));
+    await live.finish();
+    await until(() => uses.length === 1);
+    expect(sessions).toHaveLength(3);
+    expect(uses[0]).toMatchObject({ opened: "warm", speech: true });
+  });
+
+  it("the fallback wrapper: a warm without a key going down (the panel opening, a poll) opens no AssemblyAI session", async () => {
+    const dg = fakeDeepgram();
+    const stt = withSttFallback(make(), dg, { log: () => {} });
+    stt.warm!([]);
+    stt.warm!([], { client: "browser-a1" });
+    await sleep(80);
+    expect(sessions).toHaveLength(0);
+    stt.warm!([], { opened: "conversation", client: "browser-a1" });
+    await until(() => sessions.length === 1);
+  });
+
+  it("a stream opened at key-down (no warm session) is recorded as key-down, with or without speech", async () => {
+    const uses: AaiSessionUse[] = [];
+    const aai = make({ onSession: (u) => uses.push(u) });
+    const spoken = aai.stream([], {}, { opened: "conversation", client: "browser-a1" });
+    spoken.send(new Uint8Array(3_200));
+    await spoken.finish();
+    behaviour.partial = null;
+    const silent = aai.stream([], {}, { opened: "key-down", client: "browser-a1" });
+    await until(() => sessions.length === 2);
+    await sleep(50);
+    silent.abort();
+    await until(() => uses.length === 2);
+    expect(uses.map((u) => `${u.opened}/${u.speech ? "speech" : "wasted"}`).sort()).toEqual(["conversation/speech", "key-down/wasted"]);
+  });
+});
+
+describe("usage: the counter, test seconds, the banner and /health", () => {
+  const DG = "3f9a8c1b2d4e5f60718293a4b5c6d7e8f9a0b1c2";
+
+  it("the day's seconds by why each session opened, and test seconds that no cap reads, in the same file", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "glance-aai-")), "voice-usage.json");
+    const m = voiceMeters({ sttSecondsPerDay: 1_800, ttsCharsPerDay: 60_000, assemblyaiSecondsPerDay: 10, file });
+    m.assemblyai.add(4);
+    m.assemblyaiUse.record({ opened: "key-down", seconds: 4, speech: true });
+    m.assemblyaiTest.add(500);
+    m.assemblyaiUse.record({ opened: "warm", seconds: 500, speech: false }, true);
+    expect(m.assemblyai.resting).toBe(false);
+    expect(m.assemblyaiTest.resting).toBe(false);
+    const again = voiceMeters({ sttSecondsPerDay: 1_800, ttsCharsPerDay: 60_000, assemblyaiSecondsPerDay: 10, file });
+    expect(assemblyaiToday(again)).toEqual({ usedSeconds: 4, capSeconds: 10, resets: "00:00 UTC", resting: false, bySession: { "key-down/speech": 4, "test/warm/wasted": 500 }, testSeconds: 500 });
+    expect(assemblyaiBanner(again)).toBe("assemblyai today: 4/10 s (resets 00:00 UTC)");
+  });
+
+  it("VOICE_LIVE_TESTS=1: AssemblyAI seconds go to the test counter (status says so); refused in production", () => {
+    const meters = voiceMeters({ sttSecondsPerDay: 1_800, ttsCharsPerDay: 60_000, file: null });
+    const config = loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, ASSEMBLYAI_API_KEY: KEY, DEEPGRAM_API_KEY: DG, VOICE_LIVE_TESTS: "1" });
+    const v = selectVoiceProviders(config, { log: () => {}, meters });
+    expect(v.status.stt?.metering).toBe("test");
+    expect(() => selectVoiceProviders({ ...config, NODE_ENV: "production" }, { log: () => {}, meters })).toThrow(/refused in production/);
+    expect(loadConfig({}).VOICE_LIVE_TESTS).toBe(false);
+  });
+
+  it("/health shows today's used/cap in dev; the production view leaves voice out, as before", () => {
+    const meters = voiceMeters({ sttSecondsPerDay: 1_800, ttsCharsPerDay: 60_000, file: null });
+    meters.assemblyai.add(12.34);
+    const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" }), () => {});
+    ctx.voice.meters = meters;
+    expect(voiceHealth(ctx).usage?.assemblyai).toMatchObject({ usedSeconds: 12.3, capSeconds: 3_600, resets: "00:00 UTC" });
+    const pub = publicHealth({ ok: true, chainId: 1, expectedChainId: 1, blockNumber: "1", keeper: { lastWriteAt: null }, feeds: [], voice: voiceHealth(ctx) } as never);
+    expect(JSON.stringify(pub)).not.toMatch(/assemblyai|usedSeconds/);
   });
 });

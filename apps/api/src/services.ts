@@ -59,6 +59,7 @@ import {
   usdgToTokens,
 } from "./format.js";
 import { summarizeWindow, WINDOW_SECONDS, type WindowEntry } from "./window.js";
+import { assemblyaiToday } from "./voice/dailyCaps.js";
 
 const BPS = 10_000n;
 /** Blocks scanned to rebuild the 24h windows. ~0.17s blocks: 1.2M is about 57 hours, comfortably over 24. */
@@ -952,6 +953,8 @@ export function voiceHealth(ctx: Pick<AppContext, "voice"> & { prerecorded?: App
     /** The last 20 replies: the voice that spoke, what was passed over and why, time to first byte. Never the text. */
     decisions: ctx.voice.decisions.list(),
     prerecordedLines: ctx.prerecorded?.size ?? 0,
+    /** Today's AssemblyAI seconds against ASSEMBLYAI_STT_SECONDS_PER_DAY (dev and admin views only, like the rest). */
+    usage: ctx.voice.meters ? { assemblyai: assemblyaiToday(ctx.voice.meters) } : null,
   };
 }
 

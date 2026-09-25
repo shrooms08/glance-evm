@@ -1,7 +1,8 @@
 /**
  * Real AssemblyAI Universal-Streaming: the five spoken fixtures (test/fixtures/voice, a TTS voice) streamed in real time
  * with Glance's keyterms, each checked for the ticker and amount that matter. Opt-in: only with VOICE_LIVE_TESTS=1 and a
- * real ASSEMBLYAI_API_KEY, so the normal suite never touches the network or spends credit. One session per fixture,
+ * real ASSEMBLYAI_API_KEY, so the normal suite never touches the network or spends credit. Its seconds count under the
+ * test counter (aaiTestSeconds), which the daily cap ignores. One session per fixture,
  * 13s apart (the free tier opens 5 a minute).   pnpm --filter api test:voice-live
  * The medians against Deepgram come from scripts/stt-compare.ts, run against a running API.
  */
@@ -13,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
 import { assemblyai, DEFAULT_ASSEMBLYAI_MODEL } from "../../src/voice/assemblyai.js";
+import { voiceMeters } from "../../src/voice/dailyCaps.js";
 import { rulesIntent, validateIntent } from "../../src/voice/intent.js";
 import { looksLikePlaceholder } from "../../src/voice/providers.js";
 import { keyterms } from "../../src/voice/routes.js";
@@ -30,10 +32,12 @@ const haveKey = LIVE && !looksLikePlaceholder(apiKey);
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" }), () => {});
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Counted under the test counter in the API's usage file (never the daily cap), so a live run shows up in /health.
+const meters = voiceMeters({ sttSecondsPerDay: 1_800, ttsCharsPerDay: 60_000, file: LIVE ? loadConfig({}).LLM_CACHE_DIR + "/voice-usage.json" : null });
 
 describe.skipIf(!haveKey)(`AssemblyAI ${model} (live)`, () => {
   it.each(STT_CASES)("$say", async (c) => {
-    const aai = assemblyai({ apiKey: apiKey!, model });
+    const aai = assemblyai({ apiKey: apiKey!, model, meter: meters.assemblyaiTest, onSession: (u) => meters.assemblyaiUse.record(u, true) });
     const pcm = wavPcm(new Uint8Array(readFileSync(resolve(import.meta.dirname, `../fixtures/voice/${c.file}.wav`))));
     const live = aai.stream(keyterms(ctx));
     const audio = new Uint8Array([...new Uint8Array(9_600), ...pcm, ...new Uint8Array(8_000)]);

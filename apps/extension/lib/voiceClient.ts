@@ -326,8 +326,9 @@ export function speakParts(enabled: boolean, h: PartsHandlers = {}): { push(text
 }
 
 /** The panel opened: have the API warm its provider connections, so a command that follows skips the handshakes. */
-export function warmVoice() {
-  void sendSafe({ kind: "voice:warm" } satisfies VoiceRequest).catch(() => {});
+/** `panel`: the panel just opened (the API may open a billed AssemblyAI session); unset: a refresh (free connections only). */
+export function warmVoice(panel = false) {
+  void sendSafe({ kind: "voice:warm", panel } satisfies VoiceRequest).catch(() => {});
 }
 
 /** Stops any reply that is playing. */

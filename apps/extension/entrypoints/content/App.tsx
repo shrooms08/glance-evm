@@ -516,11 +516,12 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   );
 
   // While the panel is open a command is likely: keep the API's provider connections warm (it lets them lapse after
-  // a minute unused), so Option+V doesn't pay the connection handshakes to Deepgram.
+  // a minute unused), so Option+V doesn't pay the connection handshakes to Deepgram. The opening may also open one
+  // AssemblyAI session (billed, held 5s; ASSEMBLYAI_WARM=panel); the 45s refresh never does.
   useEffect(() => {
     if (!panelOpen) return;
-    warmVoice();
-    const t = setInterval(warmVoice, 45_000);
+    warmVoice(true);
+    const t = setInterval(() => warmVoice(), 45_000);
     return () => clearInterval(t);
   }, [panelOpen]);
 

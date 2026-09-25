@@ -85,16 +85,26 @@ export interface LiveTranscription {
   abort(): void;
 }
 
+/** Who is listening and why: the browser (the extension's own random id) and what opened the session. */
+export interface ListenMeta {
+  /**
+   * The ⌥V key went down (hold-to-talk), conversation mode started, or the panel opened (only when ASSEMBLYAI_WARM is
+   * "panel"). Unset (a refresh, a poll): no AssemblyAI session is opened.
+   */
+  opened?: "key-down" | "conversation" | "panel";
+  client?: string;
+}
+
 export interface Transcriber {
   readonly name: string;
   readonly model: string;
   transcribe(audio: Uint8Array, mime: string, keyterms: readonly string[]): Promise<Transcript>;
   /** Live transcription of raw linear16 16kHz mono audio. */
-  stream(keyterms: readonly string[], hooks?: StreamHooks): LiveTranscription;
+  stream(keyterms: readonly string[], hooks?: StreamHooks, meta?: ListenMeta): LiveTranscription;
   /** The provider ends turns by itself (end-of-turn detection). */
   readonly turnDetection?: boolean;
   /** Opens (or keeps open) a connection so the next command doesn't pay the handshake. */
-  warm?(keyterms: readonly string[]): void;
+  warm?(keyterms: readonly string[], meta?: ListenMeta): void;
 }
 
 export interface Speaker {
@@ -686,12 +696,14 @@ export function withSttFallback(primary: Transcriber, secondary: Transcriber | n
     model: primary.model,
     turnDetection: primary.turnDetection,
     transcribe: (audio, mime, keyterms) => (secondary ?? primary).transcribe(audio, mime, keyterms),
-    // A session opened ahead of time (AssemblyAI's handshake is ~1.4s), and the fallback's connection kept warm.
-    warm: (keyterms) => {
-      if (!o.primaryResting?.()) primary.warm?.(keyterms);
+    // The fallback's connection kept warm (idle, it costs nothing). An AssemblyAI session is billed from the moment it
+    // opens, so one is opened ahead of time only for a key going down or conversation mode starting, never for the
+    // panel opening or a poll.
+    warm: (keyterms, meta) => {
+      if (meta?.opened && !o.primaryResting?.()) primary.warm?.(keyterms, meta);
       secondary?.warm?.(keyterms);
     },
-    stream(keyterms, hooks = {}) {
+    stream(keyterms, hooks = {}, meta) {
       const secondaryHooks: StreamHooks = { onPartial: hooks.onPartial, onEndOfTurn: hooks.onEndOfTurn };
       if (secondary && o.primaryResting?.()) {
         log(`[voice] transcription: ${primary.name}'s daily seconds are used up, ${secondary.name} (${secondary.model}) listens today`);
@@ -710,13 +722,17 @@ export function withSttFallback(primary: Transcriber, secondary: Transcriber | n
         for (const c of audio) current.send(c);
         return true;
       };
-      current = primary.stream(keyterms, {
-        onPartial: hooks.onPartial,
-        onEndOfTurn: hooks.onEndOfTurn,
-        onFail: (err) => {
-          if (!finishing && fallsThrough(err)) toSecondary(err);
+      current = primary.stream(
+        keyterms,
+        {
+          onPartial: hooks.onPartial,
+          onEndOfTurn: hooks.onEndOfTurn,
+          onFail: (err) => {
+            if (!finishing && fallsThrough(err)) toSecondary(err);
+          },
         },
-      });
+        meta,
+      );
       return {
         get turnDetection() {
           return Boolean(current.turnDetection);
@@ -1029,6 +1045,8 @@ export interface VoiceConfig {
   STT_PROVIDER?: "assemblyai" | "deepgram";
   ASSEMBLYAI_API_KEY?: string;
   ASSEMBLYAI_MODEL?: string;
+  /** Live tests and benchmarks: AssemblyAI seconds go to the test counter, which no cap reads. */
+  VOICE_LIVE_TESTS?: boolean;
   DEEPGRAM_ENDPOINTING_MS?: number;
   /** flux-* (Flux TTS, /v2/speak) or aura-* (Aura-2, /v1/speak). */
   DEEPGRAM_TTS_VOICE: string;
@@ -1075,7 +1093,15 @@ export interface VoiceProviders {
   /** The daily caps (speech-to-text seconds, speech characters), when set. */
   meters: VoiceMeters | null;
   /** Human-readable, key-free lines for the startup log and /health. */
-  status: { transcription: string; speech: string; speechFallbacks: string; intent: string; warnings: string[]; stt?: { provider: string; model: string; fallback: string | null } };
+  status: {
+    transcription: string;
+    speech: string;
+    speechFallbacks: string;
+    intent: string;
+    warnings: string[];
+    /** metering "test": VOICE_LIVE_TESTS=1, AssemblyAI seconds under the test counter (benchmarks check for it). */
+    stt?: { provider: string; model: string; fallback: string | null; metering: "daily" | "test" };
+  };
 }
 
 export function selectVoiceProviders(
@@ -1130,11 +1156,32 @@ export function selectVoiceProviders(
       })
     : null;
   const assemblyModel = c.ASSEMBLYAI_MODEL?.trim() || DEFAULT_ASSEMBLYAI_MODEL;
+  const testing = Boolean(c.VOICE_LIVE_TESTS);
+  if (testing && c.NODE_ENV === "production") throw new Error("VOICE_LIVE_TESTS=1 is for live tests and benchmarks only and is refused in production");
+  if (testing && haveAssembly) warnings.push("VOICE_LIVE_TESTS=1: AssemblyAI seconds count under the test counter, not the daily cap");
+  const aaiMeter = testing ? deps.meters?.assemblyaiTest : deps.meters?.assemblyai;
   const stt = haveAssembly
-    ? withSttFallback(assemblyai({ apiKey: c.ASSEMBLYAI_API_KEY!, model: assemblyModel, WebSocket: deps.WebSocket, meter: deps.meters?.assemblyai }), deepgramStt, {
-        log,
-        primaryResting: () => Boolean(deps.meters?.assemblyai.resting),
-      })
+    ? withSttFallback(
+        assemblyai({
+          apiKey: c.ASSEMBLYAI_API_KEY!,
+          model: assemblyModel,
+          WebSocket: deps.WebSocket,
+          meter: aaiMeter,
+          // One line per session as it closes: why it opened, what it cost, and whether anyone spoke into it.
+          onSession: (u) => {
+            deps.meters?.assemblyaiUse.record(u, testing);
+            const today = deps.meters?.assemblyai;
+            log(
+              `[voice] assemblyai session closed: opened for ${u.opened}, ${u.seconds.toFixed(1)}s billed, ${u.speech ? "carried speech" : "wasted (no speech)"}${testing ? " (test counter)" : today ? `; today ${Math.round(today.usedToday)}/${today.limit}s` : ""}`,
+            );
+          },
+        }),
+        deepgramStt,
+        {
+          log,
+          primaryResting: () => Boolean(deps.meters?.assemblyai.resting),
+        },
+      )
     : deepgramStt;
 
   const voice = c.DEEPGRAM_TTS_VOICE.trim() || DEFAULT_TTS_VOICE;
@@ -1194,7 +1241,9 @@ export function selectVoiceProviders(
       );
     },
     status: {
-      stt: stt ? { provider: stt.name, model: stt.model, fallback: haveAssembly && deepgramStt ? `${deepgramStt.name} (${deepgramStt.model})` : null } : undefined,
+      stt: stt
+        ? { provider: stt.name, model: stt.model, fallback: haveAssembly && deepgramStt ? `${deepgramStt.name} (${deepgramStt.model})` : null, metering: testing ? "test" : "daily" }
+        : undefined,
       transcription: haveAssembly
         ? `assemblyai (${assemblyModel}, Universal-Streaming v3 through this API, keyterms prompting)${deepgramStt ? `, falls back to deepgram (${deepgramStt.model}) on a connection error, auth failure or timeout, and after ASSEMBLYAI_STT_SECONDS_PER_DAY` : ", no fallback (set DEEPGRAM_API_KEY)"}`
         : stt

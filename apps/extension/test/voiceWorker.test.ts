@@ -176,7 +176,7 @@ describe("voice worker: the server path", () => {
     const t = setup();
     void t.worker.start("s1", "en-US", API, { host: "cnbc.com" }, "0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D");
     await flush();
-    expect(FakeWS.last.url).toBe("ws://localhost:8790/voice/stream?vault=0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D");
+    expect(FakeWS.last.url).toBe(`ws://localhost:8790/voice/stream?vault=0xacfE90d34Bb56222Af06904A7547b6a9aC9AEe2D&client=${t.worker.client}`);
     expect(t.types()).toEqual(["started"]);
 
     // Chunks recorded before the socket opens are sent, in order, once it does; later ones go straight out.
@@ -188,8 +188,8 @@ describe("voice worker: the server path", () => {
       [1, 1],
       [2, 2],
     ]);
-    // Key down also asked the API to warm its provider connections.
-    expect(t.requests[0]!.url).toBe(`${API}/voice/warm`);
+    // Key down also asked the API to warm its provider connections, and to open this browser's AssemblyAI session.
+    expect(t.requests[0]!.url).toBe(`${API}/voice/warm?for=key-down&client=${t.worker.client}`);
 
     const stopping = t.worker.stop("s1");
     await flush();
@@ -566,12 +566,21 @@ describe("PCM helpers", () => {
 });
 
 describe("voice worker: conversation mode", () => {
+  it("a refresh warms without a reason (no billed AssemblyAI session); the panel opening says so", () => {
+    const t = setup();
+    t.worker.warm(API);
+    t.worker.warm(API, "panel");
+    expect(t.requests.map((r) => r.url)).toEqual([`${API}/voice/warm`, `${API}/voice/warm?for=panel&client=${t.worker.client}`]);
+    expect(t.worker.client).toMatch(/^[A-Za-z0-9-]{8,64}$/);
+  });
+
   it("asks the API for conversation mode with the session's basket names; partials show as the live transcript", async () => {
     const t = setup();
     void t.worker.start("c1", "en-US", API, {}, undefined, { conversation: true, keyterms: ["Tech Giants", "ETFs"] });
     await flush();
     const u = new URL(FakeWS.last.url);
     expect(u.searchParams.get("mode")).toBe("conversation");
+    expect(t.requests[0]!.url).toBe(`${API}/voice/warm?for=conversation&client=${t.worker.client}`);
     expect(JSON.parse(u.searchParams.get("keyterms")!)).toEqual(["Tech Giants", "ETFs"]);
     FakeWS.last.open();
     FakeWS.last.reply({ type: "partial", text: "buy ten" });
@@ -618,7 +627,7 @@ describe("voice worker: conversation mode", () => {
     const t = setup();
     void t.worker.start("h1", "en-US", API, {});
     await flush();
-    expect(FakeWS.last.url).toBe("ws://localhost:8790/voice/stream");
+    expect(FakeWS.last.url).toBe(`ws://localhost:8790/voice/stream?client=${t.worker.client}`);
     FakeWS.last.open();
     FakeWS.last.reply({ type: "partial", text: "what's" });
     await flush();
