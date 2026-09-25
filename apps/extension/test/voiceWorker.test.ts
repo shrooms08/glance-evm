@@ -712,6 +712,19 @@ describe("voice worker: no lost turns, never silent, Escape", () => {
     expect(t.types().at(-1)).toBe("end");
   });
 
+  it("Escape while the stream is still connecting: cancel goes out the moment it opens, then it closes", async () => {
+    const t = setup();
+    void t.worker.start("r6", "en-US", API, {});
+    await flush();
+    const ws = FakeWS.last;
+    expect(ws.readyState).toBe(0);
+    t.worker.abort("r6");
+    expect(ws.sent).toEqual([]);
+    ws.open();
+    expect(ws.sent).toEqual([JSON.stringify({ type: "cancel" })]);
+    expect(ws.readyState).toBe(3);
+  });
+
   it("Escape while holding: cancel, the microphone closes, then the key's release does nothing", async () => {
     const t = setup();
     void t.worker.start("r5", "en-US", API, {});

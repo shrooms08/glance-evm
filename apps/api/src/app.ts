@@ -190,7 +190,7 @@ export function createServerApp(ctx: AppContext) {
       origin: (origin) => (origin && config.corsOrigins.includes(origin) ? origin : null),
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type", ...Object.values(SESSION_HEADERS)],
-      exposeHeaders: ["x-voice-cache", "x-voice-ms", "x-voice"],
+      exposeHeaders: ["x-voice-cache", "x-voice-ms", "x-voice", "x-voice-fallback"],
       maxAge: 600,
     }),
   );

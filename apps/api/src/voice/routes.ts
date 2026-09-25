@@ -26,7 +26,7 @@ import { warmAnthropic } from "../anthropicHttp.js";
 import { VOICE_RESTING } from "@glance/core/session";
 import { VoiceRestingError } from "./dailyCaps.js";
 import { buildKeyterms, sessionKeyterms } from "@glance/core/keyterms";
-import type { StreamStats, Transcript } from "./providers.js";
+import { ProviderError, type StreamStats, type Transcript } from "./providers.js";
 import { TurnAudio } from "./turnAudio.js";
 
 /** Conversation mode with a provider that doesn't end turns itself (the Deepgram fallback): this much quiet ends one. */
@@ -287,10 +287,35 @@ export function registerVoice(
     return out;
   };
 
+  /**
+   * Every voice in the chain failed (after Flux's retry and Harmonia): never a 502 and silence. The reply's text is in
+   * the panel already, and this plays the pre-recorded "I've put the answer on screen." in the configured voice. One
+   * log line with the last failure. A day's speech used up stays VOICE_RESTING (text only, as always).
+   */
+  const onScreen = (c: Context, err: unknown) => {
+    if (err instanceof VoiceRestingError) resting();
+    if (err instanceof ApiError) throw err;
+    const why = err instanceof ProviderError ? `${err.provider} ${err.status || err.kind}` : "error";
+    const line = ctx.prerecorded?.get(LINES.answerOnScreen) ?? null;
+    console.log(`[voice] speech: no voice answered (last: ${why}); the answer is on screen${line ? ', said with the pre-recorded "on screen" line' : " (that line isn't recorded yet: text only)"}`);
+    if (!line) throw new ApiError(503, "SPEECH_UNAVAILABLE", "Voice isn't answering right now: the answer is on screen.");
+    return c.body(line as unknown as ArrayBuffer, 200, {
+      "content-type": "audio/mpeg",
+      "cache-control": "no-store",
+      "x-voice-cache": "prerecorded",
+      "x-voice": ctx.prerecorded!.voice,
+      "x-voice-fallback": "on-screen",
+    });
+  };
+
   app.post("/voice/speak", async (c) => {
     if (!v.tts) unavailable("speech");
-    const started = performance.now();
     const { text } = parse(speakBody, await jsonBody(c));
+    return speakPost(c, text).catch((err: unknown) => onScreen(c, err));
+  });
+  const speakPost = async (c: Context, text: string) => {
+    if (!v.tts) unavailable("speech");
+    const started = performance.now();
     const pre = await prerecorded(text);
     if (pre) {
       return c.body(pre.audio as unknown as ArrayBuffer, 200, {
@@ -310,7 +335,7 @@ export function registerVoice(
       "x-voice": v.decisions.list().at(-1)?.voice ?? "",
       "x-voice-ms": String(Math.round(performance.now() - started)),
     });
-  });
+  };
 
   /**
    * The same speech as POST /voice/speak, as a GET an <audio> element can play while it downloads: a new phrase is
@@ -333,19 +358,25 @@ export function registerVoice(
         return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
       } catch (err) {
         if (err instanceof VoiceRestingError) return c.json({ error: { code: "VOICE_RESTING", message: VOICE_RESTING } }, 503);
+        // The reply's own voice (after its retry) is gone: in that voice, the "on screen" line; in another, text only.
+        if (pin === ctx.prerecorded?.voice) return onScreen(c, err);
         return c.json({ error: { code: "VOICE_UNAVAILABLE", message: "That voice isn't answering right now." } }, 503);
       }
     }
-    const pre = await prerecorded(text);
-    if (pre) return c.body(pre.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": pre.prerecorded ? "prerecorded" : "generated", "x-voice": pre.voice });
-    const streamer = v.tts.stream;
-    if (!streamer || v.tts.has(text)) {
-      const out = await v.tts.speak(text).catch(restingOr);
-      return c.body(out.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "hit", "x-voice": v.tts.voice });
+    try {
+      const pre = await prerecorded(text);
+      if (pre) return c.body(pre.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": pre.prerecorded ? "prerecorded" : "generated", "x-voice": pre.voice });
+      const streamer = v.tts.stream;
+      if (!streamer || v.tts.has(text)) {
+        const out = await v.tts.speak(text).catch(restingOr);
+        return c.body(out.audio as unknown as ArrayBuffer, 200, { ...headers, "x-voice-cache": "hit", "x-voice": v.tts.voice });
+      }
+      // Which voice answered: the rest of a reply is pinned to it, and the extension's debug log names it. Never the text.
+      const out = await (v.tts.streamDetailed ? v.tts.streamDetailed(text) : streamer(text).then((stream) => ({ stream, voice: v.tts!.voice }))).catch(restingOr);
+      return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
+    } catch (err) {
+      return onScreen(c, err);
     }
-    // Which voice answered: the rest of a reply is pinned to it, and the extension's debug log names it. Never the text.
-    const out = await (v.tts.streamDetailed ? v.tts.streamDetailed(text) : streamer(text).then((stream) => ({ stream, voice: v.tts!.voice }))).catch(restingOr);
-    return c.body(out.stream, 200, { ...headers, "x-voice-cache": "miss", "x-voice": out.voice });
   });
 
   if (upgradeWebSocket) {
@@ -439,7 +470,7 @@ export function registerVoice(
                 return;
               }
               // Escape: drop the turn. The provider's session is closed cleanly; no transcript, no fallback.
-              if (msg.type === "cancel") return cancel(ws);
+              if (msg.type === "cancel") return cancel(ws, "escape");
               if (msg.type !== "stop" || !live) return;
               return finish(ws);
             }
@@ -453,19 +484,18 @@ export function registerVoice(
           onClose() {
             stopTimers();
             // Gone before its transcript (the page closed, or Escape): nothing more for this turn.
-            if (live || finishing) cancel(null);
+            if (live || finishing) cancel(null, "closed");
           },
         };
-        function cancel(ws: { close(code?: number, reason?: string): void } | null) {
+        /** The turn is dropped: "escape" (the extension said cancel) or "closed" (the socket went away mid-turn). */
+        function cancel(ws: { close(code?: number, reason?: string): void } | null, how: "escape" | "closed") {
           if (cancelled) return;
           cancelled = true;
           stopTimers();
           const stream = live;
           live = null;
-          if (stream) {
-            logTurn("cancelled", stream.stats?.(), "dropped");
-            stream.abort();
-          } else logTurn("cancelled while finishing", undefined, "dropped");
+          logTurn(`cancelled (${how}${stream ? "" : ", after the release"})`, stream?.stats?.(), "nothing sent onward");
+          stream?.abort();
           try {
             ws?.close(1000);
           } catch {

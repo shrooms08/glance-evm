@@ -51,6 +51,8 @@ export const LINES = {
   sellingElsewhere: (name: string) => `I can't sell from here yet. Your console can sell ${name}.`,
   nothingRefused: "Nothing's been refused yet. So, nothing to explain.",
   noSpeech: "I didn't hear anything. Hold the key while you talk, or just type.",
+  /** Pre-recorded: every voice failed to speak a reply (the reply's text is in the panel). */
+  answerOnScreen: "I've put the answer on screen.",
   /** Spoken (pre-recorded) when a turn ends with nothing heard after the key was held: the panel shows NOT_HEARD. */
   notHeardSpoken: "Didn't catch that. Hold Option V and try again.",
   tapToConfirm: "Tap Confirm to buy, or Cancel. I never buy on a spoken yes.",

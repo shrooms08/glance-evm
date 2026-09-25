@@ -168,7 +168,8 @@ export class ProviderError extends Error {
     /** The HTTP status, or 0 when there was none (timeout, connection error). */
     readonly status: number,
     message: string,
-    readonly kind: "status" | "timeout" | "connection" = "status",
+    /** "malformed": a 200 that isn't audio (an empty body, or JSON where audio should be). */
+    readonly kind: "status" | "timeout" | "connection" | "malformed" = "status",
   ) {
     super(message);
   }
@@ -640,8 +641,15 @@ export function deepgramSpeaker(opts: DeepgramSpeakOptions): Speaker {
       opts.firstByteMs ?? SPEECH_FIRST_BYTE_TIMEOUT_MS,
     );
     if (!res.ok) throw new ProviderError("deepgram", res.status, `Deepgram answered ${res.status}`);
+    // A 200 that isn't audio (JSON, text) is as good as an error: the next voice is asked.
+    const type = res.headers.get("content-type") ?? "";
+    if (type && !/^audio\//i.test(type)) {
+      void res.body?.cancel().catch(() => {});
+      throw new ProviderError("deepgram", res.status, `Deepgram sent ${res.status} with ${type.split(";")[0]}, not audio`, "malformed");
+    }
     return res;
   };
+  const empty = () => new ProviderError("deepgram", 200, "Deepgram sent 200 with no audio", "malformed");
   return {
     name: "deepgram",
     model: route.family === "flux" ? "flux" : "aura-2",
@@ -649,12 +657,38 @@ export function deepgramSpeaker(opts: DeepgramSpeakOptions): Speaker {
     endpoint: `POST ${route.url}`,
     ...(opts.retry ? { retry: true } : {}),
     async speak(text) {
-      return { audio: new Uint8Array(await (await request(text)).arrayBuffer()), mime: "audio/mpeg" };
+      const audio = new Uint8Array(await (await request(text)).arrayBuffer());
+      if (!audio.byteLength) throw empty();
+      return { audio, mime: "audio/mpeg" };
     },
     async stream(text) {
       const res = await request(text);
-      if (!res.body) throw new ProviderError("deepgram", res.status, "Deepgram sent no audio");
-      return res.body;
+      if (!res.body) throw empty();
+      // The first bytes are read before the reply is committed to this voice: an empty body still falls through.
+      const reader = res.body.getReader();
+      let first: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        first = await reader.read();
+        while (!first.done && !first.value?.byteLength) first = await reader.read();
+      } catch {
+        // Headers, then no audio before the stall limit: as good as a first-byte timeout.
+        throw new ProviderError("deepgram", 0, `Deepgram sent headers but no audio within ${SPEECH_STALL_MS}ms`, "timeout");
+      }
+      if (first.done) throw empty();
+      const head = first.value;
+      return new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(head);
+        },
+        async pull(c) {
+          const { done, value } = await reader.read();
+          if (done) c.close();
+          else c.enqueue(value);
+        },
+        cancel(reason) {
+          return reader.cancel(reason);
+        },
+      });
     },
   };
 }
@@ -664,7 +698,14 @@ export const speakerLabel = (s: Pick<Speaker, "name" | "model" | "voice" | "retr
   `${s.name === "deepgram" ? `deepgram ${s.voice}` : `${s.name} ${s.model}`}${s.retry ? " (retry, fresh connection)" : ""}`;
 
 /** Why a speaker was passed over: "429", "timeout after 6000ms", "connection error". */
-const shortReason = (err: ProviderError) => (err.kind === "timeout" ? `timeout (${err.message.match(/\d+ms/)?.[0] ?? "first byte"})` : err.kind === "connection" ? "connection error" : String(err.status));
+const shortReason = (err: ProviderError) =>
+  err.kind === "timeout"
+    ? `timeout (${err.message.match(/\d+ms/)?.[0] ?? "first byte"})`
+    : err.kind === "connection"
+      ? "connection error"
+      : err.kind === "malformed"
+        ? `${err.status}, not audio`
+        : String(err.status);
 
 /** One reply's voice: who spoke it, who was passed over and why, and how long the first answer took. No text. */
 export interface VoiceDecision {
@@ -696,11 +737,13 @@ const fallReason = (err: ProviderError) =>
     ? "timed out before its first byte"
     : err.kind === "connection"
       ? "couldn't be reached"
-      : `answered ${err.status}, ${err.status === 402 ? "payment required (check its API credit)" : err.status === 401 ? "the key was refused" : "rate limited"}`;
+      : err.kind === "malformed"
+        ? `answered ${err.status} with no audio (${err.message.replace(/^Deepgram sent \d+ /, "")})`
+        : `answered ${err.status}, ${err.status === 402 ? "payment required (check its API credit)" : err.status === 401 ? "the key was refused" : err.status >= 500 ? "a server error" : "rate limited"}`;
 
 /** True for failures that hand the request to the next speaker: 401, 402, 429, a timeout or a connection error. */
 export function fallsThrough(err: unknown): err is ProviderError {
-  return err instanceof ProviderError && (FALL_THROUGH_STATUSES.has(err.status) || err.kind === "timeout" || err.kind === "connection");
+  return err instanceof ProviderError && (FALL_THROUGH_STATUSES.has(err.status) || err.status >= 500 || err.kind !== "status");
 }
 
 /**
@@ -782,9 +825,9 @@ export function withSttFallback(primary: Transcriber, secondary: Transcriber | n
 }
 
 /**
- * Tries each speaker in order. One that answers 401 (key), 402 (billing) or 429 (rate limit), times out before its first
- * byte, or can't be reached hands the request to the next, with one log line per fall-through (never the key or the
- * text). Any other failure is final. Each reply's decision (who spoke, who was passed over and why) goes to `decisions`.
+ * Tries each speaker in order. One that answers 401 (key), 402 (billing), 429 (rate limit) or any 5xx, sends a 200 with
+ * no audio (empty, or not audio/*), times out before its first byte, or can't be reached hands the request to the next,
+ * with one log line per fall-through naming the status (never the key or the text). Any other failure is final. Each reply's decision (who spoke, who was passed over and why) goes to `decisions`.
  * Once audio has started, nothing falls through: a reply is never finished in another voice.
  */
 export function withFallThrough(
@@ -1275,7 +1318,7 @@ export function selectVoiceProviders(
       speech: order.length ? describe(order[0]!) : "none: replies are shown, not spoken (Glance never uses the browser's voice)",
       speechFallbacks:
         order.length > 1
-          ? `${order.map((s, i) => `${speakerLabel(s)} [${(i === 0 ? PRIMARY_FIRST_BYTE_TIMEOUT_MS : SPEECH_FIRST_BYTE_TIMEOUT_MS) / 1000}s]`).join(" -> ")}, on 401/402/429, a first-byte timeout or a connection error; never mid-reply`
+          ? `${order.map((s, i) => `${speakerLabel(s)} [${(i === 0 ? PRIMARY_FIRST_BYTE_TIMEOUT_MS : SPEECH_FIRST_BYTE_TIMEOUT_MS) / 1000}s]`).join(" -> ")}, on 401/402/429, any 5xx, an empty or non-audio 200, a first-byte timeout or a connection error; never mid-reply; all failed: the pre-recorded "I've put the answer on screen."`
           : "none",
       intent: claude ? `claude (${c.INTENT_MODEL}), validated` : "rules parser, validated (set ANTHROPIC_API_KEY for Claude)",
       warnings,

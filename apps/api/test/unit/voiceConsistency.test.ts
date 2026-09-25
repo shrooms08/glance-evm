@@ -46,9 +46,10 @@ describe("a reply streams for as long as it takes", () => {
       return new Response(slowBody(30, 1_000), { headers: { "content-type": "audio/mpeg" } });
     });
     const s = deepgramSpeaker({ apiKey: KEY, voice: "flux-sienna-en", fetch: fetchFn as unknown as typeof fetch });
-    const reader = (await s.stream!("A long reply.")).getReader();
     const got: number[] = [];
+    // The stream is handed over once its first audio has arrived (an empty answer falls through first).
     const read = (async () => {
+      const reader = (await s.stream!("A long reply.")).getReader();
       for (let r = await reader.read(); !r.done; r = await reader.read()) got.push(r.value[0]!);
     })();
     await vi.advanceTimersByTimeAsync(31_000);
@@ -65,9 +66,9 @@ describe("a reply streams for as long as it takes", () => {
       return r;
     });
     const s = deepgramSpeaker({ apiKey: KEY, voice: "flux-sienna-en", fetch: fetchFn as unknown as typeof fetch });
-    const reader = (await s.stream!("hi")).getReader();
     const outcome = (async () => {
       try {
+        const reader = (await s.stream!("hi")).getReader();
         for (let r = await reader.read(); !r.done; r = await reader.read());
         return "ended";
       } catch {

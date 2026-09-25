@@ -795,7 +795,7 @@ describe("/voice/stream: no lost turns, never silent, Escape", () => {
     await sleep(100);
     expect(got.filter((m) => m.type === "transcript")).toEqual([]);
     expect(dg.uploads).toEqual([]);
-    expect(turnLine()).toMatch(/^\[voice\] turn: cancelled .*\| dropped$/);
+    expect(turnLine()).toMatch(/^\[voice\] turn: cancelled \(escape\) \| 0\.40s audio, 12800 bytes in, .*\| nothing sent onward$/);
   });
 
   it("Escape after the release, while the answer is on its way: no transcript is sent, and no upload", async () => {
@@ -809,5 +809,15 @@ describe("/voice/stream: no lost turns, never silent, Escape", () => {
     await sleep(300);
     expect(got.filter((m) => m.type === "transcript")).toEqual([]);
     expect(dg.uploads).toEqual([]);
+    expect(lines.filter((l) => l.startsWith("[voice] turn:"))).toEqual([expect.stringMatching(/^\[voice\] turn: cancelled \(escape, after the release\) \| .*\| nothing sent onward$/)]);
+  });
+
+  it("the page going away mid-turn (the socket closes, no cancel): logged as cancelled (closed)", async () => {
+    ctx.voice.stt = withSttFallback(make(), fakeDeepgram(), { log: () => {} });
+    const { ws } = await connect();
+    await say(ws, tone(200, 0.3));
+    ws.close();
+    await until(() => Boolean(turnLine()));
+    expect(turnLine()).toMatch(/^\[voice\] turn: cancelled \(closed\) \| 0\.20s audio.*\| nothing sent onward$/);
   });
 });

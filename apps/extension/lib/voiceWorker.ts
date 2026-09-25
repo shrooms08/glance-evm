@@ -493,6 +493,14 @@ export class VoiceWorker {
     s.aborted = true;
     s.pending = "abort";
     if (s.ws?.readyState === 1) s.ws.send(JSON.stringify({ type: "cancel" }));
+    else if (s.ws?.readyState === 0) {
+      // Still connecting: say cancel the moment it opens (so the API drops the turn and logs it), then close.
+      const ws = s.ws;
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "cancel" }));
+        ws.close();
+      };
+    }
     if (wasAborted) return;
     // Nothing is said for a dropped turn (an "One sec." or a reply already on its way stops too).
     this.hush();
@@ -501,7 +509,7 @@ export class VoiceWorker {
     s.capturing = false;
     if (s.capture) void s.capture.stop();
     s.stream?.getTracks().forEach((t) => t.stop());
-    s.ws?.close();
+    if (s.ws?.readyState !== 0) s.ws?.close();
     if (capturing || s.capture || s.listener) this.emit(s, { type: "end" });
   }
 

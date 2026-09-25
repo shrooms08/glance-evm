@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../../src/app.js";
@@ -7,6 +9,8 @@ import { createContext } from "../../src/context.js";
 import { extractAmounts, wordsToNumber } from "../../src/voice/amounts.js";
 import { blocksTrade, rulesIntent, understand, validateIntent, type Intent, type IntentModel } from "../../src/voice/intent.js";
 import { voiceHealth } from "../../src/services.js";
+import { PrerecordedLines } from "../../src/voice/prerecorded.js";
+import { FIXED_LINES, LINES } from "@glance/core/persona";
 import {
   deepgram,
   deepgramSpeaker,
@@ -174,7 +178,7 @@ describe("provider selection and fallback", () => {
     ]);
     expect(v.status.speech).toBe("deepgram flux-sienna-en (Flux TTS) via POST https://api.deepgram.com/v2/speak, mp3 streamed");
     expect(v.status.speechFallbacks).toBe(
-      "deepgram flux-sienna-en [6s] -> deepgram flux-sienna-en (retry, fresh connection) [4s] -> deepgram aura-2-harmonia-en [4s], on 401/402/429, a first-byte timeout or a connection error; never mid-reply",
+      "deepgram flux-sienna-en [6s] -> deepgram flux-sienna-en (retry, fresh connection) [4s] -> deepgram aura-2-harmonia-en [4s], on 401/402/429, any 5xx, an empty or non-audio 200, a first-byte timeout or a connection error; never mid-reply; all failed: the pre-recorded \"I've put the answer on screen.\"",
     );
   });
   it("Fish only by env: after the chain with VOICE_TTS_FISH_FALLBACK=1, or first with VOICE_TTS=fish", () => {
@@ -474,7 +478,8 @@ describe("Deepgram speech: routing by voice prefix", () => {
 
 describe("speech chain: Flux, Flux again, then Harmonia", () => {
   /** A fake Deepgram (and Fish): each attempt answers as told, in order ("ok", a status, "timeout" or "down"). */
-  function providers(plan: { flux: Array<"ok" | number | "timeout" | "down">; aura?: "ok" | number | "timeout" | "down"; fish?: boolean }) {
+  type Answer = "ok" | number | "timeout" | "down" | "empty" | "json";
+  function providers(plan: { flux: Answer[]; aura?: Answer; fish?: boolean }) {
     const calls: string[] = [];
     let fluxTry = 0;
     const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -484,6 +489,9 @@ describe("speech chain: Flux, Flux again, then Harmonia", () => {
       const a = which === "flux" ? (plan.flux[fluxTry++] ?? "ok") : which === "aura" ? (plan.aura ?? "ok") : "ok";
       if (a === "down") throw new TypeError("fetch failed");
       if (a === "timeout") return new Promise<Response>((_, reject) => init!.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+      // A 200 with no audio in it: an empty body, or JSON where the audio should be.
+      if (a === "empty") return new Response(new Uint8Array(0), { headers: { "content-type": "audio/mpeg" } });
+      if (a === "json") return new Response('{"err_msg":"oops"}', { headers: { "content-type": "application/json" } });
       if (a !== "ok") return new Response("no", { status: a });
       return new Response(new Uint8Array([which.length]), { headers: { "content-type": "audio/mpeg" } });
     });
@@ -509,6 +517,65 @@ describe("speech chain: Flux, Flux again, then Harmonia", () => {
     expect(calls).toEqual(["flux", "flux"]);
     expect(falls(lines)).toEqual([expect.stringMatching(new RegExp(`^\\[voice\\] speech: deepgram flux-sienna-en answered ${status}.*; falling through to deepgram flux-sienna-en \\(retry, fresh connection\\)$`))]);
     expect(v.decisions.list()[0]).toMatchObject({ voice: "flux-sienna-en", retry: true, fellThrough: [{ voice: "flux-sienna-en", reason: String(status) }] });
+  });
+
+  it.each([500, 503])("Flux answers %i (a server error): Flux once more on a fresh connection, then Harmonia; one line per step with the status", async (status) => {
+    const { v, calls, lines } = providers({ flux: [status, status] });
+    expect([...(await v.tts!.speak("hi")).audio]).toEqual([4]);
+    expect(calls).toEqual(["flux", "flux", "aura"]);
+    expect(falls(lines)).toEqual([
+      `[voice] speech: deepgram flux-sienna-en answered ${status}, a server error; falling through to deepgram flux-sienna-en (retry, fresh connection)`,
+      `[voice] speech: deepgram flux-sienna-en (retry, fresh connection) answered ${status}, a server error; falling through to deepgram aura-2-harmonia-en`,
+    ]);
+    expect(v.decisions.list()[0]).toMatchObject({ voice: "aura-2-harmonia-en", fellThrough: [{ reason: String(status) }, { reason: String(status) }] });
+  });
+
+  it("an empty 200, or JSON where the audio should be: falls through like an error (speak and stream)", async () => {
+    const a = providers({ flux: ["empty", "ok"] });
+    expect([...(await a.v.tts!.speak("hi")).audio]).toEqual([4]);
+    expect(falls(a.lines)).toEqual([expect.stringMatching(/^\[voice\] speech: deepgram flux-sienna-en answered 200 with no audio \(with no audio\); falling through/)]);
+    const b = providers({ flux: ["json", "empty"] });
+    const stream = await b.v.tts!.stream!("hi");
+    expect([...new Uint8Array(await new Response(stream).arrayBuffer())]).toEqual([4]);
+    expect(b.calls).toEqual(["flux", "flux", "aura"]);
+    expect(falls(b.lines)[0]).toMatch(/answered 200 with no audio \(with application\/json, not audio\)/);
+  });
+
+  it("every voice fails (500, 500, 503): /voice/speak plays the pre-recorded \"I've put the answer on screen.\", never a 502", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "glance-voice-"));
+    // The line, recorded once in Sienna while Deepgram answered.
+    const good = providers({ flux: ["ok"] });
+    const lines = new PrerecordedLines("flux-sienna-en", FIXED_LINES, dir);
+    await lines.audio(LINES.answerOnScreen, good.v.chain!);
+    const down = providers({ flux: [500, 500, 500, 500], aura: 503 });
+    const c2 = createContext(loadConfig(baseEnv));
+    c2.voice = down.v;
+    c2.prerecorded = lines;
+    const logs: string[] = [];
+    const realLog = console.log;
+    console.log = (...a: unknown[]) => void logs.push(a.join(" "));
+    try {
+      const app = createApp(c2);
+      const res = await app.request(`/voice/speak?text=${encodeURIComponent("Tesla is at $380.")}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-voice-fallback")).toBe("on-screen");
+      expect(res.headers.get("x-voice")).toBe("flux-sienna-en");
+      expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([4]);
+      const post = await app.request("/voice/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "Amazon is at $220." }) });
+      expect(post.headers.get("x-voice-fallback")).toBe("on-screen");
+    } finally {
+      console.log = realLog;
+    }
+    expect(down.calls.slice(0, 3)).toEqual(["flux", "flux", "aura"]);
+    expect(falls(down.lines)).toHaveLength(4); // two steps per reply, each with its status
+    expect(logs.filter((l) => l.includes("no voice answered"))).toEqual([
+      '[voice] speech: no voice answered (last: deepgram 503); the answer is on screen, said with the pre-recorded "on screen" line',
+      '[voice] speech: no voice answered (last: deepgram 503); the answer is on screen, said with the pre-recorded "on screen" line',
+    ]);
+  });
+
+  it("the \"on screen\" line is one of the pre-recorded lines", () => {
+    expect(FIXED_LINES).toContain("I've put the answer on screen.");
   });
 
   it("first-byte timeouts: 6s for the first try, 4s for the retry, then Harmonia; each with its reason", async () => {
@@ -557,10 +624,10 @@ describe("speech chain: Flux, Flux again, then Harmonia", () => {
     expect(calls).toEqual(["flux", "flux", "aura"]);
   });
 
-  it("a server error is final, not a fall-through", async () => {
+  it("a server error falls through (it is no longer final)", async () => {
     const { v, calls } = providers({ flux: [500] });
-    await expect(v.tts!.speak("hi")).rejects.toThrow("Deepgram answered 500");
-    expect(calls).toEqual(["flux"]);
+    expect([...(await v.tts!.speak("hi")).audio]).toEqual([4]);
+    expect(calls).toEqual(["flux", "flux"]);
   });
 
   it("logs never carry the key or the text, only its length", async () => {
@@ -612,9 +679,11 @@ describe("speech fall-through", () => {
     expect(warn.mock.calls[0]![0]).not.toContain(REAL_LOOKING);
   });
 
-  it("any other failure is final (a server error isn't a billing problem)", async () => {
+  it("a server error falls through; any other failure (a 400, a bad request) is final", async () => {
     const chain = withFallThrough([speaker("deepgram", 500), speaker("fish")], () => {});
-    await expect(chain.speak("hi")).rejects.toThrow("deepgram answered 500");
+    await expect(chain.speak("hi")).resolves.toBeTruthy();
+    const bad = withFallThrough([speaker("deepgram", 400), speaker("fish")], () => {});
+    await expect(bad.speak("hi")).rejects.toThrow("deepgram answered 400");
   });
 
   it("the last provider's refusal is reported", async () => {
