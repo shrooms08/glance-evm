@@ -30,6 +30,7 @@ import { createTradeAuth, type TradeAuth } from "./tradeAuth.js";
 import { fileMeter, voiceMeters } from "./voice/dailyCaps.js";
 import { createFaucet, JsonFaucetStore, PAXOS_USDG, type Faucet } from "./faucet.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
+import { LiveQuotes } from "./liveQuotes.js";
 
 export interface AppContext {
   config: Config;
@@ -52,6 +53,8 @@ export interface AppContext {
   llmModels: { resolver: string; intent: string; why: string; other: string };
   /** The common lines pre-recorded in the configured voice (src/voice/prerecorded.ts), when there's a speech provider. */
   prerecorded: PrerecordedLines | null;
+  /** Live market prices (display and the drift guard). Started by the server (src/index.ts), never in tests. */
+  liveQuotes: LiveQuotes;
   /** The feed keeper running in this process (KEEPER_IN_PROCESS=1), for /health; null otherwise. */
   keeperInProcess?: { running(): boolean } | null;
   /** "Show me", teach and guide (POST /showme), when ANTHROPIC_API_KEY is set. */
@@ -111,7 +114,13 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     chainId: deployment.chainId,
     log,
   });
+  const liveQuotes = new LiveQuotes({
+    symbols: catalog.entries.map((c) => c.symbol),
+    finnhubKey: looksLikePlaceholder(config.FINNHUB_API_KEY) ? undefined : config.FINNHUB_API_KEY,
+    log,
+  });
   return {
+    liveQuotes,
     config,
     deployment,
     catalog,

@@ -60,6 +60,9 @@ import {
 } from "./format.js";
 import { summarizeWindow, WINDOW_SECONDS, type WindowEntry } from "./window.js";
 import { assemblyaiToday } from "./voice/dailyCaps.js";
+import { STOCK_FRESHNESS } from "@glance/core/freshness";
+import { gapBps } from "./liveQuotes.js";
+import { priceDriftGuard } from "@glance/core/errors";
 
 const BPS = 10_000n;
 /** Blocks scanned to rebuild the 24h windows. ~0.17s blocks: 1.2M is about 57 hours, comfortably over 24. */
@@ -118,6 +121,11 @@ export interface PriceReading {
   closedMaxAge: number;
   /** The vault allows this token (tokenConfig.approved). */
   approved?: boolean;
+  /**
+   * The vault has freshness thresholds for this token. When it hasn't (a token it never added), `state` describes the
+   * feed with Glance's standard 20h/96h rule, not "too old": the vault refuses the token for not being approved.
+   */
+  configured?: boolean;
 }
 
 function classify(age: number, openMaxAge: number, closedMaxAge: number): MarketState {
@@ -151,21 +159,75 @@ export async function readPrice(ctx: AppContext, stock: CatalogEntry, vault: Add
     latestTimestamp(ctx),
   ]);
   const [, answer, , updatedAtRaw] = round;
-  const [approved, , openMaxAge, closedMaxAge] = config;
+  const [approved, , vaultOpenMaxAge, vaultClosedMaxAge] = config;
   const updatedAt = Number(updatedAtRaw);
   const age = Math.max(0, now - updatedAt);
+  // A token this vault never added has no thresholds (0/0). Its feed isn't "too old" for that: it is described with
+  // the standard rule, and `approved: false` says the vault won't trade it (the vault's own check is TokenNotApproved).
+  const configured = vaultOpenMaxAge > 0;
+  const openMaxAge = configured ? vaultOpenMaxAge : STOCK_FRESHNESS.openMaxAge;
+  const closedMaxAge = configured ? vaultClosedMaxAge : STOCK_FRESHNESS.closedMaxAge;
   return {
     symbol: stock.symbol,
     price: answer,
     decimals,
     updatedAt,
     ageSeconds: age,
-    // A feed the vault has never configured has zero thresholds: report it as the vault would treat it.
     state: answer <= 0n ? "STALE" : classify(age, openMaxAge, closedMaxAge),
     openMaxAge,
     closedMaxAge,
     approved,
+    configured,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Live prices (display) and the drift guard
+// ---------------------------------------------------------------------------
+
+/** A live quote as the API shows it: price, where it came from, and how old it is. Null when none is fresh. */
+export function liveView(ctx: AppContext, symbol: string) {
+  const q = ctx.liveQuotes.get(symbol);
+  if (!q) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return { price: q.price.toFixed(2), source: q.source, quotedAt: q.quotedAt, ageSeconds: Math.max(0, now - q.quotedAt), fetchedAt: Math.floor(q.fetchedAt / 1000) };
+}
+
+export interface DriftCheck {
+  /** The live price was available to compare with. */
+  checked: boolean;
+  gapBps: number | null;
+  maxGapBps: number;
+  /** Over the limit: the API won't send this trade. */
+  blocked: boolean;
+  guard: GuardError | null;
+}
+
+/**
+ * The drift guard: the vault's oracle price against the live market price. More than LIVE_ORACLE_MAX_GAP_BPS apart,
+ * the oracle is behind the market and the trade would be priced off an old number: refused. No live quote: never
+ * blocks (logged, so a quiet quote service shows up).
+ */
+export function driftCheck(ctx: AppContext, stock: CatalogEntry, oracle: { price: bigint; decimals: number }, log: (line: string) => void = (l) => console.log(l)): DriftCheck {
+  const maxGapBps = ctx.config.LIVE_ORACLE_MAX_GAP_BPS;
+  const live = ctx.liveQuotes.get(stock.symbol);
+  if (!live) {
+    log(`[drift] no live quote for ${stock.symbol}: not blocking`);
+    return { checked: false, gapBps: null, maxGapBps, blocked: false, guard: null };
+  }
+  const oracleUsd = Number(oracle.price) / 10 ** oracle.decimals;
+  const gap = gapBps(live.price, oracleUsd);
+  if (gap <= maxGapBps) return { checked: true, gapBps: Math.round(gap), maxGapBps, blocked: false, guard: null };
+  const guard = priceDriftGuard({ name: stock.name, livePrice: live.price, oraclePrice: oracleUsd, gapBps: gap, maxGapBps, liveSource: live.source });
+  return { checked: true, gapBps: Math.round(gap), maxGapBps, blocked: true, guard };
+}
+
+/** Throws the drift guard's refusal (422 PRICE_DRIFT) if live and oracle are too far apart. Called just before a send. */
+export function refuseOnDrift(ctx: AppContext, stock: CatalogEntry, oracle: { price: bigint; decimals: number }, what: string, quote?: RefusedAttempt) {
+  const drift = driftCheck(ctx, stock, oracle);
+  if (!drift.guard) return;
+  console.log(`[drift] refused ${what}: live and oracle ${drift.gapBps} bps apart (limit ${drift.maxGapBps})`);
+  throw new ApiError(422, drift.guard.code, drift.guard.message, drift.guard, quote);
 }
 
 export async function priceView(ctx: AppContext, symbol: string, vaultParam?: string) {
@@ -180,6 +242,8 @@ export async function priceView(ctx: AppContext, symbol: string, vaultParam?: st
     ageSeconds: p.ageSeconds,
     age: formatDuration(p.ageSeconds),
     marketState: p.state,
+    /** The live market price (display): what "Tesla is at ..." says. The vault trades at `price`. */
+    live: liveView(ctx, stock.symbol),
     freshness: { vault, openMaxAge: p.openMaxAge, closedMaxAge: p.closedMaxAge },
     feed: stock.feed,
     feedReal: stock.feedReal,
@@ -359,7 +423,7 @@ export async function vaultView(ctx: AppContext, vaultParam: string) {
           marketState: price.state,
           /** The vault allows buying it (baskets use only these). */
           allowed: price.approved !== false,
-          effectiveCaps: price.state === "STALE" ? null : effectiveCaps(v, price.state),
+          effectiveCaps: price.state === "STALE" || price.approved === false ? null : effectiveCaps(v, price.state),
         };
       }),
     ),
@@ -753,6 +817,9 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
     price: { raw: price.price.toString(), decimals: price.decimals, value: toDecimalString(price.price, price.decimals) },
     marketState: price.state,
     priceAgeSeconds: price.ageSeconds,
+    /** The live market price next to the vault's execution price, and whether the drift guard would refuse. */
+    live: liveView(ctx, p.stock.symbol),
+    drift: driftCheck(ctx, p.stock, price, () => {}),
     preflight: {
       ...preflight,
       simulatedAs: agent,
@@ -776,6 +843,8 @@ export async function tradeView(ctx: AppContext, req: TradeRequest) {
     if (!quote.preflight.ok) {
       throw new ApiError(422, quote.preflight.guard.code, quote.preflight.guard.message, quote.preflight.guard, quote);
     }
+    // The drift guard, just before sending: the oracle must be close to the live market price.
+    refuseOnDrift(ctx, stockBySymbol(ctx, req.symbol), { price: BigInt(quote.price.raw), decimals: quote.price.decimals }, `${req.side} ${req.symbol}`, quote);
     const { args, exCtx } = quote._call;
     const { request } = await ctx.client.simulateContract({
       address: quote.vault,

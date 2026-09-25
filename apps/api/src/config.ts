@@ -49,6 +49,12 @@ const envSchema = z.object({
   /** Claude calls allowed per UTC day across the whole API; past it, the dictionary and the rules answer. */
   LLM_DAILY_CALL_LIMIT: z.coerce.number().int().min(0).default(250),
   /**
+   * The drift guard: before any trade or basket leg is sent, the live market price (Finnhub, else Yahoo) and the
+   * vault's oracle price may differ by at most this many basis points (200 = 2%); more, and the API refuses it (the
+   * oracle is behind the market). No live quote: never blocks (logged).
+   */
+  LIVE_ORACLE_MAX_GAP_BPS: z.coerce.number().int().min(1).max(10_000).default(200),
+  /**
    * Daily budgets per purpose, under LLM_DAILY_CALL_LIMIT. When one runs out only that purpose falls back: the resolver
    * to the dictionary, intent to the rules, why to headlines only. OTHER is kept for upcoming features ("Show me").
    */

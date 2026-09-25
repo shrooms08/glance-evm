@@ -33,6 +33,7 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   for (const w of ctx.voice.status.warnings) console.log(`  voice warning: ${w}`);
   if (ctx.prerecorded) console.log(`  voice pre-recorded: ${ctx.prerecorded.size} common lines in ${ctx.prerecorded.voice} (.cache/voice)`);
   console.log(`  data dir ${config.DATA_DIR ?? `${config.LLM_CACHE_DIR} (DATA_DIR unset)`}`);
+  console.log(`  live prices: ${config.FINNHUB_API_KEY ? "Finnhub" : "Yahoo only (FINNHUB_API_KEY unset)"}, every 15s while the market is open; trades refused past ${config.LIVE_ORACLE_MAX_GAP_BPS} bps from the oracle`);
   const origins = config.corsOrigins;
   console.log(`  CORS origins: ${origins.join(", ") || "none"}`);
   if (config.NODE_ENV === "production") {
@@ -47,6 +48,9 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
 });
 injectWebSocket(server);
 
+// Live market prices (display and the drift guard): Finnhub every 15s while the market is open, 5 minutes otherwise.
+ctx.liveQuotes.start();
+
 // The feed keeper in this process (KEEPER_IN_PROCESS=1): one instance at a time, never stopping the API.
 const keeper = startInProcessKeeper(config);
 ctx.keeperInProcess = keeper;
@@ -55,6 +59,7 @@ ctx.keeperInProcess = keeper;
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     keeper?.stop();
+    ctx.liveQuotes.stop();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5_000).unref();
   });

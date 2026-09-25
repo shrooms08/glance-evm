@@ -50,6 +50,7 @@ export type GuardCode =
   | "REENTRANCY"
   | "INVALID_SETTING"
   | "FAUCET_LIMIT"
+  | "PRICE_DRIFT"
   | "UNKNOWN";
 
 export interface DecodedRevert {
@@ -427,4 +428,31 @@ export function explainRevert(decoded: DecodedRevert | null, ctx: ExplainContext
     default:
       return make("UNKNOWN", "The chain rejected that for a reason I don't recognise, so nothing moved.");
   }
+}
+
+// ---------------------------------------------------------------------------
+// The API's own guard: live market price vs the vault's oracle
+// ---------------------------------------------------------------------------
+
+/**
+ * The live market price and the price the vault would trade at (its oracle, mirrored from mainnet Chainlink) disagree
+ * by more than the API allows (LIVE_ORACLE_MAX_GAP_BPS): the oracle is behind the market, so the trade would be priced
+ * off an old number. This is the API's refusal, not the vault's; nothing was sent.
+ */
+export function priceDriftGuard(o: { name: string; livePrice: number; oraclePrice: number; gapBps: number; maxGapBps: number; liveSource: string }): GuardError {
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  return {
+    code: "PRICE_DRIFT",
+    error: "PriceDrift",
+    message: `The on-chain price is behind the market right now, so I won't trade ${o.name} yet.`,
+    args: {},
+    detail: {
+      livePrice: usd(o.livePrice),
+      oraclePrice: usd(o.oraclePrice),
+      gapBps: Math.round(o.gapBps),
+      gap: `${(o.gapBps / 100).toFixed(1)}%`,
+      maxGapBps: o.maxGapBps,
+      liveSource: o.liveSource,
+    },
+  };
 }

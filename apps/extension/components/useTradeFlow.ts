@@ -62,8 +62,20 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
         if (opts.voice) void speak(quote.preflight.guard.message, g.voiceReplies); // the blocked orb stays: the card explains
         return;
       }
+      // The drift guard, before the confirm step: the API would refuse it anyway, so say so now.
+      const drift = quote.drift?.blocked ? quote.drift.guard : null;
+      if (drift) {
+        setFlow({ step: "blocked", amount, guard: drift, quote });
+        g.setOrb({ state: "blocked", line: drift.message, meta: `Guard · ${drift.code}` });
+        if (opts.voice) void speak(drift.message, g.voiceReplies);
+        return;
+      }
       setFlow({ step: "review", amount, quote });
-      const line = `$${amount} of ${symbol} at $${Number(quote.price.value).toFixed(2)}. Confirm?`;
+      const vaultAt = `$${Number(quote.price.value).toFixed(2)}`;
+      // Both prices: the market's (live) and the one the vault executes at (its oracle).
+      const line = quote.live
+        ? `$${amount} of ${symbol} at $${Number(quote.live.price).toFixed(2)}; the vault trades at ${vaultAt}. Confirm?`
+        : `$${amount} of ${symbol} at ${vaultAt}. Confirm?`;
       const meta = `Price ${(quote.priceAgeSeconds / 3600).toFixed(1)}h old · market ${quote.marketState === "OPEN" ? "open" : "closed"}`;
       g.setOrb({ state: "idle", line, meta });
       if (opts.voice) {
@@ -101,6 +113,8 @@ export function useTradeFlow(symbol: string, opts: { voice?: boolean; pageContex
     } else if (res.guard) {
       setFlow({ step: "blocked", amount, guard: res.guard, quote });
       g.setOrb({ state: "blocked", line: res.guard.message, meta: `Guard · ${res.guard.code}` });
+      // Refused at the last moment (the drift guard, or the vault itself): said out loud when it was asked for by voice.
+      if (opts.voice) void speak(res.guard.message, g.voiceReplies);
     } else if (LINK_CODES.has(res.code)) {
       // Nothing was sent: this browser isn't linked to the vault yet (or its link ran out).
       setFlow({ step: "needs-link", amount, quote, code: res.code, message: res.message, link: "idle" });

@@ -6,16 +6,17 @@ import { PriceChart } from "@/components/PriceChart";
 import { Notice } from "@/components/Notice";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
-import type { CatalogStock, FeedStatus } from "@/lib/api";
+import type { CatalogStock, FeedStatus, LiveQuote } from "@/lib/api";
 import { addressUrl, txUrl } from "@/lib/chain";
 import { formatAgeHours, formatAgo, formatUsd, formatWhen, shortAddress } from "@/lib/format";
 import { priceSourceLabel } from "@/lib/priceSource";
 import { useNow } from "@/lib/useNow";
-import { useCatalog, useHealth } from "@/lib/vault";
+import { useCatalog, useHealth, useLiveQuotes } from "@/lib/vault";
 
 export default function PricesPage() {
   const health = useHealth();
   const catalog = useCatalog();
+  const live = useLiveQuotes();
   const now = useNow(30_000);
   const error = health.error ?? catalog.error;
   const feeds = health.data?.feeds ?? [];
@@ -28,8 +29,11 @@ export default function PricesPage() {
       <div className="page-head">
         <div>
           <p className="eyebrow">Prices</p>
-          <h1 className="title">The prices the vault trades on</h1>
-          <p className="meta">Read from each stock's price feed on Robinhood Chain testnet. The vault refuses any trade whose price is too old.</p>
+          <h1 className="title">Live prices, and the ones the vault trades on</h1>
+          <p className="meta">
+            The big number is the live market price (for reading). Underneath is the price the vault actually trades at: each stock's price feed on Robinhood Chain testnet. The
+            vault refuses any trade whose price is too old, and Glance won't send one while the two are more than 2% apart.
+          </p>
         </div>
         {health.data && (
           <div className="keeper">
@@ -59,7 +63,7 @@ export default function PricesPage() {
       {health.data && catalog.data && (
         <div className="price-grid">
           {stocks.map((s) => (
-            <PriceCard key={s.symbol} stock={s} feed={feeds.find((f) => f.symbol === s.symbol)} now={now} />
+            <PriceCard key={s.symbol} stock={s} feed={feeds.find((f) => f.symbol === s.symbol)} live={live.data?.quotes.find((q) => q.symbol === s.symbol)?.live ?? null} now={now} />
           ))}
         </div>
       )}
@@ -72,8 +76,9 @@ export default function PricesPage() {
   );
 }
 
-function PriceCard({ stock, feed, now }: { stock: CatalogStock; feed?: FeedStatus; now: number }) {
+export function PriceCard({ stock, feed, live, now }: { stock: CatalogStock; feed?: FeedStatus; live: LiveQuote | null; now: number }) {
   const price = feed?.price ? formatUsd(BigInt(feed.price.raw), feed.price.decimals) : "–";
+  const tick = useNow(1_000);
   const age = feed?.updatedAt ? now - feed.updatedAt : feed?.ageSeconds ?? null;
   const source = priceSourceLabel({ symbol: stock.symbol, feedReal: stock.feedReal, kind: feed?.source ?? stock.priceSourceKind });
   const mirrored = !stock.feedReal && source.tone === "neutral";
@@ -87,7 +92,24 @@ function PriceCard({ stock, feed, now }: { stock: CatalogStock; feed?: FeedStatu
         </div>
         <MarketChip state={feed?.marketState ?? null} />
       </div>
-      <p className="display-sm figure">{price}</p>
+      {live ? (
+        <>
+          <p className="display-sm figure" data-testid="live-price">
+            {formatUsd(BigInt(Math.round(Number(live.price) * 100)), 2)}
+          </p>
+          <p className="meta live-line">
+            <span className="live-dot" aria-hidden="true" /> live · {Math.max(0, tick - live.quotedAt)}s old · {live.source === "finnhub" ? "Finnhub" : "Yahoo Finance"}
+          </p>
+          <p className="meta" data-testid="vault-price">
+            Vault trades at <span className="mono">{price}</span> · {source.label} · {age !== null ? formatAgeHours(age) : "–"}
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="display-sm figure">{price}</p>
+          <p className="meta">The vault's price (no live quote right now).</p>
+        </>
+      )}
       <dl className="kv kv-stack">
         <div>
           <dt>Age</dt>

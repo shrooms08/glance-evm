@@ -72,6 +72,17 @@ export function viewForGuard(guard: Guard, usdgDecimals = 6, now = Date.now()): 
         facts: age === undefined ? [] : [{ label: "Price age", value: `${Math.round(age / 3600)}h` }],
       };
     }
+    case "PRICE_DRIFT":
+      return {
+        ...base,
+        title: "The on-chain price is behind the market",
+        meta: "Guard · live vs vault price",
+        facts: [
+          { label: "Market price", value: String(d.livePrice ?? "–") },
+          { label: "Vault price", value: String(d.oraclePrice ?? "–") },
+          { label: "Apart", value: `${String(d.gap ?? "–")} (limit ${typeof d.maxGapBps === "number" ? `${d.maxGapBps / 100}%` : "2%"})` },
+        ],
+      };
     case "AGENT_EXPIRED":
     case "NOT_AGENT":
       return {

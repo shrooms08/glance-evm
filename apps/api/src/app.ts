@@ -19,7 +19,7 @@ import type { AppContext } from "./context.js";
 import { clientIp, rateLimit, sessionOf } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
-import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
+import { activityView, ApiError, chartView, healthView, liveView, portfolioView, priceView, quoteView, type RefusedAttempt, rpcUnavailable, tradeView, vaultView, whyView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 import { factsView } from "./chartFacts.js";
 import { VISION_MAX_IMAGE_CHARS } from "./chartVision.js";
@@ -254,6 +254,13 @@ export function createServerApp(ctx: AppContext) {
   });
 
   // In production, the public view only (no agent balance, voice decisions or budgets) unless ?admin=<ADMIN_TOKEN>.
+  // Live market prices for display (the console's Prices page, the extension): Finnhub, else Yahoo, each with its
+  // source and age. Poll it (every 15s while the market is open is plenty). The vault never trades on these.
+  app.get("/quotes/live", (c) => {
+    const quotes = ctx.catalog.entries.map((e) => ({ symbol: e.symbol, live: liveView(ctx, e.symbol) }));
+    return send(c, { marketOpen: ctx.liveQuotes.marketOpen(), pollMs: ctx.liveQuotes.pollMs(), quotes });
+  });
+
   // Liveness for the host's health check (Railway): answers at once, no chain calls, nothing about the setup.
   app.get("/health/live", (c) => c.json({ ok: true }));
 

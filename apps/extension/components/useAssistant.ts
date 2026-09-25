@@ -162,6 +162,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
           if (!res.ok) return say(res.message);
           const p = res.data;
           const market = p.marketState === "OPEN" ? "the market's open" : p.marketState === "CLOSED" ? "the market's closed" : "that price is too old to trade on";
+          // The live market price when there is one; the vault's own (oracle) price is shown beside it.
+          if (p.live) return say(`${p.name} is at ${priceUsd(p.live.price)}, and ${market}.`, `${cmd.symbol} · live (${p.live.source}) · vault trades at ${priceUsd(p.price.value)}`);
           return say(`${p.name} is at ${priceUsd(p.price.value)}. The price is ${ageHours(p.ageSeconds)} old and ${market}.`, `${cmd.symbol} · oracle ${p.priceSourceKind}`);
         }
         case "spent": {

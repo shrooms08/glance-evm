@@ -22,7 +22,7 @@ import { glanceVaultAbi } from "./abi.generated.js";
 import type { AppContext } from "./context.js";
 import { decodeRevert, explainRevert, revertDataFromError } from "./errors.js";
 import { formatQuantity, formatUsd, toDecimalString } from "./format.js";
-import { ApiError, quoteView, stockBySymbol, vaultView } from "./services.js";
+import { ApiError, quoteView, readPrice, refuseOnDrift, stockBySymbol, vaultView } from "./services.js";
 
 export interface BasketLegRequest {
   symbol: string;
@@ -246,6 +246,9 @@ export function agentExecutor(ctx: AppContext, req: BasketRequest, calls: Readon
   return {
     pendingNonce: () => ctx.client.getTransactionCount({ address: signer.account.address, blockTag: "pending" }),
     prepare: async (i) => {
+      // The drift guard, leg by leg, just before each is sent: the oracle must be close to the live market price.
+      const stock = stockBySymbol(ctx, req.legs[i]!.symbol);
+      refuseOnDrift(ctx, stock, await readPrice(ctx, stock, req.vault), `basket leg ${stock.symbol}`);
       const { request } = await ctx.client.simulateContract({ address: req.vault, abi: glanceVaultAbi, functionName: "buy", args: calls[i]!.args, account: signer.account });
       return request;
     },
@@ -273,7 +276,8 @@ export function agentExecutor(ctx: AppContext, req: BasketRequest, calls: Readon
       }
       return { status: "success", got: null };
     },
-    explain: (i, err) => explainRevert(decodeRevert(revertDataFromError(err)), calls[i]!.exCtx).message,
+    // The API's own refusals (the drift guard) carry their sentence; the vault's are decoded from the revert.
+    explain: (i, err) => (err instanceof ApiError ? err.message : explainRevert(decodeRevert(revertDataFromError(err)), calls[i]!.exCtx).message),
     explorerUrl: (hash) => `${ctx.config.EXPLORER_URL}/tx/${hash}`,
   };
 }

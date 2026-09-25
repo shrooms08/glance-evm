@@ -53,7 +53,7 @@ Before you start:
 | `ANTHROPIC_API_KEY` | Claude: company lookup, Show me, chart vision, voice intents | console.anthropic.com → API Keys |
 | `ASSEMBLYAI_API_KEY` | speech recognition (the default provider) | assemblyai.com dashboard → API Keys |
 | `DEEPGRAM_API_KEY` | Glance's voice (Flux Sienna) and the speech-recognition fallback | console.deepgram.com → API Keys |
-| `FINNHUB_API_KEY` | news for "why is it moving" | finnhub.io → Dashboard |
+| `FINNHUB_API_KEY` | live market prices (every 15s while the market is open; Yahoo when unset or failing) and news for "why is it moving" | finnhub.io → Dashboard |
 | `ADMIN_TOKEN` | 16+ characters: `/health?admin=<token>` shows the full view in production | generate one yourself (e.g. a password manager) |
 | `GIT_COMMIT` | the commit `/health` reports | Railway variable reference: `${{RAILWAY_GIT_COMMIT_SHA}}` |
 | `RPC_MAINNET_URL` | Robinhood Chain mainnet, read only (charts and the keeper's source feeds). Default: the public RPC | a QuickNode mainnet endpoint, or leave unset |
@@ -64,6 +64,7 @@ Before you start:
 |---|---|
 | `RPC_FALLBACK_URLS` | more testnet RPCs, comma separated (default: the public one) |
 | `KEEPER_INTERVAL_MS` | how often the keeper runs (default 30000, minimum 15000) |
+| `LIVE_ORACLE_MAX_GAP_BPS` | the drift guard: refuse a trade while the live price and the vault's oracle price are more than this far apart (default 200 = 2%) |
 | `KEEPER_PAUSED` | `1` pauses the keeper (a file `keeper.paused` in `/data` does the same without a redeploy) |
 | `DEFAULT_VAULT` | the vault used when a request names none |
 | `ASSEMBLYAI_STT_SECONDS_PER_DAY`, `VOICE_STT_SECONDS_PER_DAY`, `VOICE_TTS_CHARS_PER_DAY` | daily voice caps (3600 s, 1800 s, 60000 characters) |
@@ -150,6 +151,7 @@ No new vault is needed.
 - `voice transcription: assemblyai (universal-3-5-pro, …)` and `assemblyai today: <used>/3600 s (resets 00:00 UTC)`
 - `voice speech: deepgram flux-sienna-en …`, and later `voice pre-recorded: N common lines in flux-sienna-en`
 - `data dir /data`
+- `live prices: Finnhub, every 15s while the market is open; trades refused past 200 bps from the oracle`
 - `CORS origins: chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl, https://<console>`, with no `warning:` line
 - `keeper: in-process every 30s (lock /data/keeper.lock)`, then
   `[keeper] keeper in-process: every 30s as 0x…, 7 feeds on chain 46630`. After that: one `[keeper] … wrote …` line

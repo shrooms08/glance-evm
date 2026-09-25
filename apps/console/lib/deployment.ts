@@ -5,6 +5,7 @@ import { factoryV2Address, glanceFactories } from "@glance/core/factories";
 import { getAddress, type Address } from "viem";
 
 import record from "../../../deployments/46630.json";
+import { STOCK_FRESHNESS } from "@glance/core/freshness";
 
 export const CHAIN_ID = 46_630;
 if (record.chainId !== CHAIN_ID) throw new Error(`deployments/46630.json is for chain ${record.chainId}`);
@@ -106,8 +107,8 @@ export const etfs: EtfStock[] = etfsIn(record.stocks as Record<string, { token?:
 /** What `make create-vault` configures (script/CreateVault.s.sol, VaultSetup): the console mirrors it exactly. */
 export const VAULT_SETUP = {
   /** Price freshness per token while the market is open (20h) and closed (96h), in seconds. */
-  openMaxAge: 72_000,
-  closedMaxAge: 345_600,
+  openMaxAge: STOCK_FRESHNESS.openMaxAge,
+  closedMaxAge: STOCK_FRESHNESS.closedMaxAge,
   /** A new agent permission lasts 29 days; one with under 7 days left is renewed. */
   agentTtlSeconds: 29 * 86_400,
   agentMinLeftSeconds: 7 * 86_400,

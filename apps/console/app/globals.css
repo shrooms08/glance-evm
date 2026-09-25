@@ -122,6 +122,7 @@ em { font-style: normal; color: var(--t-text); font-weight: 500; }
 .btn-icon { width: 36px; min-height: 36px; padding: 0; }
 .btn.is-placeholder { visibility: hidden; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--t-accent); box-shadow: 0 0 0 3px var(--t-accent-wash); }
+.live-line { display: flex; align-items: center; gap: 6px; }
 
 .input {
   width: 100%; min-height: 42px; padding: 0 var(--g-s6); border-radius: var(--g-r-md);

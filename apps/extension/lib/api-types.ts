@@ -108,10 +108,20 @@ export interface ResolveNames {
   names: Array<{ name: string; symbol: string; source: "cache" | "llm" }>;
 }
 
+/** A live market price (display only): Finnhub, else Yahoo. The vault trades at its oracle price, never this. */
+export interface LiveQuote {
+  price: string;
+  source: "finnhub" | "yahoo";
+  quotedAt: number;
+  ageSeconds: number;
+  fetchedAt: number;
+}
+
 export interface Price {
   symbol: string;
   name: string;
   price: { raw: string; decimals: number; value: string };
+  live?: LiveQuote | null;
   updatedAt: number;
   ageSeconds: number;
   age: string;
@@ -162,6 +172,10 @@ export interface Quote {
   price: { raw: string; decimals: number; value: string };
   marketState: MarketState;
   priceAgeSeconds: number;
+  /** The live market price next to the vault's execution price (`price`). */
+  live?: LiveQuote | null;
+  /** The drift guard: blocked means the API will refuse this trade (the oracle is behind the market). */
+  drift?: { checked: boolean; gapBps: number | null; maxGapBps: number; blocked: boolean; guard: Guard | null };
   preflight: { ok: true; simulatedAs: string } | { ok: false; guard: Guard; simulatedAs: string };
 }
 

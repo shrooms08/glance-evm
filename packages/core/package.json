@@ -23,7 +23,8 @@
     "./basket": "./src/basket.ts",
     "./chart-facts": "./src/chartFacts.ts",
     "./page-chart": "./src/pageChart.ts",
-    "./keyterms": "./src/keyterms.ts"
+    "./keyterms": "./src/keyterms.ts",
+    "./freshness": "./src/freshness.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

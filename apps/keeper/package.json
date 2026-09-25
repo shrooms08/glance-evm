@@ -8,7 +8,8 @@
     "node": ">=22"
   },
   "exports": {
-    "./service": "./src/service.ts"
+    "./service": "./src/service.ts",
+    "./quote": "./src/quote.ts"
   },
   "scripts": {
     "once": "tsx --env-file-if-exists=.env src/index.ts --once",

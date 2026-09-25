@@ -18,7 +18,7 @@ import { z } from "zod";
 import type { AppContext } from "../context.js";
 import { LINES } from "@glance/core/persona";
 
-import { ApiError, portfolioView, priceView, vaultView, whyView } from "../services.js";
+import { ApiError, liveView, portfolioView, priceView, vaultView, whyView } from "../services.js";
 import { spokenSummary } from "../why.js";
 import { factsView } from "../chartFacts.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
@@ -136,7 +136,13 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
     case "price": {
       const p = await priceFact(ctx, it.symbol!, vault);
       const market = p.marketState === "OPEN" ? "The market's open." : p.marketState === "CLOSED" ? "The market's closed." : "That price is too old to trade on.";
-      return { reply: `${advice}${p.name} is at ${spoken(p.price.value)}. ${market}`, facts: { price: p.price.value, marketState: p.marketState } };
+      // The live market price when there is one ("Tesla is at $373.90"); the vault's oracle price otherwise.
+      const live = liveView(ctx, it.symbol!);
+      const said = live?.price ?? p.price.value;
+      return {
+        reply: `${advice}${p.name} is at ${spoken(said)}. ${market}`,
+        facts: { price: said, source: live ? `live (${live.source})` : "vault oracle", vaultPrice: p.price.value, marketState: p.marketState },
+      };
     }
     case "spend-so-far": {
       if (!vault) return { reply: LINES.noVaultSpent };

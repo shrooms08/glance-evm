@@ -108,7 +108,12 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
         </div>
         {price ? (
           <>
-            <span className="g-figure">{priceUsd(price.price.value)}</span>
+            <span className="g-figure">{priceUsd(price.live?.price ?? price.price.value)}</span>
+            {price.live && (
+              <span className="g-live g-data" data-testid="live-price">
+                <span className="g-dot" data-state="OPEN" /> live · {price.live.ageSeconds}s ago · vault trades at {priceUsd(price.price.value)}
+              </span>
+            )}
             <span className="g-live g-data">
               <span className="g-dot" data-state={price.marketState} />
               {ageHours(price.ageSeconds)} old ·{" "}
@@ -177,9 +182,17 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
             <dd>${flow.amount}</dd>
             <dt>You get about</dt>
             <dd>{flow.quote.deskQuote?.formatted ?? "?"}</dd>
-            <dt>Oracle price</dt>
+            {flow.quote.live && (
+              <>
+                <dt>Market price</dt>
+                <dd>
+                  {priceUsd(flow.quote.live.price)} · live, {flow.quote.live.ageSeconds}s ago
+                </dd>
+              </>
+            )}
+            <dt>Vault trades at</dt>
             <dd>
-              {priceUsd(flow.quote.price.value)} · {ageHours(flow.quote.priceAgeSeconds)} old
+              {priceUsd(flow.quote.price.value)} · Chainlink · {ageHours(flow.quote.priceAgeSeconds)} old
             </dd>
             <dt>Desk spread</dt>
             <dd>{flow.quote.spread}</dd>
@@ -199,13 +212,13 @@ export function CompanyCard({ symbol, autoAmount, onClose, variant = "panel", de
       ) : flow.step === "needs-link" ? (
         <NeedsLink flow={flow} symbol={symbol} onLink={() => void link()} onRetry={() => void retry()} onCancel={reset} />
       ) : flow.step === "done" ? (
-        <Receipt symbol={symbol} amount={flow.amount} txUrl={flow.trade.explorerUrl} txHash={flow.trade.txHash} got={flow.trade.filled?.tokensOut?.formatted} price={flow.quote.price.value} onAgain={reset} />
+        <Receipt symbol={symbol} amount={flow.amount} txUrl={flow.trade.explorerUrl} txHash={flow.trade.txHash} got={flow.trade.filled?.tokensOut?.formatted} price={flow.quote.price.value} live={flow.quote.live?.price} onAgain={reset} />
       ) : null}
     </div>
   );
 }
 
-function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash: string; got?: string; price: string; onAgain(): void }) {
+function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash: string; got?: string; price: string; live?: string; onAgain(): void }) {
   const g = useGlance();
   return (
     <>
@@ -214,7 +227,7 @@ function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash:
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <span className="g-ui">Bought {props.got ?? props.symbol}</span>
           <span className="g-data">
-            for ${props.amount} at {priceUsd(props.price)}
+            for ${props.amount} at {priceUsd(props.price)} (the vault's price){props.live ? ` · market ${priceUsd(props.live)}` : ""}
           </span>
         </div>
       </div>

@@ -122,7 +122,7 @@ function Balances({ v }: { v: VaultView }) {
                 <td><span className="ticker">{p.symbol}</span> <span className="meta">{p.name}</span></td>
                 <td className="num mono">{p.quantity.formatted}</td>
                 <td className="num mono">{p.value.formatted}</td>
-                <td><MarketChip state={p.marketState} /></td>
+                <td><MarketChip state={p.marketState} allowed={p.allowed} /></td>
               </tr>
             ))}
           </tbody>

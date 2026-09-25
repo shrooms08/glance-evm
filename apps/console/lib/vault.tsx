@@ -191,6 +191,16 @@ export function useHealth() {
   });
 }
 
+/** Live market prices, refreshed as often as the API polls them (15s while the market is open, 5 min closed). */
+export function useLiveQuotes() {
+  return useQuery({
+    queryKey: ["live-quotes"],
+    queryFn: () => api.liveQuotes(),
+    ...readOptions,
+    refetchInterval: (q) => Math.max(15_000, Math.min(q.state.data?.pollMs ?? 15_000, 60_000)),
+  });
+}
+
 /** The agent the Glance API trades from right now (null until /health answers, or with no key loaded). */
 export function useGlanceAgent(): Address | null {
   return glanceAgent(useHealth().data);

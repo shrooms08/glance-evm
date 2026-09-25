@@ -48,6 +48,8 @@ export interface Position {
   quantity: Money;
   value: Money;
   marketState: MarketState;
+  /** The vault allows trading it (false: the vault never added it, e.g. SPY/QQQ before "Add SPY and QQQ"). */
+  allowed?: boolean;
   effectiveCaps: Caps | null;
 }
 
@@ -250,7 +252,25 @@ export interface LinkedBrowser {
   expired: boolean;
 }
 
+/** A live market price (display only): Finnhub, else Yahoo. The vault never trades on it. */
+export interface LiveQuote {
+  price: string;
+  source: "finnhub" | "yahoo";
+  /** The quote's own time (unix seconds). */
+  quotedAt: number;
+  ageSeconds: number;
+  fetchedAt: number;
+}
+
+export interface LiveQuotesView {
+  marketOpen: boolean;
+  pollMs: number;
+  quotes: Array<{ symbol: string; live: LiveQuote | null }>;
+}
+
 export const api = {
+  /** Live market prices for all seven assets (poll every 15s while the market is open). */
+  liveQuotes: () => apiGet<LiveQuotesView>("/quotes/live"),
   vault: (address: string) => apiGet<VaultView>(`/vault/${address}`),
   portfolio: (address: string) => apiGet<PortfolioView>(`/portfolio/${address}`),
   activity: (address: string, limit = 200) => apiGet<ActivityView>(`/vault/${address}/activity?limit=${limit}`),
