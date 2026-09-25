@@ -14,7 +14,7 @@ MAINNET_RPC_URL ?= https://rpc.mainnet.chain.robinhood.com
 KEEPER_ENV = KEEPER_PRIVATE_KEY="$${KEEPER_PRIVATE_KEY:-$$PRIVATE_KEY}" TESTNET_RPC_URL="$(TESTNET_RPC_URL)" MAINNET_RPC_URL="$(MAINNET_RPC_URL)"
 
 help:
-	@echo "make test                  forge fmt check + all offline tests"
+	@echo "make test                  forge fmt check + every test (fork tests too when ROBINHOOD_TESTNET_RPC is set)"
 	@echo "make test-fork             fork tests against real Robinhood Chain testnet and mainnet contracts"
 	@echo "make prices                show the live Chainlink mainnet prices the stand-in feeds will be seeded with"
 	@echo "make dry-run-robinhood     simulate the Robinhood Chain testnet deploy (sends nothing)"
@@ -43,13 +43,22 @@ help:
 build:
 	forge build
 
+# Every test, the fork tests included whenever ROBINHOOD_TESTNET_RPC is set (in the shell or .env). Without it they are
+# left out, and it says so: the count is then 12 lower (163 instead of 175).
 test:
 	forge fmt --check
-	forge test --no-match-path "test/fork/*"
+	@script/test-merge-deployment.sh
+	@if [ -n "$${ROBINHOOD_TESTNET_RPC:-}" ]; then \
+		forge test; \
+	else \
+		forge test --no-match-path "test/fork/*"; \
+		echo "fork tests skipped: set ROBINHOOD_TESTNET_RPC (e.g. $(TESTNET_RPC_URL)) to run them, or make test-fork"; \
+	fi
 
-# Real Paxos USDG, real Stock Tokens and real Chainlink feeds, on forks. Needs network access.
+# Real Paxos USDG, real Stock Tokens and real Chainlink feeds, on forks. Needs network access; uses the public testnet
+# RPC when ROBINHOOD_TESTNET_RPC isn't set.
 test-fork:
-	forge test --match-path "test/fork/*" -vv
+	ROBINHOOD_TESTNET_RPC="$${ROBINHOOD_TESTNET_RPC:-$(TESTNET_RPC_URL)}" forge test --match-path "test/fork/*" -vv
 
 fmt:
 	forge fmt

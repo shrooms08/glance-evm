@@ -23,7 +23,7 @@ depth = 64
 fail_on_revert = false
 
 [rpc_endpoints]
-robinhood_testnet = "https://rpc.testnet.chain.robinhood.com"
+robinhood_testnet = "${ROBINHOOD_TESTNET_RPC}"
 robinhood_mainnet = "https://rpc.mainnet.chain.robinhood.com"
 arbitrum_sepolia = "https://sepolia-rollup.arbitrum.io/rpc"
 

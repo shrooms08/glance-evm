@@ -32,6 +32,10 @@ echo "verify     Blockscout at $VERIFIER_URL"
 if [[ "$DRY_RUN" == "--dry-run" ]]; then
   echo "== Dry run (simulation only, nothing is sent)"
   (set -a; eval "$prices"; set +a; forge script script/Deploy.s.sol --rpc-url "$RPC" --sender "$deployer")
+  # The preview is what the record would become: the deploy's own keys over the existing record, the rest kept.
+  if [[ -f "deployments/$CHAIN_ID.json" ]]; then
+    script/merge-deployment.sh "deployments/$CHAIN_ID.json" "deployments/$CHAIN_ID.dry-run.json" "deployments/$CHAIN_ID.dry-run.json"
+  fi
   exit 0
 fi
 
@@ -44,4 +48,9 @@ fi
 (set -a; eval "$prices"; set +a
  forge script script/Deploy.s.sol --rpc-url "$RPC" --private-key "$PRIVATE_KEY" --broadcast \
    --verify --verifier blockscout --verifier-url "$VERIFIER_URL")
+# Deploy.s.sol writes only its own keys; merge them in, keeping factoryV2, the ETF stand-ins and anything else.
+if [[ -f "deployments/$CHAIN_ID.deploy-output.json" ]]; then
+  script/merge-deployment.sh "deployments/$CHAIN_ID.json" "deployments/$CHAIN_ID.deploy-output.json" "deployments/$CHAIN_ID.json"
+  rm "deployments/$CHAIN_ID.deploy-output.json"
+fi
 echo "== Done. Addresses: deployments/$CHAIN_ID.json"

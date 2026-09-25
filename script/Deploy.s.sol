@@ -427,8 +427,14 @@ contract Deploy is Script {
         }
         string memory json = vm.serializeString(root, "stocks", _stocksJson());
 
+        // Only the keys this script owns are written. When a record already exists, it goes to a separate file that
+        // script/merge-deployment.sh merges into the record (script/deploy.sh does it), so every key this script doesn't
+        // own (factoryV2, the ETF stand-ins under stocks.*, anything added later) is kept.
         bool broadcast = vm.isContext(VmSafe.ForgeContext.ScriptBroadcast);
-        string memory path = string.concat("deployments/", vm.toString(chainId), broadcast ? ".json" : ".dry-run.json");
+        string memory base = string.concat("deployments/", vm.toString(chainId));
+        string memory path = !broadcast
+            ? string.concat(base, ".dry-run.json")
+            : bytes(_existing).length == 0 ? string.concat(base, ".json") : string.concat(base, ".deploy-output.json");
         vm.writeJson(json, path);
         console2.log("wrote", path);
     }
@@ -486,37 +492,6 @@ contract Deploy is Script {
             );
             out = vm.serializeString("stocks", _skipped[i], entry);
         }
-        out = _carryEtfStandIns(out);
-    }
-
-    /// @dev The ETF stand-ins (script/DeployEtfStandIns.s.sol) aren't this script's: a re-deploy keeps their record as is.
-    function _carryEtfStandIns(string memory out) internal returns (string memory) {
-        string[2] memory etfs = ["SPY", "QQQ"];
-        for (uint256 i; i < etfs.length; ++i) {
-            string memory p = string.concat(".stocks.", etfs[i]);
-            if (bytes(_existing).length == 0 || !vm.keyExistsJson(_existing, string.concat(p, ".etfStandIn"))) {
-                continue;
-            }
-            string memory k = string.concat("etf-", etfs[i]);
-            string[4] memory addrs = ["token", "mainnetToken", "feed", "mainnetFeed"];
-            for (uint256 j; j < addrs.length; ++j) {
-                vm.serializeAddress(k, addrs[j], vm.parseJsonAddress(_existing, string.concat(p, ".", addrs[j])));
-            }
-            string[4] memory strs = ["tokenSource", "feedSource", "priceSource", "priceSourceKind"];
-            for (uint256 j; j < strs.length; ++j) {
-                vm.serializeString(k, strs[j], vm.parseJsonString(_existing, string.concat(p, ".", strs[j])));
-            }
-            vm.serializeBool(k, "skipped", false);
-            vm.serializeBool(k, "etfStandIn", true);
-            vm.serializeBool(k, "tokenReal", false);
-            vm.serializeBool(k, "feedReal", false);
-            vm.serializeUint(k, "tokenDecimals", vm.parseJsonUint(_existing, string.concat(p, ".tokenDecimals")));
-            vm.serializeUint(k, "priceDecimals", vm.parseJsonUint(_existing, string.concat(p, ".priceDecimals")));
-            out = vm.serializeString(
-                "stocks", etfs[i], vm.serializeInt(k, "price", vm.parseJsonInt(_existing, string.concat(p, ".price")))
-            );
-        }
-        return out;
     }
 
     function _stockJson(Stock memory s) internal returns (string memory) {

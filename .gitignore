@@ -14,6 +14,9 @@ broadcast/
 # Local and dry-run deployment records (real testnet records in deployments/ are committed)
 deployments/31337.json
 deployments/*.dry-run.json
+# Written by the deploy scripts, merged into the record by script/deploy.sh / deploy-etf-standins.sh, then removed
+deployments/*.deploy-output.json
+deployments/*.etf-standins.json
 
 # Node workspace
 node_modules/
