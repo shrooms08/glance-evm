@@ -114,3 +114,18 @@ test("gated setup journey: install, setup card, setup completes, ready, hover, b
   await expect(article.getByRole("link", { name: /tx 0xe2e0/ })).toHaveAttribute("href", `https://explorer.testnet.chain.robinhood.com/tx/${FAKE_TX}`);
   expect(api.trades).toEqual([{ vault: USER_VAULT, symbol: "TSLA", side: "buy", amount: "10" }]);
 });
+
+test("console routes: the landing page at '/', Get Glance to /install, the old link URL to /dashboard", async () => {
+  const page = await context.newPage();
+  await page.goto(`${CONSOLE}/`);
+  await expect(page.getByRole("heading", { level: 1, name: "Talk to the stocks you read about." })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("link", { name: "Open console" }).first()).toHaveAttribute("href", "/dashboard");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("link", { name: "Get Glance" }).first().click();
+  await expect(page).toHaveURL(`${CONSOLE}/install`);
+
+  // What Link Glance opened before the Dashboard moved (and what an installed v0.1.0 still opens).
+  await page.goto(`${CONSOLE}/?glance=link&vault=${USER_VAULT}`);
+  await expect(page).toHaveURL(`${CONSOLE}/dashboard?glance=link&vault=${USER_VAULT}`);
+  await page.close();
+});

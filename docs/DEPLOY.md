@@ -96,6 +96,7 @@ Before you start:
 | `NEXT_PUBLIC_GLANCE_API_URL` | the API | your Railway URL (step 1.6) |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect for mobile wallets (public by design) | cloud.reown.com → your project → Project ID |
 | `NEXT_PUBLIC_EXTENSION_DOWNLOAD_URL` | optional; default `/downloads/glance-extension-latest.zip`, which the console serves itself (`pnpm release:extension` writes it) | leave unset |
+| `NEXT_PUBLIC_DEMO_VIDEO_URL` | optional; a YouTube or Loom link, embedded in the landing page's demo section (a placeholder shows when unset) | your video's share link |
 | `NEXT_PUBLIC_EXPLORER_URL` | optional; default: the Robinhood Chain testnet explorer | leave unset |
 | `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_RPC_FALLBACK_URLS` | optional; **leave unset**: the browser uses the public RPC. Never a keyed URL | — |
 

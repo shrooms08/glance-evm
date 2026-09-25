@@ -33,7 +33,7 @@ export function VaultSwitcher() {
   if (menu.kind === "none") return null;
   if (menu.kind === "single") {
     return (
-      <Link className="switcher-single" href={href("/", null)} aria-label={`Your vault ${menu.option.address}`}>
+      <Link className="switcher-single" href={href("/dashboard", null)} aria-label={`Your vault ${menu.option.address}`}>
         <span className="switcher-label">Your vault</span>
         <span className="mono switcher-address">{shortAddress(menu.option.address)}</span>
       </Link>

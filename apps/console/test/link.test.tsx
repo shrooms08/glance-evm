@@ -9,7 +9,7 @@ import type { Address } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authorization, ONLY_OWNER } from "@glance/core/session";
 
-import { LinkScreen } from "../app/link/page";
+import { LinkScreen } from "../app/(console)/link/page";
 import { LinkedBrowsersCard } from "../components/LinkedBrowsers";
 import { parseLinkParams } from "../lib/link";
 

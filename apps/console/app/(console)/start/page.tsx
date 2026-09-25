@@ -333,7 +333,7 @@ export default function StartPage() {
             showFlavourChoice={dev && !s?.vaultFlavour}
             onFlavour={setFlavourKey}
             vault={s?.snapshot.vault ?? null}
-            vaultHref={s?.snapshot.vault ? href("/", s.snapshot.vault) : undefined}
+            vaultHref={s?.snapshot.vault ? href("/dashboard", s.snapshot.vault) : undefined}
             vaultBalance={s?.snapshot.vaultUsdgBalance ?? 0n}
             decimals={decimals}
             depositHash={depositHash}

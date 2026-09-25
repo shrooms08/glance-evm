@@ -14,7 +14,7 @@ import { Mark } from "./Mark";
 import { VaultSwitcher } from "./VaultSwitcher";
 
 const NAV = [
-  { path: "/", label: "Dashboard" },
+  { path: "/dashboard", label: "Dashboard" },
   { path: "/limits", label: "Limits" },
   { path: "/activity", label: "Activity" },
   { path: "/prices", label: "Prices" },
@@ -32,7 +32,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="shell">
       <header className="top">
         <div className="top-row">
-          <Link href={href("/")} className="brand" aria-label="Glance console home">
+          <Link href={href("/dashboard")} className="brand" aria-label="Glance console home">
             <Mark size={28} />
             <span className="brand-name">Glance</span>
             <span className="brand-sub">console</span>

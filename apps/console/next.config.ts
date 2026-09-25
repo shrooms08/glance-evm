@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
 import { assertPublicEnvSafe } from "./publicEnvGuard";
+import { DASHBOARD_REDIRECTS } from "./lib/routes";
 
 // Nothing secret may reach the browser bundle (an RPC URL with a key, a variable named like a secret).
 assertPublicEnvSafe();
@@ -23,6 +24,10 @@ const config: NextConfig = {
   // The end-to-end check builds into its own folder, so it never touches a running dev server's .next.
   distDir: process.env.NEXT_DIST_DIR || ".next",
   poweredByHeader: false,
+  // "/" is the public landing page. The Dashboard lives at /dashboard; the URLs that used to open it at "/" (the
+  // extension's link handshake "/?glance=link&vault=...", a vault picked with "?vault=...", developer mode "?dev=1")
+  // still land there, query and all. See lib/routes.ts and test/routes.test.ts.
+  redirects: async () => DASHBOARD_REDIRECTS,
 };
 
 export default config;

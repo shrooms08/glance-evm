@@ -28,7 +28,8 @@ export function consoleOrigins(value: string | undefined = DEFAULT_CONSOLE_ORIGI
 export function consolePageUrl(base: string, page: "start" | "link", vault?: string): string {
   const root = base.replace(/\/+$/, "");
   if (page === "start") return `${root}/start`;
+  // The Dashboard (the console's "/" is its public landing page; it redirects "/?glance=link..." here too).
   const q = new URLSearchParams({ glance: "link" });
   if (vault) q.set("vault", vault);
-  return `${root}/?${q.toString()}`;
+  return `${root}/dashboard?${q.toString()}`;
 }

@@ -115,7 +115,7 @@ describe("the console handshake", () => {
 
   it("console pages: Get started, and the Dashboard's link card for a vault", () => {
     expect(consolePageUrl("http://localhost:3000/", "start")).toBe("http://localhost:3000/start");
-    expect(consolePageUrl("http://localhost:3000", "link", VAULT)).toBe(`http://localhost:3000/?glance=link&vault=${VAULT}`);
+    expect(consolePageUrl("http://localhost:3000", "link", VAULT)).toBe(`http://localhost:3000/dashboard?glance=link&vault=${VAULT}`);
   });
 });
 

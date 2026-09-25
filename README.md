@@ -8,7 +8,8 @@ is enforced by that vault's contract, not by Glance.
 
 ## Links
 
-- Console: https://glance-evm-console.vercel.app
+- Website: https://glance-evm-console.vercel.app
+- Console: https://glance-evm-console.vercel.app/dashboard
 - Install the extension: https://glance-evm-console.vercel.app/install
 - Demo video: link coming
 - API health: https://api-production-adb0.up.railway.app/health
@@ -275,11 +276,12 @@ Each app reads its own `.env` (copy its `.env.example`). Names only; the values 
 | `apps/keeper` | `KEEPER_PRIVATE_KEY`, `TESTNET_RPC_URL`, `MAINNET_RPC_URL` | the keeper on its own |
 | `apps/console` | `NEXT_PUBLIC_GLANCE_API_URL` | the API the console reads |
 | `apps/console` | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect for mobile wallets |
+| `apps/console` | `NEXT_PUBLIC_DEMO_VIDEO_URL` | optional: a YouTube or Loom link embedded on the landing page |
 | repo root | `PRIVATE_KEY` | your testnet wallet, for deploying and `make create-vault` |
 
 ```sh
 pnpm --filter api dev           # the API on http://localhost:8790
-pnpm --filter console dev       # the console on http://localhost:3000
+pnpm --filter console dev       # the site on http://localhost:3000 (the console at /dashboard)
 pnpm --filter extension build   # then load apps/extension/.output/chrome-mv3 unpacked
 make keeper-watch               # the feed keeper on its own, if the API isn't running it
 

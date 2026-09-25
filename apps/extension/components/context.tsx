@@ -56,7 +56,7 @@ export interface Glance {
   setOrb(next: Partial<OrbLine> & { state: OrbState }): void;
   refreshVault(): Promise<void>;
   openSettings(): void;
-  /** Opens a console page in a new tab ("" for the Dashboard, "/start" for Get started). */
+  /** Opens a console page in a new tab (the Dashboard by default, "/start" for Get started). */
   openConsole(path?: string): void;
   vaultSource: VaultSource | null;
   /** The keyboard shortcuts as the browser has them now (browser commands), or null until known. */
@@ -286,7 +286,7 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       setOrb,
       refreshVault,
       openSettings: () => void send({ kind: "open:settings" }).catch(() => {}),
-      openConsole: (path = "") => window.open(`${consoleLink.replace(/\/+$/, "")}${path}`, "_blank", "noopener"),
+      openConsole: (path = "/dashboard") => window.open(`${consoleLink.replace(/\/+$/, "")}${path}`, "_blank", "noopener"),
       vaultSource: source ?? null,
       shortcuts,
       relink: relinkHint(link, vaultAddr, Math.floor(Date.now() / 1000)),
