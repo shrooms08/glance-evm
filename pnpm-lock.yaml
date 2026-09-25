@@ -25,6 +25,9 @@ importers:
       hono:
         specifier: ^4.13.8
         version: 4.13.8
+      keeper:
+        specifier: workspace:*
+        version: link:../keeper
       undici:
         specifier: ^8.11.0
         version: 8.11.0
@@ -200,13 +203,13 @@ importers:
       lightweight-charts:
         specifier: 5.2.1
         version: 5.2.1
+      viem:
+        specifier: ^2.56.8
+        version: 2.56.8(bufferutil@4.1.0)(typescript@7.0.2)(utf-8-validate@5.0.10)(zod@4.6.5)
     devDependencies:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
-      viem:
-        specifier: ^2.56.8
-        version: 2.56.8(bufferutil@4.1.0)(typescript@7.0.2)(utf-8-validate@5.0.10)(zod@4.6.5)
 
   packages/design:
     devDependencies:
@@ -5087,7 +5090,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
       '@types/debug': 4.1.13
-      debug: 4.3.4
+      debug: 4.4.3
       pony-cause: 2.1.11
       semver: 7.8.5
       uuid: 9.0.1
@@ -8176,7 +8179,7 @@ snapshots:
   ox@0.6.7(typescript@7.0.2)(zod@4.6.5):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0

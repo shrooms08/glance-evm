@@ -985,6 +985,8 @@ export async function healthView(ctx: AppContext) {
     keeper: {
       // The local pause file. The scheduled GitHub Actions keeper is paused by committing this file.
       pausedLocally: existsSync(ctx.config.KEEPER_PAUSE_FILE),
+      // KEEPER_IN_PROCESS=1: this API runs the keeper (and holds its lock right now).
+      inProcess: ctx.keeperInProcess ? ctx.keeperInProcess.running() : false,
       lastWriteAt: lastKeeperWrite,
     },
     feeds,

@@ -2,7 +2,7 @@
  * Public quote for stocks with no Chainlink feed (NFLX). Uses the quote's own market timestamp as updatedAt, for the
  * same reason the mainnet mirror copies updatedAt: outside market hours the quote stops moving, and so does our feed.
  */
-import type { Round } from "./mirror.js";
+import type { Round } from "./mirror.ts";
 
 const YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart";
 

@@ -3,8 +3,8 @@
  */
 import type { Address, Hex } from "viem";
 
-import { planMirror, type Plan, type Round } from "./mirror.js";
-import type { PriceSource } from "./sources.js";
+import { planMirror, type Plan, type Round } from "./mirror.ts";
+import type { PriceSource } from "./sources.ts";
 
 export interface KeeperSymbol {
   symbol: string;

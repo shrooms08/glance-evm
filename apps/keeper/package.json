@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22"
   },
+  "exports": {
+    "./service": "./src/service.ts"
+  },
   "scripts": {
     "once": "tsx --env-file-if-exists=.env src/index.ts --once",
     "once:ci": "tsx src/index.ts --once",

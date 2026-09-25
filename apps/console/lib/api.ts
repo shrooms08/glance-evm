@@ -132,7 +132,7 @@ export interface HealthView {
   ok: boolean;
   chainId: number;
   blockNumber: string;
-  /** Development only (or with the admin token): a production API shows the public view without it. */
+  /** The API's agent: its address and whether the key is loaded (public, production included). */
   agent?: { address: Address | null; keyLoaded: boolean };
   keeper: { pausedLocally?: boolean; lastWriteAt: number | null };
   feeds: FeedStatus[];

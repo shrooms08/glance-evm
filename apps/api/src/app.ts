@@ -132,6 +132,9 @@ export function publicHealth(h: Awaited<ReturnType<typeof healthView>>, commit?:
     expectedChainId: h.expectedChainId,
     blockNumber: h.blockNumber,
     versions: { api: API_VERSION, commit: commit ?? null },
+    // The agent Glance trades from (an address, public on chain anyway): the console compares it with each vault's
+    // agent to offer "Approve new Glance agent" after a key rotation. Its balance stays in the full view only.
+    agent: { address: h.agent?.keyLoaded ? h.agent.address : null, keyLoaded: Boolean(h.agent?.keyLoaded) },
     keeper: { lastWriteAt: h.keeper.lastWriteAt },
     feeds: h.feeds.map((f) => ({
       symbol: f.symbol,
@@ -251,6 +254,9 @@ export function createServerApp(ctx: AppContext) {
   });
 
   // In production, the public view only (no agent balance, voice decisions or budgets) unless ?admin=<ADMIN_TOKEN>.
+  // Liveness for the host's health check (Railway): answers at once, no chain calls, nothing about the setup.
+  app.get("/health/live", (c) => c.json({ ok: true }));
+
   app.get("/health", async (c) => {
     const full = { ...(await healthView(ctx)), ...(ctx.faucet ? { faucet: await ctx.faucet.status().catch(() => null) } : {}) };
     return send(c, config.NODE_ENV === "production" && !isAdmin(config.ADMIN_TOKEN, c.req.query("admin")) ? publicHealth(full, config.GIT_COMMIT) : full);

@@ -20,7 +20,8 @@ import { formatDuration, formatUsd, formatWhen, shortAddress, toDecimalString } 
 import { parseLimits, sameLimits, type LimitsForm } from "@/lib/limits";
 import { useNow } from "@/lib/useNow";
 import { useOwnerTx, type TxRequest } from "@/lib/useOwnerTx";
-import { useVaultChain, type VaultChainState } from "@/lib/vault";
+import { useGlanceAgent, useVaultChain, type VaultChainState } from "@/lib/vault";
+import { NewAgentCard } from "@/components/NewAgentCard";
 
 const vaultAbi = glanceVaultAbi as Abi;
 
@@ -30,6 +31,7 @@ export default function LimitsPage() {
 
 function LimitsFor({ vault }: { vault: Address }) {
   const chain = useVaultChain(vault);
+  const apiAgent = useGlanceAgent();
   const gate = useGate(chain.data?.owner);
   const reconnect = useReconnect();
   const tx = useOwnerTx(chain.data?.usdgDecimals ?? 6);
@@ -64,8 +66,10 @@ function LimitsFor({ vault }: { vault: Address }) {
           <div className="grid grid-2">
             <Controls v={chain.data} send={send} />
             {/* Keyed so a new agent or a changed gate starts the revoke confirmation over. */}
-            <AgentControls key={`${chain.data.agent}-${gate.reason}`} v={chain.data} vault={vault} send={send} onError={tx.fail} />
+            <AgentControls key={`${chain.data.agent}-${gate.reason}`} v={chain.data} vault={vault} send={send} onError={tx.fail} apiAgent={apiAgent} />
           </div>
+          {/* The API's agent key was rotated: one signature moves this vault to it. */}
+          <NewAgentCard vaultAgent={chain.data.agent} apiAgent={apiAgent} approve={(agent) => authorise(agent, "Approve new Glance agent for 29 days", send, tx.fail)} />
           <EtfSection vault={vault} send={send} />
           {/* Keyed by the vault's limits, so the form starts from the new values after a change is mined. */}
           <LimitsEditor
@@ -80,6 +84,19 @@ function LimitsFor({ vault }: { vault: Address }) {
 }
 
 type Send = (req: Omit<TxRequest, "address" | "abi">) => Promise<boolean>;
+
+/** setAgent(agent, 29 days), the expiry counted from chain time (never the device clock), 10 minutes under the cap. */
+async function authorise(agent: Address, label: string, send: Send, onError: (label: string, err: unknown) => void): Promise<boolean> {
+  let expiry: bigint;
+  try {
+    const block = await publicClient.getBlock();
+    expiry = safeAgentExpiry(Number(block.timestamp), VAULT_SETUP.agentTtlSeconds);
+  } catch (err) {
+    onError(label, err); // shown and logged, never an unhandled rejection
+    return false;
+  }
+  return send({ label, functionName: "setAgent", args: [agent, expiry] });
+}
 
 /** "Add SPY and QQQ to your vault": what the vault allows now, read from its tokenConfig (nothing when not deployed). */
 function EtfSection({ vault, send }: { vault: Address; send: Send }) {
@@ -127,27 +144,16 @@ function Controls({ v, send }: { v: VaultChainState; send: Send }) {
   );
 }
 
-function AgentControls({ v, vault, send, onError }: { v: VaultChainState; vault: Address; send: Send; onError(label: string, err: unknown): void }) {
+function AgentControls({ v, vault, send, onError, apiAgent }: { v: VaultChainState; vault: Address; send: Send; onError(label: string, err: unknown): void; apiAgent: Address | null }) {
   const [confirming, setConfirming] = useState(false);
   const now = useNow();
   const hasAgent = !isAddressEqual(v.agent, zeroAddress);
   const active = hasAgent && now < v.agentExpiry;
   const demo = demoVaults.find((d) => isAddressEqual(d.address, vault));
-  const agentToAuthorise = hasAgent ? v.agent : (demo?.agent ?? demoVaults[0]!.agent);
+  // The API's live agent when it has said (after a key rotation, renewing the old one would be pointless).
+  const agentToAuthorise = apiAgent ?? (hasAgent ? v.agent : (demo?.agent ?? demoVaults[0]!.agent));
 
-  const renew = async () => {
-    const label = hasAgent ? "Renew the agent for 29 days" : "Authorise the Glance agent for 29 days";
-    let expiry: bigint;
-    try {
-      // The expiry counts from chain time, never the device clock (and stays 10 minutes under the 30-day cap).
-      const block = await publicClient.getBlock();
-      expiry = safeAgentExpiry(Number(block.timestamp), VAULT_SETUP.agentTtlSeconds);
-    } catch (err) {
-      onError(label, err); // shown and logged, never an unhandled rejection
-      return;
-    }
-    await send({ label, functionName: "setAgent", args: [agentToAuthorise, expiry] });
-  };
+  const renew = () => authorise(agentToAuthorise, hasAgent ? "Renew the agent for 29 days" : "Authorise the Glance agent for 29 days", send, onError);
 
   return (
     <section className="card danger-zone" aria-labelledby="agent-h">

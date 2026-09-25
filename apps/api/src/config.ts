@@ -1,7 +1,7 @@
 /**
  * Environment configuration, validated once at startup. See .env.example for every variable.
  */
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { z } from "zod";
 
 const hexKey = /^0x[0-9a-fA-F]{64}$/;
@@ -115,8 +115,29 @@ const envSchema = z.object({
   /** Per-IP limits for the new read endpoints. */
   WHY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(20),
   PORTFOLIO_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),
-  /** Where RESOLVER_CACHE_FILE defaults to, relative to this package. */
+  /**
+   * Hosting: one directory for everything the API keeps (voice cache and pre-recorded lines, daily counters, the LLM
+   * budget and name cache, sessions, the faucet ledger, chart rounds, the refusal log, the keeper's lock and pause
+   * file). Mount a persistent volume here. Unset: apps/api/.cache as before.
+   */
+  DATA_DIR: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Where RESOLVER_CACHE_FILE defaults to (DATA_DIR when that is set), relative to this package. */
   LLM_CACHE_DIR: z.string().default(resolve(import.meta.dirname, "../.cache")),
+  /**
+   * "1": the API runs the feed keeper itself (mirroring mainnet feeds onto the testnet stand-ins every
+   * KEEPER_INTERVAL_MS), one instance at a time (a lock in DATA_DIR). Needs KEEPER_PRIVATE_KEY (the feeds' owner).
+   */
+  KEEPER_IN_PROCESS: z
+    .string()
+    .optional()
+    .transform((v) => v === "1"),
+  KEEPER_INTERVAL_MS: z.coerce.number().int().min(15_000).default(30_000),
+  /** The testnet feeds' owner key (not the agent key: two senders on one key would fight over nonces). */
+  KEEPER_PRIVATE_KEY: z
+    .string()
+    .optional()
+    .or(z.literal("").transform(() => undefined))
+    .refine((v) => v === undefined || /^0x[0-9a-fA-F]{64}$/.test(v), "KEEPER_PRIVATE_KEY must be 0x followed by 64 hex characters"),
   /** "fake": simulated transcription and speech, for testing the voice path without keys (refused in production). */
   VOICE_PROVIDERS: z.enum(["auto", "fake"]).default("auto"),
   VOICE_FAKE_TRANSCRIPT: z.string().optional(),
@@ -236,5 +257,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const openDemoVaults = parsed.data.OPEN_DEMO_VAULTS.split(",")
     .map((a) => a.trim())
     .filter(Boolean) as `0x${string}`[];
-  return { ...parsed.data, corsOrigins, openDemoVaults };
+  // DATA_DIR moves every persisted file under one directory (unless a path was set on its own).
+  const data = parsed.data.DATA_DIR;
+  const dataPaths = data
+    ? {
+        LLM_CACHE_DIR: env.LLM_CACHE_DIR ? parsed.data.LLM_CACHE_DIR : data,
+        REFUSAL_LOG_FILE: parsed.data.REFUSAL_LOG_FILE ?? join(data, "refusals.jsonl"),
+        KEEPER_PAUSE_FILE: env.KEEPER_PAUSE_FILE ? parsed.data.KEEPER_PAUSE_FILE : join(data, "keeper.paused"),
+      }
+    : {};
+  return { ...parsed.data, ...dataPaths, corsOrigins, openDemoVaults };
 }

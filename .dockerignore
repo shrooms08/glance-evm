@@ -1,0 +1,18 @@
+# Only what apps/api/Dockerfile copies matters; never send secrets or build output to the builder.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/node_modules
+**/dist
+**/.cache
+**/.next
+**/.output*
+.git
+apps/api/data/refusals.jsonl
+apps/console
+apps/extension
+broadcast
+cache
+out
+lib

@@ -1,5 +1,8 @@
 import { defineConfig } from "wxt";
 
+/** A production build's hosted API (build:prod sets WXT_API_URL): its origin joins the host permissions. */
+const apiOrigin = process.env.WXT_API_URL ? new URL(process.env.WXT_API_URL).origin : null;
+
 /**
  * Manifest V3 for Chrome, Brave and Edge.
  * The fixed `key` gives every install the same extension ID (gmcdcaoneeohbacbnafjdnkkoojgnogl), from any folder, any
@@ -20,7 +23,7 @@ export default defineConfig({
     key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzSKiRVmB29xrSL3ltvB7VAxQqYI8vkiwzSVmL/lwl1SlR8kC37I2XNaKRmmmbNvbIQ08isueZYCX9ZoPhAaaVg2PEcOmMFzO8MKr59voqpNXU0uY2P7WcgydVtv77QQ5QL12qMJ0qULmJszw8zxQKEZV3TJNc1yUidCVWdBldaD1cJU3Q8jICvxmpJfdf+jyp+LyXl91Fa0xl8rbRas57CKVBRgK5p3jHES61QE9DjTZZJJL83NauLUYFe350OykV0j1UUizqbNYkiq5IzQKfxWlPWsFLw8Wo7I58skKcokuu0DiGNl4yWZeIzzb3PQ6mAsh9Bt7MAmskRwcG9MC0wIDAQAB",
     minimum_chrome_version: "116",
     permissions: ["storage", "sidePanel", "offscreen"],
-    host_permissions: ["http://localhost/*", "http://127.0.0.1/*"],
+    host_permissions: ["http://localhost/*", "http://127.0.0.1/*", ...(apiOrigin ? [`${apiOrigin}/*`] : [])],
     optional_host_permissions: ["https://*/*", "http://*/*"],
     action: { default_title: "Open Glance in the side panel" },
     // ⌥G is a browser command (changeable in the browser's keyboard shortcuts for extensions): one press, and it grants

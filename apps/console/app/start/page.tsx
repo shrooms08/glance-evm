@@ -26,6 +26,8 @@ import { api } from "@/lib/api";
 import { GlanceStep } from "@/components/GlanceStep";
 import { FundingStep, PAXOS_FAUCET, PUBLIC_GAS_FAUCET, type FundSource, type SendState } from "@/components/FundingStep";
 import { nextAutoAction, promptPlan, type AutoAction, type AutoState } from "@/lib/autoSetup";
+import { withGlanceAgent } from "@/lib/glanceAgent";
+import { useGlanceAgent } from "@/lib/vault";
 
 type RunMode = "setup" | "add-more";
 
@@ -47,13 +49,15 @@ export default function StartPage() {
   const dev = useDevMode();
   const [chosenKey, setFlavourKey] = useState<DemoVault["key"]>(primaryVault.key);
   const flavourKey = setupFlavourKey(dev, chosenKey);
-  const flavour = demoVaults.find((d) => d.key === flavourKey)!;
+  // The agent a new vault authorises: the one the Glance API trades from now (its key may have been rotated).
+  const apiAgent = useGlanceAgent();
+  const flavour = withGlanceAgent(demoVaults.find((d) => d.key === flavourKey)!, apiAgent);
   const q = useStartState(address, flavour);
   const ext = useGlanceExtension();
   const hello = ext.state.status === "present" ? ext.state.hello : null;
   const onChain = chainId === CHAIN_ID;
   const s = q.data;
-  const effective = s?.vaultFlavour ?? flavour;
+  const effective = withGlanceAgent(s?.vaultFlavour ?? flavour, apiAgent);
   const decimals = s?.usdgDecimals[effective.key] ?? 6;
   const tx = useOwnerTx(decimals);
   const queryClient = useQueryClient();
@@ -225,7 +229,7 @@ export default function StartPage() {
         createDeposits: amount > 0n,
         read: async () => {
           const fresh = await readStartState(owner, flavour);
-          const f = fresh.vaultFlavour ?? flavour;
+          const f = withGlanceAgent(fresh.vaultFlavour ?? flavour, apiAgent);
           const dec = fresh.usdgDecimals[f.key];
           return {
             snapshot: fresh.snapshot,

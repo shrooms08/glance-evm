@@ -9,6 +9,7 @@
     "dev:brave": "wxt --browser brave",
     "build": "wxt build",
     "zip": "wxt zip",
+    "build:prod": "node scripts/build-prod.ts",
     "e2e": "node e2e/run.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

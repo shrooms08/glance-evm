@@ -52,6 +52,8 @@ export interface AppContext {
   llmModels: { resolver: string; intent: string; why: string; other: string };
   /** The common lines pre-recorded in the configured voice (src/voice/prerecorded.ts), when there's a speech provider. */
   prerecorded: PrerecordedLines | null;
+  /** The feed keeper running in this process (KEEPER_IN_PROCESS=1), for /health; null otherwise. */
+  keeperInProcess?: { running(): boolean } | null;
   /** "Show me", teach and guide (POST /showme), when ANTHROPIC_API_KEY is set. */
   showMe: ShowMe | null;
   /** Reads a page chart's axis labels from a screenshot crop (the chart lens), or null without a key. */

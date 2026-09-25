@@ -2,8 +2,10 @@
 # TestPriceFeed stand-ins on Robinhood Chain TESTNET. Copying updatedAt, never "now", is what makes the stand-ins fresh
 # during market hours and frozen at weekends, exactly like the real feeds.
 #
-# Schedule (UTC): every 15 minutes Monday to Friday, hourly on Saturday and Sunday (the feeds barely move then).
-# Runs never overlap (concurrency below): two runs sending from the same key at once would fight over nonces.
+# MANUAL ONLY: the hosted API on Railway runs the keeper now (KEEPER_IN_PROCESS=1, every 30 seconds, one instance
+# at a time). This workflow no longer runs on a schedule: two keepers on one key would fight over nonces. Run it by
+# hand (Actions > Feed keeper > Run workflow) only while the Railway keeper is stopped or paused.
+# Runs never overlap (concurrency below).
 #
 # Required repository secrets (Settings > Secrets and variables > Actions):
 #   KEEPER_PRIVATE_KEY          owner of the testnet feeds. A DISPOSABLE TESTNET KEY: never put a key that holds real
@@ -14,13 +16,9 @@
 #
 # Pause: commit and push a file named keeper.paused at the repo root (make keeper-pause creates it locally). While it
 # exists this workflow does nothing, so a feed frozen on purpose for the weekend demo is not overwritten.
-# GitHub may delay or skip scheduled runs under load.
 name: Feed keeper
 
 on:
-  schedule:
-    - cron: "*/15 * * * 1-5" # Monday to Friday, every 15 minutes
-    - cron: "0 * * * 0,6" # Saturday and Sunday, hourly
   workflow_dispatch:
 
 permissions:

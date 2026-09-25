@@ -3,6 +3,11 @@ import { fileURLToPath } from "node:url";
 
 import type { NextConfig } from "next";
 
+import { assertPublicEnvSafe } from "./publicEnvGuard";
+
+// Nothing secret may reach the browser bundle (an RPC URL with a key, a variable named like a secret).
+assertPublicEnvSafe();
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 const config: NextConfig = {

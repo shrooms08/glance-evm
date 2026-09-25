@@ -13,7 +13,7 @@
  */
 import type { Address, Hex } from "viem";
 
-import type { Round } from "./mirror.js";
+import type { Round } from "./mirror.ts";
 
 /** One RPC endpoint's view of the keeper account: its pending nonce, a send with a given nonce, and a receipt. */
 export interface ChainIO {
@@ -60,11 +60,14 @@ export class NonceSender {
   private readonly retries: number;
   private readonly retryDelayMs: number;
 
-  constructor(
-    private readonly primary: ChainIO,
-    private readonly fallback: ChainIO | null,
-    private readonly o: SenderOptions,
-  ) {
+  private readonly primary: ChainIO;
+  private readonly fallback: ChainIO | null;
+  private readonly o: SenderOptions;
+
+  constructor(primary: ChainIO, fallback: ChainIO | null, o: SenderOptions) {
+    this.primary = primary;
+    this.fallback = fallback;
+    this.o = o;
     this.io = primary;
     this.sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.retries = o.retries ?? MAX_RETRIES;

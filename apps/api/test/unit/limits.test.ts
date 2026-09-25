@@ -200,12 +200,15 @@ describe("/health in production", () => {
     demoVaults: {},
   } as unknown as Parameters<typeof publicHealth>[0];
 
-  it("shows only ok, chain, block, versions and the feeds' ages", () => {
+  it("shows only ok, chain, block, versions, the agent's address and the feeds' ages", () => {
     const h = publicHealth(full, "abc1234");
-    expect(Object.keys(h).sort()).toEqual(["blockNumber", "chainId", "expectedChainId", "feeds", "keeper", "ok", "versions"]);
+    expect(Object.keys(h).sort()).toEqual(["agent", "blockNumber", "chainId", "expectedChainId", "feeds", "keeper", "ok", "versions"]);
     expect(h.versions).toEqual({ api: "0.1.0", commit: "abc1234" });
+    // The agent's address is public on chain; the console needs it to offer "Approve new Glance agent" after a rotation.
+    expect(h.agent).toEqual({ address: "0xa7078432F7Aa4db99F88cB181049872d1ea697a9", keyLoaded: true });
+    expect(publicHealth({ ...full, agent: { ...full.agent, keyLoaded: false } } as typeof full).agent).toEqual({ address: null, keyLoaded: false });
     const text = JSON.stringify(h);
-    for (const secret of ["ethBalance", "agent", "llm", "decisions", "usedToday", "pausedLocally"]) expect(text).not.toContain(secret);
+    for (const secret of ["ethBalance", "matchesDemoVault", "llm", "decisions", "usedToday", "pausedLocally"]) expect(text).not.toContain(secret);
     expect(h.feeds[0]).toMatchObject({ symbol: "TSLA", ageSeconds: 60, marketState: "OPEN" });
   });
 

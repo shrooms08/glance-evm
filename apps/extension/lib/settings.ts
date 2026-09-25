@@ -7,8 +7,13 @@ import { sound } from "./tokens";
 
 export type Mode = "floating" | "docked";
 
-export const DEFAULT_API_URL = "http://localhost:8790";
-export const DEFAULT_CONSOLE_URL = "http://localhost:3000";
+/**
+ * The Glance API and console: localhost for development; a production build bakes in the hosted ones
+ * (API_URL=... CONSOLE_URL=... pnpm --filter extension build:prod sets WXT_API_URL and WXT_CONSOLE_URL). A user can
+ * still point Glance elsewhere under Settings > Advanced (that choice is kept in storage and wins).
+ */
+export const DEFAULT_API_URL: string = import.meta.env.WXT_API_URL || "http://localhost:8790";
+export const DEFAULT_CONSOLE_URL: string = import.meta.env.WXT_CONSOLE_URL || "http://localhost:3000";
 
 export const apiBaseUrl = storage.defineItem<string>("sync:apiBaseUrl", { fallback: DEFAULT_API_URL });
 /**

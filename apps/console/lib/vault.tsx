@@ -12,6 +12,7 @@ import { useAccount, useReadContracts } from "wagmi";
 
 import { api, ApiProblem, retryDelay, shouldRetry } from "./api";
 import { CHAIN_ID, demoVaults, factories, primaryVault } from "./deployment";
+import { glanceAgent } from "./glanceAgent";
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Whose vault: the connected wallet's own, and nobody else's (the team's vaults only with ?dev=1)
@@ -188,6 +189,11 @@ export function useHealth() {
     ...readOptions,
     refetchInterval: (q) => (q.state.error instanceof ApiProblem ? 8_000 : 60_000),
   });
+}
+
+/** The agent the Glance API trades from right now (null until /health answers, or with no key loaded). */
+export function useGlanceAgent(): Address | null {
+  return glanceAgent(useHealth().data);
 }
 
 export function useCatalog() {
