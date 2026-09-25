@@ -1,0 +1,69 @@
+{
+ "crop": {
+  "x": 105,
+  "y": 334,
+  "width": 828,
+  "height": 256.65625
+ },
+ "scale": 1,
+ "width": 828,
+ "height": 257,
+ "model": "claude-sonnet-4-5",
+ "labels": [
+  {
+   "axis": "price",
+   "text": "384",
+   "x": 29,
+   "y": 27
+  },
+  {
+   "axis": "price",
+   "text": "382",
+   "x": 29,
+   "y": 59
+  },
+  {
+   "axis": "price",
+   "text": "380",
+   "x": 29,
+   "y": 91
+  },
+  {
+   "axis": "price",
+   "text": "378",
+   "x": 29,
+   "y": 123
+  },
+  {
+   "axis": "price",
+   "text": "376",
+   "x": 29,
+   "y": 155
+  },
+  {
+   "axis": "price",
+   "text": "374",
+   "x": 29,
+   "y": 187
+  },
+  {
+   "axis": "time",
+   "text": "12:00 PM",
+   "x": 208,
+   "y": 201
+  },
+  {
+   "axis": "time",
+   "text": "3:00 PM",
+   "x": 401,
+   "y": 201
+  },
+  {
+   "axis": "time",
+   "text": "6:00 PM",
+   "x": 594,
+   "y": 201
+  }
+ ],
+ "error": null
+}

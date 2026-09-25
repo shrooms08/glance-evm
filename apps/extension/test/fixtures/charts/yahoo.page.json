@@ -1,0 +1,270 @@
+{
+ "url": "https://finance.yahoo.com/quote/TSLA/",
+ "title": "Tesla, Inc. (TSLA) Stock Price, News, Quote & History - Yahoo Finance",
+ "chart": {
+  "tag": "canvas",
+  "x": 201,
+  "y": 482,
+  "width": 682,
+  "height": 285
+ },
+ "labels": [
+  {
+   "text": "Soccer",
+   "x": 453.9,
+   "y": 464,
+   "tag": "a"
+  },
+  {
+   "text": "Sports Betting",
+   "x": 477.7,
+   "y": 500,
+   "tag": "a"
+  },
+  {
+   "text": "Yahoo Sports AM",
+   "x": 486.9,
+   "y": 536,
+   "tag": "a"
+  },
+  {
+   "text": "World Cup",
+   "x": 465.3,
+   "y": 572,
+   "tag": "a"
+  },
+  {
+   "text": "Deals",
+   "x": 666,
+   "y": 464,
+   "tag": "a"
+  },
+  {
+   "text": "Toys and games",
+   "x": 698.1,
+   "y": 500,
+   "tag": "a"
+  },
+  {
+   "text": "Shopping lists",
+   "x": 693.1,
+   "y": 536,
+   "tag": "a"
+  },
+  {
+   "text": "General",
+   "x": 672.8,
+   "y": 572,
+   "tag": "a"
+  },
+  {
+   "text": "News •",
+   "x": 850.3,
+   "y": 489.5,
+   "tag": "label"
+  },
+  {
+   "text": "17 hours ago",
+   "x": 904.1,
+   "y": 489.5,
+   "tag": "label"
+  },
+  {
+   "text": "News •",
+   "x": 850.3,
+   "y": 645.5,
+   "tag": "label"
+  },
+  {
+   "text": "18 hours ago",
+   "x": 904.7,
+   "y": 645.5,
+   "tag": "label"
+  },
+  {
+   "text": "News •",
+   "x": 850.3,
+   "y": 761.5,
+   "tag": "label"
+  },
+  {
+   "text": "19 hours ago",
+   "x": 904.6,
+   "y": 761.5,
+   "tag": "label"
+  },
+  {
+   "text": "Unusual Volume",
+   "x": 369.2,
+   "y": 462,
+   "tag": "span"
+  },
+  {
+   "text": "Industrials",
+   "x": 351.2,
+   "y": 462,
+   "tag": "span"
+  },
+  {
+   "text": "Mutual Funds",
+   "x": 191.4,
+   "y": 462,
+   "tag": "span"
+  },
+  {
+   "text": "Child Tax Credit",
+   "x": 663.8,
+   "y": 462,
+   "tag": "span"
+  },
+  {
+   "text": "Retirement Basics",
+   "x": 670.9,
+   "y": 462,
+   "tag": "span"
+  },
+  {
+   "text": "How They Run",
+   "x": 633.1,
+   "y": 471,
+   "tag": "span"
+  },
+  {
+   "text": "Power Players",
+   "x": 631.8,
+   "y": 504,
+   "tag": "span"
+  },
+  {
+   "text": "The Big Idea",
+   "x": 626.7,
+   "y": 537,
+   "tag": "span"
+  },
+  {
+   "text": "Trader Talk",
+   "x": 622.1,
+   "y": 570,
+   "tag": "span"
+  },
+  {
+   "text": "ETF Report",
+   "x": 623,
+   "y": 628,
+   "tag": "span"
+  },
+  {
+   "text": "More to Watch",
+   "x": 634,
+   "y": 661,
+   "tag": "span"
+  },
+  {
+   "text": "Mag 7",
+   "x": 776.3,
+   "y": 694,
+   "tag": "span"
+  },
+  {
+   "text": "Fed Watch",
+   "x": 791.4,
+   "y": 727,
+   "tag": "span"
+  },
+  {
+   "text": "1D",
+   "x": 219.9,
+   "y": 797,
+   "tag": "button"
+  },
+  {
+   "text": "5D",
+   "x": 258.5,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "1M",
+   "x": 298.3,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "6M",
+   "x": 339,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "YTD",
+   "x": 383.8,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "1Y",
+   "x": 425.9,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "5Y",
+   "x": 463.4,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "All",
+   "x": 502.1,
+   "y": 797,
+   "tag": "span"
+  },
+  {
+   "text": "Advanced Chart",
+   "x": 346.9,
+   "y": 466.5,
+   "tag": "span"
+  },
+  {
+   "text": "AlphaSpace Chart",
+   "x": 490.5,
+   "y": 466.5,
+   "tag": "span"
+  },
+  {
+   "text": "MRNA",
+   "x": 959.1,
+   "y": 480.5,
+   "tag": "span"
+  },
+  {
+   "text": "Moderna, Inc.",
+   "x": 978.2,
+   "y": 495.5,
+   "tag": "span"
+  },
+  {
+   "text": "AKAM",
+   "x": 959,
+   "y": 518.5,
+   "tag": "span"
+  },
+  {
+   "text": "AMD",
+   "x": 954.9,
+   "y": 556.5,
+   "tag": "span"
+  }
+ ],
+ "buttons": [
+  {
+   "text": "1D",
+   "selected": true
+  }
+ ],
+ "capturedAt": "2026-09-25T07:51:44.269Z",
+ "viewport": [
+  1280,
+  1250
+ ]
+}

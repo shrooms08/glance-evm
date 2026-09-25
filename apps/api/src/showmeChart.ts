@@ -77,8 +77,10 @@ export const MOVEMENT =
  */
 export async function chartContextFor(
   ctx: AppContext,
-  input: { question: string; openChart?: { symbol: string; range: ChartRange } | null; vault?: string },
+  input: { question: string; openChart?: { symbol: string; range: ChartRange } | null; vault?: string; pageChart?: { symbol: string; range: ChartRange } | null },
 ): Promise<{ charts: ChartSummary[]; facts: ChartFacts[] }> {
+  // A chart on the page (the chart lens) is the chart the question is about: its stock and range, as the extension read them.
+  if (input.pageChart && ctx.catalog.bySymbol.has(input.pageChart.symbol)) input = { ...input, openChart: input.pageChart, question: `${input.question} ${input.pageChart.range === "1D" ? "today" : input.pageChart.range === "1M" ? "this month" : ""}` };
   let symbol: string | null = null;
   let range: ChartRange = rangeFor(input.question);
   const named = findCompanies(input.question, ctx.catalog.entries);

@@ -92,6 +92,8 @@ export interface ShowMeInput {
   vault?: string;
   /** The question was about a chart or an image on the page, and no screenshot could be taken (no activeTab yet). */
   noScreenshot?: { glanceKey: string } | null;
+  /** The chart lens: a chart on the page, and whether the marks go on it (calibrated) or on the Glance lens. */
+  pageChart?: { symbol: string; range: "1D" | "1W" | "1M"; site: string; drawOn: "page" | "lens" } | null;
 }
 
 export interface ShowMeAnswer {
@@ -398,6 +400,9 @@ export function createShowMe(o: {
       const fallback = !stopped && (i === 0 || (saidNoNews && i === 1) || noFigureLeft(drops, keptSpoken)) ? factsFallback(input.facts ?? [], input.question) : null;
       if (fallback) emit({ type: "sentence", sentence: { i: i++, ...fallback } });
       if (i === 0) return say(LINES.cantThink, "unavailable");
+      if (input.pageChart?.drawOn === "page" && !stopped && i > 0) {
+        emit({ type: "sentence", sentence: { i: i++, spoken: LINES.chainlinkDiffers, actions: [] } });
+      }
       if (input.noScreenshot && (input.facts ?? []).length === 0 && !stopped) {
         emit({ type: "sentence", sentence: { i: i++, spoken: LINES.pressGlanceForChart(input.noScreenshot.glanceKey), actions: [] } });
       }
@@ -440,7 +445,7 @@ export function createShowMe(o: {
         const fallback = kept.length === 0 || (noNews && kept.length === 1) || noFigureLeft(drops, kept) ? factsFallback(facts, input.question) : null;
         const saysNoNews = noNews || kept.some((k) => k.includes(LINES.noNewsForMove));
         if (fallback) {
-          const spoken = saysNoNews ? `${fallback.spoken} ${LINES.noNewsForMove}` : fallback.spoken;
+          const spoken = [fallback.spoken, saysNoNews ? LINES.noNewsForMove : "", input.pageChart?.drawOn === "page" ? LINES.chainlinkDiffers : ""].filter(Boolean).join(" ");
           return { reply: formatTagged({ spoken, actions: fallback.actions }), spoken, actions: fallback.actions, source: "claude", chart: fallback.chart };
         }
       }
@@ -459,6 +464,7 @@ export function createShowMe(o: {
       const opened = tagged.actions.find((a): a is Extract<ShowAction, { kind: "CHART" }> => a.kind === "CHART");
       const chart = opened ? { symbol: opened.symbol, range: charts.find((c) => c.symbol === opened.symbol)?.range ?? rangeFor(input.question) } : undefined;
       if (input.noScreenshot && facts.length === 0) tagged = { ...tagged, spoken: `${tagged.spoken} ${LINES.pressGlanceForChart(input.noScreenshot.glanceKey)}` };
+      if (input.pageChart?.drawOn === "page") tagged = { ...tagged, spoken: `${tagged.spoken} ${LINES.chainlinkDiffers}` };
       return { reply: formatTagged(tagged), spoken: tagged.spoken, actions: tagged.actions, source: "claude", ...(chart ? { chart } : {}) };
     },
   };

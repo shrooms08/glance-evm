@@ -102,6 +102,11 @@ const envSchema = z.object({
   /** Claude model for Show me, teach and guide (budget purpose "other"): Haiku by default, Opus refused unless ALLOW_OPUS. */
   SHOWME_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
   SHOWME_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(10),
+  /**
+   * Claude model that reads a page chart's axis labels from a screenshot (POST /chart/calibrate, budget "other"):
+   * Haiku by default; claude-sonnet-4-5 if Haiku's calibration error is too high; Opus refused unless ALLOW_OPUS.
+   */
+  CHART_VISION_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
   /** Robinhood Chain mainnet, read-only: the Chainlink feeds behind the price charts (GET /chart). */
   RPC_MAINNET_URL: z.url().default("https://rpc.mainnet.chain.robinhood.com"),
   CHART_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),

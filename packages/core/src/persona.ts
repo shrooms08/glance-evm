@@ -59,6 +59,10 @@ export const LINES = {
   noNewsForMove: "I don't have news that explains this move.",
   /** A question about a chart on the page, with no screenshot possible (activeTab comes with the glance key). */
   pressGlanceForChart: (glanceKey = "⌥G") => `Press ${glanceKey} on this page first and I can look at that chart.`,
+  /** The chart lens, with no screenshot possible (its labels aren't text, and activeTab comes with the glance key). */
+  pressGlanceOnce: (glanceKey = "⌥G") => `Press ${glanceKey} once so I can see this chart.`,
+  /** Drawing on someone else's chart: our numbers are Chainlink's, which can differ a little from theirs. */
+  chainlinkDiffers: "I'm using Chainlink's prices, which can differ a little from this chart.",
   /** Show me / teach: the "other" budget ran out for today. */
   outOfThinking: "I'm out of thinking for today, but I can still show prices and charts.",
   /** Show me / teach: the answer tripped the advice guard, so it's replaced by this. */

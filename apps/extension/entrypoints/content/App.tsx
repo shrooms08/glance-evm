@@ -34,12 +34,17 @@ import { greeted } from "../../components/useGreeting";
 import { Tour, Welcome } from "../../components/Onboarding";
 import { firstRun, prefersReducedMotion, tick, tourDone, tourSteps } from "../../lib/onboarding";
 import { createCommandTalk } from "../../lib/commandTalk";
-import { GREETING, SPOKEN_GREETING } from "@glance/core/persona";
+import { GREETING, LINES, SPOKEN_GREETING } from "@glance/core/persona";
 import { api } from "../../lib/api";
 import { findQuote, nextSentence, revealRange } from "../../lib/anchor";
 import { pageMount } from "../../lib/chartLoader";
 import { listFigures, readPage } from "../../lib/pageRead";
 import { chartAnnotations } from "../../lib/chartAnnotations";
+import { CHART_DRAWINGS_MS } from "../../lib/chartAnnotations";
+import { ChartLens } from "../../lib/chartLens";
+import { preparePageChart, type PageChartSession } from "../../lib/chartLensFlow";
+import { companiesInText } from "../../lib/commands";
+import { wantsPageChart } from "../../lib/pageChart";
 import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
 import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
@@ -203,16 +208,16 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   };
   showChartRef.current = showChart;
 
-  const ask = useCallback(
-    (question: string) => {
-      showRun.current?.cancel();
-      const onConsole = (() => {
-        try {
-          return Boolean(g.consoleUrl) && new URL(g.consoleUrl).origin === location.origin;
-        } catch {
-          return false;
-        }
-      })();
+  // ---- The chart lens: a chart on someone else's page ------------------------------------------------------------
+  const lensRef = useRef<ChartLens | null>(null);
+  useEffect(() => () => lensRef.current?.close(), []);
+
+  /**
+   * Show me, given the page chart it's about (or none): the reply's chart tags go onto that chart (calibrated) or onto
+   * the lens, and Glance's own panel chart isn't opened. Marks clear 6 seconds after the reply, or on Escape.
+   */
+  const startShowMe = useCallback(
+    (question: string, onConsole: boolean, session: PageChartSession | null) => {
       showRun.current = runShowMe(question, {
         // Read on key down (while the user is still talking), else now.
         readPage: () => {
@@ -243,10 +248,12 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           return drawings.current?.drawFigure(el) ?? false;
         },
         point: setFlyRange,
-        chart: showChart,
-        // Docked, the chart is in the side panel: its drawings go there.
-        annotate: (a) => (docked ? void send({ kind: "chart:annotate", annotation: a }).catch(() => {}) : chartAnnotations.annotate(a)),
-        openChart: () => chartAnnotations.showing,
+        chart: session ? () => {} : showChart,
+        // On a page chart: through its calibration, or on the lens. Docked, Glance's chart is in the side panel.
+        annotate: (a) =>
+          session ? session.annotate(a) : docked ? void send({ kind: "chart:annotate", annotation: a }).catch(() => {}) : chartAnnotations.annotate(a),
+        openChart: () => (session ? { symbol: session.symbol, range: session.range } : chartAnnotations.showing),
+        pageChart: () => (session ? { symbol: session.symbol, range: session.range, site: session.site, drawOn: session.drawOn } : null),
         portfolio: () => {
           if (docked) void requestCard({ kind: "portfolio" });
           else assistant.setCard({ kind: "portfolio", key: Date.now() });
@@ -258,14 +265,85 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           if (cancelled) {
             drawings.current?.clear();
             chartAnnotations.clear();
+            session?.lens?.clearAnnotations();
           } else {
-            drawings.current?.fadeLater();
+            drawings.current?.fadeLater(session ? CHART_DRAWINGS_MS : undefined);
             chartAnnotations.clearLater();
+            if (session?.lens) setTimeout(() => session.lens?.clearAnnotations(), CHART_DRAWINGS_MS);
           }
         },
       });
     },
     [g, docked, assistant, showChart],
+  );
+
+  const ask = useCallback(
+    (question: string, lens: { confirmed?: { symbol: string; range: ChartRange }; forceLens?: boolean } = {}) => {
+      showRun.current?.cancel();
+      const onConsole = (() => {
+        try {
+          return Boolean(g.consoleUrl) && new URL(g.consoleUrl).origin === location.origin;
+        } catch {
+          return false;
+        }
+      })();
+      if (onConsole || (!wantsPageChart(question) && !lens.confirmed)) return startShowMe(question, onConsole, null);
+      void (async () => {
+        g.setOrb({ state: "thinking", line: "Looking at this chart…", meta: "Chart lens" });
+        const aliases = Object.fromEntries(g.catalog.map((s) => [s.symbol, [s.name, ...s.aliases]]));
+        const named = companiesInText(question, g.catalog)[0] ?? null;
+        const prep = await preparePageChart(
+          {
+            doc: document,
+            win: window,
+            symbols: g.catalog.map((s) => s.symbol),
+            aliases,
+            named,
+            capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null, () => null),
+            vision: (img) => api.calibrateChart(img).then((r) => (r.ok ? r.data : null)),
+            chart: (symbol, range) => api.chart(symbol, range).then((r) => (r.ok && r.data.points.length > 1 ? r.data : null)),
+            facts: (symbol, range) => api.chartFacts([symbol], range).then((r) => (r.ok ? (r.data.facts[0] ?? null) : null)),
+            drawings: () => drawings.current,
+            openLens: (el, data) => {
+              lensRef.current?.close();
+              const l = new ChartLens(layerRef.current!, el, data, pageMount, () => {
+                if (lensRef.current === l) lensRef.current = null;
+              });
+              lensRef.current = l;
+              return l;
+            },
+            log: (l) => void (import.meta.env.DEV && console.info(l)),
+          },
+          lens,
+        );
+        const key = g.shortcuts?.glance || keyLabel(g.glanceKey);
+        const offer = (line: string, options: Array<{ label: string; run(): void }>) => {
+          g.setOrb({ state: "idle", line, meta: "Chart lens" });
+          assistant.setCard({ kind: "choice", key: Date.now(), question: line, options });
+          setPanelOpen(true);
+        };
+        switch (prep.kind) {
+          case "none":
+            return startShowMe(question, false, null); // no chart here after all: an ordinary answer
+          case "unavailable":
+            return g.setOrb({ state: "idle", line: prep.message, meta: "Chart lens" });
+          case "ask": {
+            // Unsure which chart or stock: one short question, never a guess.
+            const choices = prep.symbol
+              ? [{ label: "Yes", run: () => ask(question, { confirmed: { symbol: prep.symbol!, range: prep.range } }) }]
+              : companiesRef.current.slice(0, 3).map((c) => ({ label: c.symbol, run: () => ask(question, { confirmed: { symbol: c.symbol, range: prep.range } }) }));
+            return offer(prep.question, [...choices, { label: "No", run: () => g.setOrb({ state: "idle", line: "Okay. Tell me the stock and range, like “explain Tesla's 5 day chart”.", meta: "" }) }]);
+          }
+          case "no-screenshot":
+            return offer(`${LINES.pressGlanceOnce(key)} Or I can lay Glance's own chart over it.`, [
+              { label: "Use the Glance lens", run: () => ask(question, { confirmed: { symbol: prep.symbol, range: prep.range }, forceLens: true }) },
+            ]);
+          case "ready":
+            return startShowMe(question, false, prep);
+        }
+      })();
+    },
+    [g, assistant, startShowMe],
   );
   askRef.current = ask;
   // Developer check: every shape on the selection (dev builds, or developer tools on in settings). Typing in the panel
@@ -426,6 +504,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         }
         drawings.current?.clear();
         chartAnnotations.clear();
+        // The chart lens goes too (its marks went with the reply).
+        lensRef.current?.close();
         closePanel();
       },
     },

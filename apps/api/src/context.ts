@@ -12,6 +12,7 @@ import type { Config } from "./config.js";
 import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deployment.js";
 import type { ChartDeps } from "./chart.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
+import { createChartVision, type ChartVision } from "./chartVision.js";
 import { createShowMe, type ShowMe } from "./showme.js";
 import { PrerecordedLines } from "./voice/prerecorded.js";
 import { FIXED_LINES } from "@glance/core/persona";
@@ -53,6 +54,8 @@ export interface AppContext {
   prerecorded: PrerecordedLines | null;
   /** "Show me", teach and guide (POST /showme), when ANTHROPIC_API_KEY is set. */
   showMe: ShowMe | null;
+  /** Reads a page chart's axis labels from a screenshot crop (the chart lens), or null without a key. */
+  chartVision: ChartVision | null;
   /** "Why it moved": Finnhub news (15-minute cache), the budgeted summarizer, and the 3-hour answer cache. */
   why: { news: NewsClient | null; summarizer: Summarizer | null; summaries: TtlCache<Omit<WhyAnswer, "cached">> };
   /** Trades the guards refused before anything was sent (see src/refusals.ts). */
@@ -86,6 +89,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     intent: chooseModel(config.INTENT_MODEL, config.ALLOW_OPUS, "intent", log),
     why: chooseModel(config.WHY_MODEL, config.ALLOW_OPUS, "why", log),
     other: chooseModel(config.SHOWME_MODEL, config.ALLOW_OPUS, "showme", log),
+    vision: chooseModel(config.CHART_VISION_MODEL, config.ALLOW_OPUS, "chart vision", log),
   };
   const files = llmFiles(config);
   const cacheDir = files.cache ? dirname(files.cache) : null;
@@ -131,6 +135,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       : createClaudeIntent(config.ANTHROPIC_API_KEY, models.intent, catalog.entries, 3_000, { budget, log }),
     llmBudget: budget,
     llmModels: models,
+    chartVision: createChartVision({ apiKey: anthropicKey, model: models.vision, budget, log }),
     showMe: createShowMe({
       apiKey: anthropicKey,
       model: models.other,

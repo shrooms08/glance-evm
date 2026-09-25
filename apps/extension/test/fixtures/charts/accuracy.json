@@ -1,0 +1,120 @@
+{
+ "claude-haiku-4-5": {
+  "measuredAt": "2026-09-25T07:58:20.944Z",
+  "results": {
+   "google": {
+    "ok": true,
+    "model": "claude-haiku-4-5",
+    "ms": 4603,
+    "bytes": 31708,
+    "labelsRead": 9,
+    "timeAxis": "linear",
+    "errorPx": {
+     "price": {
+      "mean": 68.5,
+      "max": 89
+     },
+     "time": {
+      "mean": 24.277777777363855,
+      "max": 43.73333333209155
+     }
+    }
+   },
+   "yahoo": {
+    "ok": true,
+    "model": "claude-haiku-4-5",
+    "ms": 3524,
+    "bytes": 65668,
+    "labelsRead": 11,
+    "timeAxis": "linear",
+    "errorPx": {
+     "price": {
+      "mean": 34.38888888888929,
+      "max": 60.5
+     },
+     "time": {
+      "mean": 45.214285714285715,
+      "max": 81.5
+     }
+    }
+   },
+   "tradingview": {
+    "ok": true,
+    "model": "claude-haiku-4-5",
+    "ms": 4723,
+    "bytes": 28420,
+    "labelsRead": 18,
+    "timeAxis": "piecewise",
+    "errorPx": {
+     "price": {
+      "mean": 55.45,
+      "max": 123.75
+     },
+     "time": {
+      "mean": 79.3409090909091,
+      "max": 115.25
+     }
+    }
+   }
+  }
+ },
+ "claude-sonnet-4-5": {
+  "measuredAt": "2026-09-25T07:59:09.205Z",
+  "results": {
+   "google": {
+    "ok": true,
+    "model": "claude-sonnet-4-5",
+    "ms": 4282,
+    "bytes": 31708,
+    "labelsRead": 9,
+    "timeAxis": "linear",
+    "errorPx": {
+     "price": {
+      "mean": 1.5,
+      "max": 2
+     },
+     "time": {
+      "mean": 0.6333333333333636,
+      "max": 1.1000000000000227
+     }
+    }
+   },
+   "yahoo": {
+    "ok": true,
+    "model": "claude-sonnet-4-5",
+    "ms": 3930,
+    "bytes": 65668,
+    "labelsRead": 9,
+    "timeAxis": "linear",
+    "errorPx": {
+     "price": {
+      "mean": 0.5,
+      "max": 0.5
+     },
+     "time": {
+      "mean": 0.6428571428571429,
+      "max": 1.2142857126891613
+     }
+    }
+   },
+   "tradingview": {
+    "ok": true,
+    "model": "claude-sonnet-4-5",
+    "ms": 5926,
+    "bytes": 28420,
+    "labelsRead": 16,
+    "timeAxis": "piecewise",
+    "errorPx": {
+     "price": {
+      "mean": 1.0500000000010914,
+      "max": 1.3773584905666212
+     },
+     "time": {
+      "mean": 0.6136363636363636,
+      "max": 1
+     }
+    }
+   }
+  }
+ }
+}

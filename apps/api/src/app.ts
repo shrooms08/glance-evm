@@ -22,6 +22,7 @@ import { attemptLabel } from "./refusals.js";
 import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 import { factsView } from "./chartFacts.js";
+import { VISION_MAX_IMAGE_CHARS } from "./chartVision.js";
 import { chartContextFor } from "./showmeChart.js";
 import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
@@ -84,10 +85,20 @@ const showMeBody = z
     // A downscaled JPEG, base64: the whole request is 64 KB at most, so the extension keeps this under 36 KB.
     screenshot: z.string().max(MAX_JSON_BODY_BYTES).regex(/^[A-Za-z0-9+/=]+$/).optional(),
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
+    // The chart lens: a chart on the page, identified by the extension (its stock and range), and where the answer's
+    // marks go: onto the page's own chart (calibrated) or onto the Glance lens laid over it.
+    pageChart: z.object({ symbol, range: z.enum(CHART_RANGES), site: z.enum(["tradingview", "yahoo", "google", "cnbc", "other"]), drawOn: z.enum(["page", "lens"]) }).nullable().optional(),
     // For "since your last buy" (the portfolio event cache; no chain read).
     vault: address.optional(),
     // A question about a chart or image on the page with no screenshot possible: the answer says how to allow one.
     noScreenshot: z.object({ glanceKey: z.string().min(1).max(16) }).nullable().optional(),
+  })
+  .strict();
+const calibrateBody = z
+  .object({
+    image: z.string().min(100).max(VISION_MAX_IMAGE_CHARS).regex(/^[A-Za-z0-9+/=]+$/),
+    width: z.number().int().min(50).max(4_000),
+    height: z.number().int().min(50).max(4_000),
   })
   .strict();
 const sessionQuery = z.object({ vault: address, session: address });
@@ -185,7 +196,8 @@ export function createServerApp(ctx: AppContext) {
   );
   // JSON bodies are at most 64 KB (Show me's page context included): larger is 413. A recorded command (the voice
   // upload fallback) is audio, with its own cap in the voice routes.
-  app.use("*", async (c, next) => (c.req.path === "/voice/transcribe" ? next() : jsonLimit(c, next)));
+  // Audio uploads and chart crops have their own limits.
+  app.use("*", async (c, next) => (c.req.path === "/voice/transcribe" || c.req.path === "/chart/calibrate" ? next() : jsonLimit(c, next)));
 
   app.use("*", rateLimit({ limit: config.RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "all" }));
   // "/trade/*" also matches "/trade" itself: one registration covers single trades and baskets. Only sending counts: a
@@ -320,6 +332,16 @@ export function createServerApp(ctx: AppContext) {
       }
       await sent;
     });
+  });
+
+  // The chart lens: a page chart's axis labels read from a screenshot crop (only the labels; the scale is fitted by the
+  // extension, and every number and mark comes from our own facts). Budget "other"; the image is never kept.
+  app.post("/chart/calibrate", bodyLimit({ maxSize: VISION_MAX_IMAGE_CHARS + 4_096, onError: (c) => c.json({ error: { code: "TOO_LARGE", message: "That chart image is too large." } }, 413) }), async (c) => {
+    const body = parse(calibrateBody, await jsonBody(c));
+    if (!ctx.chartVision) throw new ApiError(503, "VISION_UNAVAILABLE", "Reading charts from a screenshot isn't set up on this server.");
+    const r = await ctx.chartVision.readLabels({ base64: body.image, width: body.width, height: body.height });
+    if (!r.ok) throw new ApiError(r.reason === "budget" ? 429 : 503, r.reason === "budget" ? "BUDGET" : "VISION_UNAVAILABLE", r.reason === "budget" ? LINES.outOfThinking : LINES.cantThink);
+    return send(c, { labels: r.labels, model: r.model });
   });
 
   // The chart's breakdown, computed (src/chartFacts.ts): one stock, or up to three compared ("TSLA,AMD").

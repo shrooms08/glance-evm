@@ -21,7 +21,8 @@
     "./sentences": "./src/sentences.ts",
     "./session": "./src/session.ts",
     "./basket": "./src/basket.ts",
-    "./chart-facts": "./src/chartFacts.ts"
+    "./chart-facts": "./src/chartFacts.ts",
+    "./page-chart": "./src/pageChart.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

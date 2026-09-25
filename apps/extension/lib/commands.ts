@@ -247,3 +247,8 @@ function titleCase(name: string): string {
   if (n.length <= 3 && !n.includes(" ")) return n.toUpperCase();
   return n.replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
+
+/** The catalog companies a question names, in order (the chart lens uses it to find the stock the user means). */
+export function companiesInText(text: string, companies: readonly CompanyAliases[]): string[] {
+  return companiesIn(text, aliasTable(companies));
+}

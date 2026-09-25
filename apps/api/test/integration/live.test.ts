@@ -56,7 +56,8 @@ describe.skipIf(!online)("live testnet", () => {
 
   it("GET /health reports every feed's freshness and source", async () => {
     const { body } = await get("/health");
-    expect(body.feeds.map((f: any) => f.symbol)).toEqual(["TSLA", "AMZN", "PLTR", "NFLX", "AMD"]);
+    // The five stocks, then the ETF stand-ins (deployed 25 Sep 2026: make deploy-etf-standins).
+    expect(body.feeds.map((f: any) => f.symbol)).toEqual(["TSLA", "AMZN", "PLTR", "NFLX", "AMD", "SPY", "QQQ"]);
     for (const f of body.feeds) {
       expect(["OPEN", "CLOSED", "STALE"]).toContain(f.marketState);
       expect(f.ageSeconds).toBeGreaterThanOrEqual(0);
@@ -67,15 +68,16 @@ describe.skipIf(!online)("live testnet", () => {
     expect(typeof body.keeper.pausedLocally).toBe("boolean");
   });
 
-  it("GET /catalog lists the five stocks with addresses from the deployment file", async () => {
+  it("GET /catalog lists the five stocks and the two ETF stand-ins, with addresses from the deployment file", async () => {
     const { status, body } = await get("/catalog");
     expect(status).toBe(200);
-    expect(body.stocks.map((s: any) => s.symbol)).toEqual(["TSLA", "AMZN", "PLTR", "NFLX", "AMD"]);
+    expect(body.stocks.map((s: any) => s.symbol)).toEqual(["TSLA", "AMZN", "PLTR", "NFLX", "AMD", "SPY", "QQQ"]);
     for (const s of body.stocks) {
       const deployed = ctx!.deployment.stocks[s.symbol] as any;
       expect(s.token).toBe(deployed.token);
       expect(s.feed).toBe(deployed.feed);
-      expect(s.tokenReal).toBe(true);
+      // The five are the real testnet Stock Tokens; SPY and QQQ exist only on mainnet, so theirs are stand-ins.
+      expect(s.tokenReal).toBe(!["SPY", "QQQ"].includes(s.symbol));
       expect(s.feedReal).toBe(false);
       expect(s.aliases.length).toBeGreaterThan(1);
     }
@@ -118,7 +120,7 @@ describe.skipIf(!online)("live testnet", () => {
     // The event-rebuilt windows must agree with the contract's own totals.
     expect(body.buyWindow.reconstructed).toBe(true);
     expect(body.sellWindow.reconstructed).toBe(true);
-    expect(body.positions).toHaveLength(5);
+    expect(body.positions).toHaveLength(ctx!.catalog.entries.length); // one per catalog stock, the ETFs included
     const invested = body.positions.reduce((s: bigint, p: any) => s + BigInt(p.value.raw), 0n);
     expect(BigInt(body.balances.total.raw)).toBe(BigInt(body.balances.usdg.raw) + invested);
   });

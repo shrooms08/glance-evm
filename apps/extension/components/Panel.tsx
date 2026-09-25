@@ -172,6 +172,19 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           </div>
         )}
 
+        {assistant.card?.kind === "choice" && (
+          <div className="g-section" role="group" aria-label={assistant.card.question} style={{ gap: 8 }}>
+            <span className="g-body">{assistant.card.question}</span>
+            <div className="g-row" style={{ flexWrap: "wrap" }}>
+              {assistant.card.options.map((o, i) => (
+                <button key={o.label} className={`g-btn ${i === 0 ? "g-btn-primary" : "g-btn-ghost"}`} onClick={() => (assistant.setCard(null), o.run())}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {assistant.card?.kind === "compare" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
             <CompareCard key={assistant.card.key} symbols={assistant.card.symbols} range={assistant.card.range} data={assistant.card.data} onClose={() => assistant.setCard(null)} />

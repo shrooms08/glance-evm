@@ -1,0 +1,57 @@
+{
+ "method": "vision",
+ "note": "Labels drawn in the canvas: truth is each label glyph block center, measured from the pixels; values read off the image. The 380.12 and 378.27 price badges are not ticks.",
+ "symbol": "TSLA",
+ "range": "1D",
+ "price": [
+  [
+   382.5,
+   518.5
+  ],
+  [
+   377.5,
+   632.5
+  ],
+  [
+   375,
+   689.5
+  ]
+ ],
+ "time": [
+  [
+   "6:00 AM",
+   1790244000,
+   278
+  ],
+  [
+   "8:00 AM",
+   1790251200,
+   355
+  ],
+  [
+   "10:00 AM",
+   1790258400,
+   431.5
+  ],
+  [
+   "12:00 PM",
+   1790265600,
+   509
+  ],
+  [
+   "2:00 PM",
+   1790272800,
+   586.5
+  ],
+  [
+   "4:00 PM",
+   1790280000,
+   664
+  ],
+  [
+   "6:00 PM",
+   1790287200,
+   740.5
+  ]
+ ]
+}

@@ -1,0 +1,232 @@
+{
+ "url": "https://www.google.com/finance/beta/quote/TSLA:NASDAQ",
+ "title": "Tesla Inc (TSLA) Stock Price & News - Google Finance",
+ "chart": {
+  "tag": "svg",
+  "x": 117,
+  "y": 346,
+  "width": 726,
+  "height": 200.65625
+ },
+ "labels": [
+  {
+   "text": "SX8P",
+   "x": 43,
+   "y": 339.5,
+   "tag": "div"
+  },
+  {
+   "text": "arrow_upward",
+   "x": 64.9,
+   "y": 358,
+   "tag": "i"
+  },
+  {
+   "text": "SXAP",
+   "x": 43,
+   "y": 391.5,
+   "tag": "div"
+  },
+  {
+   "text": "arrow_downward",
+   "x": 64.9,
+   "y": 410,
+   "tag": "i"
+  },
+  {
+   "text": "SXDP",
+   "x": 43,
+   "y": 443.5,
+   "tag": "div"
+  },
+  {
+   "text": "arrow_upward",
+   "x": 64.8,
+   "y": 462,
+   "tag": "i"
+  },
+  {
+   "text": "SXEP",
+   "x": 43,
+   "y": 495.5,
+   "tag": "div"
+  },
+  {
+   "text": "arrow_downward",
+   "x": 64.2,
+   "y": 514,
+   "tag": "i"
+  },
+  {
+   "text": "SXFP",
+   "x": 43,
+   "y": 547.5,
+   "tag": "div"
+  },
+  {
+   "text": "arrow_upward",
+   "x": 62.5,
+   "y": 566,
+   "tag": "i"
+  },
+  {
+   "text": "374",
+   "x": 136.2,
+   "y": 523,
+   "tag": "text"
+  },
+  {
+   "text": "376",
+   "x": 136,
+   "y": 490.8,
+   "tag": "text"
+  },
+  {
+   "text": "378",
+   "x": 136.1,
+   "y": 458.6,
+   "tag": "text"
+  },
+  {
+   "text": "380",
+   "x": 135.1,
+   "y": 426.4,
+   "tag": "text"
+  },
+  {
+   "text": "382",
+   "x": 135.9,
+   "y": 394.2,
+   "tag": "text"
+  },
+  {
+   "text": "384",
+   "x": 135.6,
+   "y": 362,
+   "tag": "text"
+  },
+  {
+   "text": "12:00 PM",
+   "x": 314.1,
+   "y": 534.8,
+   "tag": "text"
+  },
+  {
+   "text": "3:00 PM",
+   "x": 506.6,
+   "y": 534.8,
+   "tag": "text"
+  },
+  {
+   "text": "6:00 PM",
+   "x": 699.2,
+   "y": 534.8,
+   "tag": "text"
+  },
+  {
+   "text": "Prev. close",
+   "x": 753,
+   "y": 412,
+   "tag": "div"
+  },
+  {
+   "text": "$380.12",
+   "x": 805.3,
+   "y": 412,
+   "tag": "span"
+  },
+  {
+   "text": "Price:",
+   "x": 137.3,
+   "y": 357.5,
+   "tag": "div"
+  },
+  {
+   "text": "1D",
+   "x": 144,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "5D",
+   "x": 198,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "1M",
+   "x": 252,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "6M",
+   "x": 306,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "YTD",
+   "x": 360,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "1Y",
+   "x": 414,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "5Y",
+   "x": 468,
+   "y": 577.8,
+   "tag": "div"
+  },
+  {
+   "text": "MAX",
+   "x": 522,
+   "y": 577.8,
+   "tag": "div"
+  }
+ ],
+ "buttons": [
+  {
+   "text": "1D",
+   "selected": true
+  },
+  {
+   "text": "5D",
+   "selected": false
+  },
+  {
+   "text": "1M",
+   "selected": false
+  },
+  {
+   "text": "6M",
+   "selected": false
+  },
+  {
+   "text": "YTD",
+   "selected": false
+  },
+  {
+   "text": "1Y",
+   "selected": false
+  },
+  {
+   "text": "5Y",
+   "selected": false
+  },
+  {
+   "text": "MAX",
+   "selected": false
+  }
+ ],
+ "capturedAt": "2026-09-25T07:49:15.214Z",
+ "viewport": [
+  1280,
+  900
+ ]
+}

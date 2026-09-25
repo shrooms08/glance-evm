@@ -1,0 +1,25 @@
+{
+ "url": "https://www.tradingview.com/symbols/NASDAQ-TSLA/",
+ "title": "TSLA Stock Price — Tesla Chart — TradingView",
+ "chart": {
+  "tag": "canvas",
+  "x": 32,
+  "y": 522,
+  "width": 1148,
+  "height": 292
+ },
+ "labels": [
+  {
+   "text": "Full chart",
+   "x": 1200.5,
+   "y": 505,
+   "tag": "span"
+  }
+ ],
+ "buttons": [],
+ "capturedAt": "2026-09-25T07:49:48.508Z",
+ "viewport": [
+  1280,
+  900
+ ]
+}

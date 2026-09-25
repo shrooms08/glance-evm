@@ -1,0 +1,69 @@
+{
+ "crop": {
+  "x": 105,
+  "y": 334,
+  "width": 828,
+  "height": 256.65625
+ },
+ "scale": 1,
+ "width": 828,
+ "height": 257,
+ "model": "claude-haiku-4-5",
+ "labels": [
+  {
+   "axis": "price",
+   "text": "374",
+   "x": 33,
+   "y": 237
+  },
+  {
+   "axis": "price",
+   "text": "376",
+   "x": 33,
+   "y": 213
+  },
+  {
+   "axis": "price",
+   "text": "378",
+   "x": 33,
+   "y": 189
+  },
+  {
+   "axis": "price",
+   "text": "380",
+   "x": 33,
+   "y": 165
+  },
+  {
+   "axis": "price",
+   "text": "382",
+   "x": 33,
+   "y": 141
+  },
+  {
+   "axis": "price",
+   "text": "384",
+   "x": 33,
+   "y": 27
+  },
+  {
+   "axis": "time",
+   "text": "12:00 PM",
+   "x": 253,
+   "y": 233
+  },
+  {
+   "axis": "time",
+   "text": "3:00 PM",
+   "x": 416,
+   "y": 233
+  },
+  {
+   "axis": "time",
+   "text": "6:00 PM",
+   "x": 580,
+   "y": 233
+  }
+ ],
+ "error": null
+}

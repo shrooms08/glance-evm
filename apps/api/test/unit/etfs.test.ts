@@ -72,10 +72,17 @@ describe("resolver: ETF names and tickers", () => {
 });
 
 describe("catalog: ETFs only once deployed", () => {
-  it("today's record: no ETFs (nothing to price, chart or underline)", () => {
-    const c = buildCatalog(real, loadCatalogText(), sources);
+  it("before make deploy-etf-standins: no ETFs (nothing to price, chart or underline)", () => {
+    const { SPY: _spy, QQQ: _qqq, ...stocks } = real.stocks;
+    const c = buildCatalog({ ...real, stocks }, loadCatalogText(), sources);
     expect(c.bySymbol.has("SPY")).toBe(false);
     expect(c.text.map((t) => t.symbol)).not.toContain("QQQ");
+  });
+
+  it("today's record (deployed 25 Sep 2026): both stand-ins listed, not real tokens, mirrored from their mainnet feeds", () => {
+    const c = buildCatalog(real, loadCatalogText(), sources);
+    expect(c.bySymbol.get("SPY")).toMatchObject({ tokenReal: false, feedReal: false, mainnetFeed: "0x319724394D3A0e3669269846abE664Cd621f9f6A" });
+    expect(c.bySymbol.get("QQQ")).toMatchObject({ tokenReal: false, feedReal: false, mainnetFeed: "0x80901d846d5D7B030F26B480776EE3b29374C2ae" });
   });
 
   it("after make deploy-etf-standins: listed, marked stand-ins, mirrored from their mainnet feeds", () => {

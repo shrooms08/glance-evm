@@ -63,6 +63,8 @@ export type AssistantCard =
   | { kind: "chart"; symbol: string; key: number; range?: import("@glance/core/chart").ChartRange }
   /** The Baskets view; `buy` opens straight on a basket's confirm card, `notice` says what just happened. */
   | { kind: "baskets"; key: number; buy?: { basketId: string; amount: string }; notice?: string }
+  /** One short question with a few answers (the chart lens asking which chart, or offering the lens). */
+  | { kind: "choice"; key: number; question: string; options: Array<{ label: string; run(): void }> }
   /** 2 or 3 stocks side by side, rebased to 100 (`data`: already fetched for the typed path). */
   | { kind: "compare"; key: number; symbols: string[]; range: import("@glance/core/chart").ChartRange; data?: import("../lib/api-types").ChartFactsView }
   | null;

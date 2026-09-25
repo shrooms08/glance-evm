@@ -23,9 +23,9 @@ const none: EtfTokenState = { approved: false, feed: zeroAddress, openMaxAge: 0,
 const done = (e: EtfStock): EtfTokenState => ({ approved: true, feed: e.feed as Address, openMaxAge: 72_000, closedMaxAge: 345_600 });
 
 describe("the ETFs in the deployment record", () => {
-  it("none until make deploy-etf-standins records them", () => {
-    expect(deployedEtfs).toEqual([]);
+  it("none until make deploy-etf-standins records them; today's record has both", () => {
     expect(etfsIn({ TSLA: { token: SPY.token, feed: SPY.feed } })).toEqual([]);
+    expect(deployedEtfs.map((e) => e.symbol)).toEqual(["SPY", "QQQ"]); // deployed 25 Sep 2026
   });
 
   it("read from .stocks.SPY / .stocks.QQQ once recorded", () => {

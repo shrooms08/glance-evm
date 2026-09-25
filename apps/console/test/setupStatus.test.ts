@@ -5,7 +5,7 @@
 import { zeroAddress, type Address } from "viem";
 import { describe, expect, it } from "vitest";
 
-import { demoVaults, stocks, VAULT_SETUP } from "../lib/deployment";
+import { demoVaults, etfs, stocks, VAULT_SETUP } from "../lib/deployment";
 import { addMorePlan, consoleVaultConfig, setupPlan, type SetupSnapshot } from "../lib/setup";
 import { stepStatuses, summarize, type Activity, type StatusInputs } from "../lib/setupStatus";
 
@@ -173,7 +173,8 @@ describe("one-transaction setup (GlanceVaultFactoryV2 deployed)", () => {
       usdg: paxos.usdg,
       agent: paxos.agent,
       agentDuration: 2_592_000n, // 30 days, counted by the vault from its own block time
-      tokens: stocks.map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: 72_000, closedMaxAge: 345_600 })),
+      // The five stocks, then the ETFs the record lists (SPY and QQQ since 25 Sep 2026).
+      tokens: [...stocks, ...etfs].map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: 72_000, closedMaxAge: 345_600 })),
       routers: [paxos.desk],
       perBuyCap: 100_000_000n,
       dailyCap: 500_000_000n,

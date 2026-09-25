@@ -88,6 +88,8 @@ export interface ShowMeDeps {
   vault?: () => string | undefined;
   /** The glance key's label (⌥G): said when a chart on the page can't be seen (no screenshot without it). */
   glanceKey?: () => string;
+  /** The chart lens: the chart on the page this answer is about, and where its marks go. */
+  pageChart?: () => { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens" } | null;
   /**
    * Streamed answers (preferred when given): each sentence arrives as soon as Claude has written it, and is spoken as
    * one part of the reply while the next is still being written.
@@ -107,6 +109,7 @@ export interface ShowMeRun {
  */
 function showMeBody(question: string, d: ShowMeDeps, page: ReturnType<ShowMeDeps["readPage"]>, screenshot: string | undefined): ShowMeRequest {
   const vault = d.vault?.();
+  const pageChart = d.pageChart?.() ?? null;
   return {
     question,
     surface: d.surface,
@@ -115,7 +118,9 @@ function showMeBody(question: string, d: ShowMeDeps, page: ReturnType<ShowMeDeps
     ...(screenshot ? { screenshot } : {}),
     lastGuard: d.lastGuard?.() ?? null,
     ...(vault ? { vault } : {}),
-    ...(!screenshot && wantsScreenshot(question) ? { noScreenshot: { glanceKey: d.glanceKey?.() ?? "⌥G" } } : {}),
+    // A chart on the page with a calibration or the lens: no screenshot needed for the answer (its numbers are ours).
+    ...(!screenshot && !pageChart && wantsScreenshot(question) ? { noScreenshot: { glanceKey: d.glanceKey?.() ?? "⌥G" } } : {}),
+    ...(pageChart ? { pageChart } : {}),
   };
 }
 

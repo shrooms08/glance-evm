@@ -14,15 +14,16 @@ export const STROKE_MS = 600;
 export const FADE_AFTER_MS = 4_000;
 const SVG = "http://www.w3.org/2000/svg";
 
-export type MarkKind = "CIRCLE" | "UNDERLINE" | "BOX" | "HIGHLIGHT" | "ARROW" | "BOX_FIGURE";
+export type MarkKind = "CIRCLE" | "UNDERLINE" | "BOX" | "HIGHLIGHT" | "ARROW" | "BOX_FIGURE" | "CHART_POINT" | "CHART_LEVEL" | "CHART_RANGE" | "CHART_TREND";
 
 /** A mark's shapes for the current layout (re-measured on scroll and resize); null when its target has no box. */
-type Geometry = () => { strokes: string[]; fill?: string } | null;
+export type Geometry = () => { strokes: string[]; fill?: string; label?: { text: string; x: number; y: number } } | null;
 
 interface Mark {
   kind: MarkKind;
   geometry: Geometry;
   paths: Array<{ el: SVGPathElement; part: "stroke" | "fill"; index: number }>;
+  label?: SVGTextElement;
 }
 
 /** The block a quote sits in, for BOX: its paragraph, list item, table cell, caption or quote. */
@@ -154,6 +155,14 @@ export class ShowDrawings {
     );
   }
 
+  /**
+   * A mark on a chart on the page (the chart lens): its geometry comes from the chart's calibration and the element's
+   * box at this moment, so it follows scroll and resize like every other mark. Colored for the background under `on`.
+   */
+  drawChart(kind: "CHART_POINT" | "CHART_LEVEL" | "CHART_RANGE" | "CHART_TREND", geometry: Geometry, on: Element): boolean {
+    return this.add(kind, geometry, markColors(isLightColor(backgroundUnder(on, this.win))));
+  }
+
   private add(kind: MarkKind, geometry: Geometry, colors: { stroke: string; halo: string; highlight: string }): boolean {
     const g = geometry();
     if (!g) return false;
@@ -182,7 +191,23 @@ export class ShowDrawings {
       pen.setAttribute("data-mark", kind.toLowerCase());
       paths.push({ el: halo, part: "stroke", index }, { el: pen, part: "stroke", index });
     });
-    this.marks.push({ kind, geometry, paths });
+    let label: SVGTextElement | undefined;
+    if (g.label) {
+      // A short factual label (a level's "Week low $362.20"), with the halo color behind it so it reads on any chart.
+      label = this.host.ownerDocument.createElementNS(SVG, "text");
+      label.textContent = g.label.text;
+      label.setAttribute("x", String(g.label.x));
+      label.setAttribute("y", String(g.label.y));
+      label.setAttribute("text-anchor", "end");
+      label.setAttribute("fill", colors.stroke);
+      label.setAttribute("stroke", colors.halo);
+      label.setAttribute("stroke-width", "3");
+      label.setAttribute("paint-order", "stroke");
+      label.setAttribute("data-mark", "label");
+      Object.assign(label.style, { font: "600 12px var(--g-font, system-ui)" });
+      this.svg.append(label);
+    }
+    this.marks.push({ kind, geometry, paths, ...(label ? { label } : {}) });
     return true;
   }
 
@@ -248,6 +273,10 @@ export class ShowDrawings {
       for (const m of this.marks) {
         const g = m.geometry();
         if (!g) continue;
+        if (m.label && g.label) {
+          m.label.setAttribute("x", String(g.label.x));
+          m.label.setAttribute("y", String(g.label.y));
+        }
         for (const p of m.paths) {
           const d = p.part === "fill" ? g.fill : g.strokes[p.index];
           if (!d) continue;
