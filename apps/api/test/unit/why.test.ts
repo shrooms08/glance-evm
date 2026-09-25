@@ -27,6 +27,7 @@ import {
   type WhyAnswer,
   type WhyDeps,
 } from "../../src/why.js";
+import { FAKE_FINNHUB_KEY } from "../support/fake-keys.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const quiet = () => {};
@@ -194,7 +195,7 @@ describe("Finnhub client", () => {
   it("caches responses for 15 minutes and never leaks the key in errors", async () => {
     let now = T0;
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(articles), { status: 200 }));
-    const f = createFinnhub({ apiKey: "secret-key", fetch: fetchFn as unknown as typeof fetch, cache: new TtlCache(null, 15 * 60_000, () => now) });
+    const f = createFinnhub({ apiKey: FAKE_FINNHUB_KEY, fetch: fetchFn as unknown as typeof fetch, cache: new TtlCache(null, 15 * 60_000, () => now) });
     await f.companyNews("TSLA", "2026-09-21", "2026-09-24");
     await f.companyNews("TSLA", "2026-09-21", "2026-09-24");
     expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -202,14 +203,14 @@ describe("Finnhub client", () => {
     await f.companyNews("TSLA", "2026-09-21", "2026-09-24");
     expect(fetchFn).toHaveBeenCalledTimes(2);
 
-    const down = createFinnhub({ apiKey: "secret-key", fetch: (async () => new Response("no", { status: 502 })) as unknown as typeof fetch, cache: new TtlCache(null, 1) });
+    const down = createFinnhub({ apiKey: FAKE_FINNHUB_KEY, fetch: (async () => new Response("no", { status: 502 })) as unknown as typeof fetch, cache: new TtlCache(null, 1) });
     const err = await down.companyNews("TSLA", "a", "b").catch((e: Error) => e);
-    expect(String((err as Error).message)).not.toContain("secret-key");
+    expect(String((err as Error).message)).not.toContain(FAKE_FINNHUB_KEY);
   });
 });
 
 describe("GET /why", () => {
-  const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, FINNHUB_API_KEY: "secret-key", ANTHROPIC_API_KEY: "", WHY_RATE_LIMIT_PER_MINUTE: "2" }), quiet);
+  const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, FINNHUB_API_KEY: FAKE_FINNHUB_KEY, ANTHROPIC_API_KEY: "", WHY_RATE_LIMIT_PER_MINUTE: "2" }), quiet);
   ctx.why.news = fakeNews({ down: true }); // no network in unit tests
   vi.spyOn(ctx.client, "getBlockNumber").mockRejectedValue(new Error("no chain in unit tests"));
   const app = createApp(ctx);
@@ -219,7 +220,7 @@ describe("GET /why", () => {
     const text = await res.text();
     expect(res.status).toBe(200);
     expect(JSON.parse(text).summary).toBe(NEWS_UNAVAILABLE);
-    expect(text).not.toContain("secret-key");
+    expect(text).not.toContain(FAKE_FINNHUB_KEY);
     expect((await app.request("/why/NOPE")).status).toBe(404);
     expect((await app.request("/why/TSLA")).status).toBe(429);
   });

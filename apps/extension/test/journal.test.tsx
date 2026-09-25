@@ -15,8 +15,8 @@ import { parseCommand } from "../lib/commands";
 import type { Portfolio } from "../lib/api-types";
 import { capturePage, clearJournal, deleteEntry, entryFor, listJournal, MAX_SENTENCE, recordTrade, sentenceAround, sinceThen, type JournalEntry } from "../lib/journal";
 
-const TX1 = "0x15eac3a815516dee5bb1e130e475e9e1be4610c74738865d3074fb036371324a";
-const TX2 = "0x9045aa0000000000000000000000000000000000000000000000000000001234";
+const TX1 = `0x15ea${"0".repeat(56)}324a`; // a made-up transaction hash
+const TX2 = `0x9045${"0".repeat(56)}1234`; // a made-up transaction hash
 
 let fetchSpy: ReturnType<typeof vi.fn>;
 beforeEach(() => {

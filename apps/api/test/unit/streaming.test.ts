@@ -17,11 +17,12 @@ import type { MessagesClient } from "../../src/llm.js";
 import { HAIKU, LlmBudget } from "../../src/llmBudget.js";
 import { createShowMe, type ShowMeEvent } from "../../src/showme.js";
 import { selectVoiceProviders } from "../../src/voice/providers.js";
+import { FAKE_PROVIDER_KEY } from "../support/fake-keys.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const baseEnv = { NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" };
 const ctx = createContext(loadConfig(baseEnv), () => {});
-const KEY = "3f9a8c1b2d4e5f60718293a4b5c6d7e8f9a0b1c2";
+const KEY = FAKE_PROVIDER_KEY;
 
 describe("sentence splitter", () => {
   it("splits at end punctuation as the text arrives", () => {

@@ -17,7 +17,7 @@ afterEach(cleanup);
 
 const paxos = demoVaults.find((d) => d.key === "paxos")!;
 const VAULT = "0xEb7371e40bc863697De3efAbD99e51729D57D3Eb" as Address;
-const HASH = "0x15eac3a815516dee5bb1e130e475e9e1be4610c74738865d3074fb036371324a";
+const HASH = `0x15ea${"0".repeat(56)}324a`; // a made-up transaction hash
 const NOW = 1_790_300_000;
 const configured: SetupSnapshot = {
   owner: "0x03dAC9899f5153fBd9c5EeFEf8E8B46D7f3426CA",

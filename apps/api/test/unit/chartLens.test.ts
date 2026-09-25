@@ -22,6 +22,7 @@ import { chooseModel, HAIKU, LlmBudget } from "../../src/llmBudget.js";
 import { createShowMe, type ShowMeInput } from "../../src/showme.js";
 import { DailyMeter, fileMeter } from "../../src/voice/dailyCaps.js";
 import type { ChartSummary } from "../../src/showmeChart.js";
+import { FAKE_ANTHROPIC_KEY } from "../support/fake-keys.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const env = { NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" };
@@ -102,7 +103,7 @@ describe("POST /chart/calibrate", () => {
     expect(chooseModel("claude-sonnet-4-5", false, "chart vision", (l) => log.push(l))).toBe("claude-sonnet-4-5");
     expect(chooseModel("claude-opus-4-1", false, "chart vision", (l) => log.push(l))).toBe(HAIKU);
     expect(log.join("\n")).toMatch(/chart vision model "claude-opus-4-1" refused/);
-    expect(createContext(loadConfig({ ...env, CHART_VISION_MODEL: "claude-sonnet-4-5", ANTHROPIC_API_KEY: "sk-ant-test-0000000000000000000000000000" }), () => {}).chartVision?.model).toBe("claude-sonnet-4-5");
+    expect(createContext(loadConfig({ ...env, CHART_VISION_MODEL: "claude-sonnet-4-5", ANTHROPIC_API_KEY: FAKE_ANTHROPIC_KEY }), () => {}).chartVision?.model).toBe("claude-sonnet-4-5");
   });
 });
 

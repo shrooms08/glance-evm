@@ -16,10 +16,11 @@ import { loadConfig } from "../../src/config.js";
 import { createContext } from "../../src/context.js";
 import { deepgramSpeaker, SPEECH_STALL_MS, selectVoiceProviders } from "../../src/voice/providers.js";
 import { PrerecordedLines } from "../../src/voice/prerecorded.js";
+import { FAKE_PROVIDER_KEY } from "../support/fake-keys.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const baseEnv = { NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" };
-const KEY = "3f9a8c1b2d4e5f60718293a4b5c6d7e8f9a0b1c2";
+const KEY = FAKE_PROVIDER_KEY;
 
 afterEach(() => vi.useRealTimers());
 

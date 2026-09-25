@@ -58,7 +58,7 @@ describe("owner", () => {
 
   it("is disabled while a withdrawal is in flight, and shows the transaction with its explorer link", () => {
     const onWithdraw = vi.fn();
-    const hash = "0x9045aa0000000000000000000000000000000000000000000000000000001234";
+    const hash = `0x9045${"0".repeat(56)}1234` as `0x${string}`; // a made-up transaction hash
     render(<WithdrawForm {...base} busy tx={{ status: "pending", label: "Withdraw $10 Paxos USDG", hash }} onWithdraw={onWithdraw} />);
     expect(screen.getByRole("button", { name: "Withdrawing…" }).matches(":disabled")).toBe(true);
     expect(amount().disabled).toBe(true);

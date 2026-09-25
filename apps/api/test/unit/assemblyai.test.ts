@@ -38,9 +38,10 @@ import { voiceHealth } from "../../src/services.js";
 import { selectVoiceProviders, withSttFallback, type LiveTranscription, type StreamHooks, type Transcriber } from "../../src/voice/providers.js";
 import { keyterms } from "../../src/voice/routes.js";
 import { TurnAudio } from "../../src/voice/turnAudio.js";
+import { FAKE_ASSEMBLYAI_KEY, FAKE_PROVIDER_KEY } from "../support/fake-keys.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
-const KEY = "aai0test0key0not0real0000000000000000000";
+const KEY = FAKE_ASSEMBLYAI_KEY;
 
 // ---------------------------------------------------------------------------------------------------------------------
 // The fake AssemblyAI server.
@@ -355,7 +356,7 @@ describe("fall-through to Deepgram", () => {
 
 describe("provider selection", () => {
   const base = { DEEPGRAM_MODEL: "nova-3", FISH_MODEL: "s2.1-pro", FISH_VOICE_ID: "x", FISH_LATENCY: "balanced" as const, INTENT_MODEL: "claude-haiku-4-5", DEEPGRAM_TTS_VOICE: "flux-sienna-en", VOICE_TTS: "deepgram" as const };
-  const DG = "3f9a8c1b2d4e5f60718293a4b5c6d7e8f9a0b1c2";
+  const DG = FAKE_PROVIDER_KEY;
 
   it("AssemblyAI by default when its key is set, Deepgram as the fallback; status names both, never a key", () => {
     const config = loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, ASSEMBLYAI_API_KEY: KEY, DEEPGRAM_API_KEY: DG });
@@ -594,7 +595,7 @@ describe("warm sessions: only for a key going down, one per browser, 5 seconds",
 });
 
 describe("usage: the counter, test seconds, the banner and /health", () => {
-  const DG = "3f9a8c1b2d4e5f60718293a4b5c6d7e8f9a0b1c2";
+  const DG = FAKE_PROVIDER_KEY;
 
   it("the day's seconds by why each session opened, and test seconds that no cap reads, in the same file", () => {
     const file = join(mkdtempSync(join(tmpdir(), "glance-aai-")), "voice-usage.json");

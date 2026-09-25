@@ -23,12 +23,12 @@ import {
   withPhraseCache,
   type Speaker,
 } from "../../src/voice/providers.js";
+import { FAKE_PROVIDER_KEY } from "../support/fake-keys.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const baseEnv = { NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" };
 const ctx = createContext(loadConfig(baseEnv));
 const catalog = ctx.catalog.entries;
-const REAL_LOOKING = "3f9a8c1b2d4e5f60718293a4b5c6d7e8f9a0b1c2";
 
 const intentOf = (said: string) => validateIntent(rulesIntent(said, catalog), said, catalog);
 
@@ -155,10 +155,10 @@ describe("provider selection and fallback", () => {
   };
   it("recognises placeholder keys", () => {
     for (const k of [undefined, "", "PASTE_YOUR_KEY_HERE", "YOUR_API_KEY", "changeme", "xxxxxxxxxxxxxxxxxxxx", "short"]) expect(looksLikePlaceholder(k)).toBe(true);
-    expect(looksLikePlaceholder(REAL_LOOKING)).toBe(false);
+    expect(looksLikePlaceholder(FAKE_PROVIDER_KEY)).toBe(false);
   });
   it("an Aura voice as the configured voice: tried, retried on a fresh connection, then Harmonia; no Fish", () => {
-    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING }, { log: () => {} });
+    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY, FISH_API_KEY: FAKE_PROVIDER_KEY }, { log: () => {} });
     expect(v.stt?.name).toBe("deepgram");
     expect(v.tts?.voice).toBe("aura-2-athena-en");
     expect(v.status.speech).toBe("deepgram aura-2-athena-en (Aura-2) via POST https://api.deepgram.com/v1/speak, mp3 streamed");
@@ -166,7 +166,7 @@ describe("provider selection and fallback", () => {
     expect(v.status.warnings).toEqual([]);
   });
   it("defaults to Flux Sienna (6s), Flux Sienna again on a fresh connection (4s), then Aura Harmonia (4s): one person, no Fish", () => {
-    const config = loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING });
+    const config = loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY, FISH_API_KEY: FAKE_PROVIDER_KEY });
     expect(config.DEEPGRAM_TTS_VOICE).toBe("flux-sienna-en");
     expect(config.DEEPGRAM_TTS_FALLBACK_VOICE).toBe("aura-2-harmonia-en");
     const v = selectVoiceProviders(config, { log: () => {} });
@@ -182,18 +182,18 @@ describe("provider selection and fallback", () => {
     );
   });
   it("Fish only by env: after the chain with VOICE_TTS_FISH_FALLBACK=1, or first with VOICE_TTS=fish", () => {
-    const after = selectVoiceProviders(loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING, VOICE_TTS_FISH_FALLBACK: "1" }), { log: () => {} });
+    const after = selectVoiceProviders(loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY, FISH_API_KEY: FAKE_PROVIDER_KEY, VOICE_TTS_FISH_FALLBACK: "1" }), { log: () => {} });
     expect(after.speech.chain.map((l) => l.provider)).toEqual(["deepgram", "deepgram", "deepgram", "fish"]);
-    const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING, FISH_MODEL: "s1" }, { log: () => {} });
+    const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY, FISH_API_KEY: FAKE_PROVIDER_KEY, FISH_MODEL: "s1" }, { log: () => {} });
     expect(v.tts?.name).toBe("fish");
     expect(v.status.speech).toMatch(/^fish \(s1, /);
   });
   it("warns about a voice that is neither flux- nor aura-", () => {
-    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_TTS_VOICE: "sienna", DEEPGRAM_API_KEY: REAL_LOOKING }, { log: () => {} });
+    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_TTS_VOICE: "sienna", DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY }, { log: () => {} });
     expect(v.status.warnings.join()).toMatch(/neither a flux- nor an aura- voice/);
   });
   it("VOICE_TTS=fish without a Fish key uses Deepgram, and says so", () => {
-    const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: REAL_LOOKING }, { log: () => {} });
+    const v = selectVoiceProviders({ ...cfg, VOICE_TTS: "fish", DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY }, { log: () => {} });
     expect(v.tts?.name).toBe("deepgram");
     expect(v.status.warnings.join()).toMatch(/VOICE_TTS=fish but FISH_API_KEY is not set/);
   });
@@ -205,8 +205,8 @@ describe("provider selection and fallback", () => {
     expect(v.status.warnings.join()).toMatch(/DEEPGRAM_API_KEY looks like a placeholder/);
   });
   it("status never contains a key", () => {
-    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING, ANTHROPIC_API_KEY: REAL_LOOKING });
-    expect(JSON.stringify(v.status)).not.toContain(REAL_LOOKING);
+    const v = selectVoiceProviders({ ...cfg, DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY, FISH_API_KEY: FAKE_PROVIDER_KEY, ANTHROPIC_API_KEY: FAKE_PROVIDER_KEY });
+    expect(JSON.stringify(v.status)).not.toContain(FAKE_PROVIDER_KEY);
   });
 });
 
@@ -215,18 +215,18 @@ describe("Deepgram adapter", () => {
     const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toMatch(/^https:\/\/api\.deepgram\.com\/v1\/listen\?model=nova-3&/);
       expect(String(url)).toContain("keyterm=Tesla");
-      expect(String(url)).not.toContain(REAL_LOOKING);
-      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${REAL_LOOKING}`);
+      expect(String(url)).not.toContain(FAKE_PROVIDER_KEY);
+      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${FAKE_PROVIDER_KEY}`);
       return new Response(JSON.stringify({ results: { channels: [{ alternatives: [{ transcript: "buy $10 of Tesla", confidence: 0.97 }] }] } }));
     });
-    const dg = deepgram({ apiKey: REAL_LOOKING, model: "nova-3", fetch: fetchFn as unknown as typeof fetch });
+    const dg = deepgram({ apiKey: FAKE_PROVIDER_KEY, model: "nova-3", fetch: fetchFn as unknown as typeof fetch });
     expect(await dg.transcribe(new Uint8Array([1, 2, 3]), "audio/webm", ["Tesla"])).toMatchObject({ text: "buy $10 of Tesla", confidence: 0.97 });
   });
   it("errors name the status, never the key", async () => {
-    const dg = deepgram({ apiKey: REAL_LOOKING, model: "nova-3", fetch: (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch });
+    const dg = deepgram({ apiKey: FAKE_PROVIDER_KEY, model: "nova-3", fetch: (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch });
     const err = await dg.transcribe(new Uint8Array([1]), "audio/webm", []).catch((e: Error) => e);
     expect((err as Error).message).toBe("Deepgram answered 401");
-    expect(String(err)).not.toContain(REAL_LOOKING);
+    expect(String(err)).not.toContain(FAKE_PROVIDER_KEY);
   });
 
   describe("live, with Finalize and a warm connection", () => {
@@ -271,7 +271,7 @@ describe("Deepgram adapter", () => {
         this.onclose?.();
       }
     }
-    const make = (o: object = {}) => deepgram({ apiKey: REAL_LOOKING, model: "nova-3", WebSocket: FakeSocket as never, finishTimeoutMs: 500, ...o });
+    const make = (o: object = {}) => deepgram({ apiKey: FAKE_PROVIDER_KEY, model: "nova-3", WebSocket: FakeSocket as never, finishTimeoutMs: 500, ...o });
     const audio = (n: number) => sockets[n]!.sent.filter((d) => d instanceof Uint8Array);
     const json = (n: number) => sockets[n]!.sent.filter((d): d is string => typeof d === "string").map((d) => JSON.parse(d).type);
 
@@ -285,8 +285,8 @@ describe("Deepgram adapter", () => {
       expect(u.origin + u.pathname).toBe("wss://api.deepgram.com/v1/listen");
       expect(Object.fromEntries([...u.searchParams].filter(([k]) => k !== "keyterm"))).toMatchObject({ model: "nova-3", encoding: "linear16", sample_rate: "16000", channels: "1", endpointing: "100", smart_format: "true" });
       expect(u.searchParams.getAll("keyterm")).toEqual(["Tesla", "TSLA"]);
-      expect(sockets[0]!.init.headers.Authorization).toBe(`Token ${REAL_LOOKING}`);
-      expect(sockets[0]!.url).not.toContain(REAL_LOOKING);
+      expect(sockets[0]!.init.headers.Authorization).toBe(`Token ${FAKE_PROVIDER_KEY}`);
+      expect(sockets[0]!.url).not.toContain(FAKE_PROVIDER_KEY);
     });
 
     it("on release sends Finalize and answers with the first from_finalize result, without waiting for silence", async () => {
@@ -418,11 +418,11 @@ describe("Deepgram speech: routing by voice prefix", () => {
   it("posts an Aura voice to /v1/speak, mp3, the key only in the header", async () => {
     const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe("https://api.deepgram.com/v1/speak?model=aura-2-athena-en&encoding=mp3");
-      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${REAL_LOOKING}`);
+      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${FAKE_PROVIDER_KEY}`);
       expect(JSON.parse(String(init!.body))).toEqual({ text: "Tesla is at $380." });
       return new Response(new Uint8Array([1, 2]), { headers: { "content-type": "audio/mpeg" } });
     });
-    const s = deepgramSpeaker({ apiKey: REAL_LOOKING, voice: "aura-2-athena-en", fetch: fetchFn as unknown as typeof fetch });
+    const s = deepgramSpeaker({ apiKey: FAKE_PROVIDER_KEY, voice: "aura-2-athena-en", fetch: fetchFn as unknown as typeof fetch });
     expect(s.model).toBe("aura-2");
     expect([...(await s.speak("Tesla is at $380.")).audio]).toEqual([1, 2]);
   });
@@ -430,12 +430,12 @@ describe("Deepgram speech: routing by voice prefix", () => {
   it("posts a Flux voice to /v2/speak, mp3, the key only in the header", async () => {
     const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe("https://api.deepgram.com/v2/speak?model=flux-sienna-en&encoding=mp3");
-      expect(String(url)).not.toContain(REAL_LOOKING);
-      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${REAL_LOOKING}`);
+      expect(String(url)).not.toContain(FAKE_PROVIDER_KEY);
+      expect((init!.headers as Record<string, string>).Authorization).toBe(`Token ${FAKE_PROVIDER_KEY}`);
       expect(JSON.parse(String(init!.body))).toEqual({ text: "Tesla is at $380." });
       return new Response(mp3, { headers: { "content-type": "audio/mpeg" } });
     });
-    const s = deepgramSpeaker({ apiKey: REAL_LOOKING, voice: "flux-sienna-en", fetch: fetchFn as unknown as typeof fetch });
+    const s = deepgramSpeaker({ apiKey: FAKE_PROVIDER_KEY, voice: "flux-sienna-en", fetch: fetchFn as unknown as typeof fetch });
     expect(s).toMatchObject({ name: "deepgram", model: "flux", voice: "flux-sienna-en", endpoint: "POST https://api.deepgram.com/v2/speak" });
     expect(await s.speak("Tesla is at $380.")).toEqual({ audio: mp3, mime: "audio/mpeg" });
     expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -462,7 +462,7 @@ describe("Deepgram speech: routing by voice prefix", () => {
           { headers: { "content-type": "audio/mpeg" } },
         ),
     );
-    const v = selectVoiceProviders({ ...loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING }), DEEPGRAM_API_KEY: REAL_LOOKING }, { fetch: fetchFn as unknown as typeof fetch, log: () => {} });
+    const v = selectVoiceProviders({ ...loadConfig({ ...baseEnv, DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY }), DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY }, { fetch: fetchFn as unknown as typeof fetch, log: () => {} });
     const got: Uint8Array[] = [];
     const reader = (await v.tts!.stream!("Tesla is at $380.")).getReader();
     for (let r = await reader.read(); !r.done; r = await reader.read()) got.push(r.value);
@@ -496,7 +496,7 @@ describe("speech chain: Flux, Flux again, then Harmonia", () => {
       return new Response(new Uint8Array([which.length]), { headers: { "content-type": "audio/mpeg" } });
     });
     const lines: string[] = [];
-    const env = { ...baseEnv, DEEPGRAM_API_KEY: REAL_LOOKING, FISH_API_KEY: REAL_LOOKING, ...(plan.fish ? { VOICE_TTS_FISH_FALLBACK: "1" } : {}) };
+    const env = { ...baseEnv, DEEPGRAM_API_KEY: FAKE_PROVIDER_KEY, FISH_API_KEY: FAKE_PROVIDER_KEY, ...(plan.fish ? { VOICE_TTS_FISH_FALLBACK: "1" } : {}) };
     const v = selectVoiceProviders(loadConfig(env), { fetch: fetchFn as unknown as typeof fetch, log: (l) => lines.push(l) });
     return { v, calls, lines };
   }
@@ -633,7 +633,7 @@ describe("speech chain: Flux, Flux again, then Harmonia", () => {
   it("logs never carry the key or the text, only its length", async () => {
     const { v, lines } = providers({ flux: [402, "ok"] });
     await v.tts!.speak("A secret sentence about Tesla.");
-    expect(lines.join("\n")).not.toContain(REAL_LOOKING);
+    expect(lines.join("\n")).not.toContain(FAKE_PROVIDER_KEY);
     expect(lines.join("\n")).not.toContain("secret");
     expect(lines.some((l) => / 30 chars$/.test(l))).toBe(true);
   });
@@ -676,7 +676,7 @@ describe("speech fall-through", () => {
     expect(second.calls).toBe(2);
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn.mock.calls[0]![0]).toMatch(new RegExp(`deepgram v answered ${status}.*falling through to fish m`));
-    expect(warn.mock.calls[0]![0]).not.toContain(REAL_LOOKING);
+    expect(warn.mock.calls[0]![0]).not.toContain(FAKE_PROVIDER_KEY);
   });
 
   it("a server error falls through; any other failure (a 400, a bad request) is final", async () => {
@@ -697,14 +697,14 @@ describe("Fish Audio adapter and phrase cache", () => {
     const fetchFn = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe("https://api.fish.audio/v1/tts");
       const h = init!.headers as Record<string, string>;
-      expect(h.Authorization).toBe(`Bearer ${REAL_LOOKING}`);
+      expect(h.Authorization).toBe(`Bearer ${FAKE_PROVIDER_KEY}`);
       expect(h.model).toBe("s2.1-pro");
       const body = JSON.parse(String(init!.body));
       expect(body).toMatchObject({ text: "Hello.", reference_id: "voice-1", format: "mp3" });
-      expect(String(init!.body)).not.toContain(REAL_LOOKING);
+      expect(String(init!.body)).not.toContain(FAKE_PROVIDER_KEY);
       return new Response(new Uint8Array([9, 9, 9]));
     });
-    const f = fish({ apiKey: REAL_LOOKING, model: "s2.1-pro", voice: "voice-1", latency: "balanced", fetch: fetchFn as unknown as typeof fetch });
+    const f = fish({ apiKey: FAKE_PROVIDER_KEY, model: "s2.1-pro", voice: "voice-1", latency: "balanced", fetch: fetchFn as unknown as typeof fetch });
     const out = await f.speak("Hello.");
     expect([...out.audio]).toEqual([9, 9, 9]);
     expect(out.mime).toBe("audio/mpeg");
