@@ -10,7 +10,8 @@ import Link from "next/link";
 import type { Address } from "viem";
 
 import { addressUrl, txUrl } from "@/lib/chain";
-import type { DemoVault } from "@/lib/deployment";
+import { etfs, stocks, type DemoVault } from "@/lib/deployment";
+import { symbolList } from "@/lib/symbolList";
 import { formatUsd, shortAddress } from "@/lib/format";
 import type { SetupPlan } from "@/lib/setup";
 import type { StepStatus, VaultProgress } from "@/lib/setupStatus";
@@ -86,13 +87,13 @@ export function VaultStep(p: VaultStepProps) {
     <div className="create">
       {oneTx ? (
         <p className="meta">
-          One transaction creates your vault, already set up: the five stocks with their price checks, the Glance agent for 30 days, and limits of $100 a
+          One transaction creates your vault, already set up: {symbolList([...stocks, ...etfs].map((s) => s.symbol))} with their price checks, the Glance agent for 30 days, and limits of $100 a
           trade and $500 a day each way (a quarter of that while the market is closed). Your deposit goes in with it. You&apos;re the owner from the start,
           and nobody else can move your money. Change any limit later under Limits.
         </p>
       ) : (
         <p className="meta">
-          Sets up your vault one wallet prompt at a time: the five stocks with their price checks, the Glance agent for 29 days, then your first
+          Sets up your vault one wallet prompt at a time: {symbolList(stocks.map((s) => s.symbol))} with their price checks{etfs.length ? ` (${symbolList(etfs.map((e) => e.symbol))} can be added later under Limits)` : ""}, the Glance agent for 29 days, then your first
           deposit. It starts with limits of $100 a trade and $500 a day each way (a quarter of that while the market is closed). You&apos;re the owner,
           and nobody else can move your money. Change any limit later under Limits.
         </p>

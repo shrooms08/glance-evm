@@ -12,6 +12,9 @@ export const env = {
   rpcUrls: orderedRpcUrls(process.env.NEXT_PUBLIC_RPC_URL, process.env.NEXT_PUBLIC_RPC_FALLBACK_URLS),
   explorerUrl: trimSlash(process.env.NEXT_PUBLIC_EXPLORER_URL || "https://explorer.testnet.chain.robinhood.com"),
   walletConnectProjectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "",
-  /** Where the built extension's zip is downloaded from (the install page). Empty: the page says how to build it. */
-  extensionDownloadUrl: process.env.NEXT_PUBLIC_EXTENSION_DOWNLOAD_URL || "",
+  /**
+   * Where the built extension's zip is downloaded from (the install page). Default: the zip this console serves itself
+   * (public/downloads, written by pnpm release:extension).
+   */
+  extensionDownloadUrl: process.env.NEXT_PUBLIC_EXTENSION_DOWNLOAD_URL || "/downloads/glance-extension-latest.zip",
 } as const;

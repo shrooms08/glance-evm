@@ -1,8 +1,8 @@
 /**
- * Voice in settings: the one place Glance asks for the microphone ("Enable voice"), an honest diagnostics block with
- * each check shown separately (including which voice services the Glance API has), and tests for both halves: a real
+ * Voice in settings: the one place Glance asks for the microphone ("Enable voice"), and tests for both halves: a real
  * command through the same path the pages use (recorded here, transcribed and answered by the API), and speaking with
- * the orb following the real playback.
+ * the orb following the real playback. The raw diagnostics (each check, and the API's provider strings) are under
+ * Settings > Developer.
  */
 import { VOICE_RESTING } from "@glance/core/session";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -23,20 +23,16 @@ export function sttCredit(stt: { provider: string; model: string } | null | unde
   return `Speech recognition by ${name}`;
 }
 
-export function VoiceSection({ voiceKey }: { voiceKey: string }) {
+/** The credit line on the settings page: who does what in Glance's voice. */
+export const VOICE_CREDIT = "Voice by AssemblyAI · Understanding by Claude · Speech by Deepgram";
+
+type ServerVoice = { transcription: string; speech: string; intent: string; ok: boolean; reachable: boolean; stt?: { provider: string; model: string } | null };
+
+/** The browser's voice checks and the API's voice services, read once and shared by the card and the diagnostics. */
+export function useVoiceStatus() {
   const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
   const [stored, setStored] = useState<VoiceState | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [orb, setOrb] = useState<OrbState>("idle");
-  const [line, setLine] = useState("");
-  const [server, setServer] = useState<{ transcription: string; speech: string; intent: string; ok: boolean; reachable: boolean; stt?: { provider: string; model: string } | null } | null>(null);
-  const [conversation, setConversation] = useState(false);
-  useEffect(() => {
-    void conversationMode.getValue().then(setConversation, () => {});
-  }, []);
-  const session = useRef<VoiceSession | null>(null);
-  const markUrl = browser.runtime.getURL("/glance-mark.png");
-
+  const [server, setServer] = useState<ServerVoice | null>(null);
   const refresh = useCallback(async () => {
     const [d, s, v] = await Promise.all([diagnose(), api.voiceStatus(), voiceState.getValue()]);
     setDiag(d);
@@ -48,10 +44,29 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
     );
     if (import.meta.env.DEV) console.info(`[glance] voice diagnostics in ${d.browser.name} ${d.browser.version}`, d);
   }, []);
-
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  return { diag, stored, server, refresh };
+}
+
+export type VoiceStatus = ReturnType<typeof useVoiceStatus>;
+
+/**
+ * Voice, as everyone sees it: the microphone's status (and the one button that asks for it), conversation mode, a
+ * test of each half (listening and speaking), and who does what.
+ */
+export function VoiceSection({ voiceKey, status: vs }: { voiceKey: string; status: VoiceStatus }) {
+  const { diag, stored, server, refresh } = vs;
+  const [asking, setAsking] = useState(false);
+  const [orb, setOrb] = useState<OrbState>("idle");
+  const [line, setLine] = useState("");
+  const [conversation, setConversation] = useState(false);
+  useEffect(() => {
+    void conversationMode.getValue().then(setConversation, () => {});
+  }, []);
+  const session = useRef<VoiceSession | null>(null);
+  const markUrl = browser.runtime.getURL("/glance-mark.png");
 
   const enable = async () => {
     setAsking(true);
@@ -181,52 +196,58 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
           </span>
         </label>
         <span className="g-meta">Typing always works, whatever this says.</span>
-        {sttCredit(server?.stt) && (
-          <span className="g-meta" data-testid="stt-credit">
-            {sttCredit(server?.stt)}
-            {server?.stt?.model ? ` (${server.stt.model})` : ""}
-          </span>
-        )}
       </div>
 
-      {diag && (
-        <div className="g-section">
-          <span className="g-ui">Diagnostics</span>
-          <dl className="g-facts" aria-label="Voice diagnostics">
-            <dt>Browser</dt>
-            <dd>
-              {diag.browser.name} {diag.browser.version}
-            </dd>
-            <dt>Transcription (Glance API)</dt>
-            <dd>{server?.transcription ?? "…"}</dd>
-            <dt>Spoken replies (Glance API)</dt>
-            <dd>{server?.speech ?? "…"}</dd>
-            <dt>Understanding (Glance API)</dt>
-            <dd>{server?.intent ?? "…"}</dd>
-            <dt>Browser speech recognition</dt>
-            <dd>{diag.recognition ? "available (fallback only)" : "missing in this build (not needed: transcription is server-side)"}</dd>
-            <dt>Microphone permission</dt>
-            <dd>{{ granted: "granted to Glance", prompt: "not asked yet", denied: "blocked", unknown: "unknown" }[diag.micPermission]}</dd>
-            <dt>Microphone device</dt>
-            <dd>{diag.micDevice === null ? "unknown" : diag.micDevice ? "found" : "none found"}</dd>
-          </dl>
-          <div className="g-row" style={{ gap: 8 }}>
-            <button className="g-btn" onClick={testListen} disabled={!granted}>
-              {orb === "listening" ? "Stop" : "Test listening"}
-            </button>
-            <button className="g-btn" onClick={testSpeak} disabled={!server?.reachable}>
-              Test speaking
-            </button>
-            <button className="g-btn g-btn-ghost" onClick={() => void refresh()}>
-              Check again
-            </button>
-          </div>
-          <div className="g-row" style={{ gap: 12, minHeight: 44 }} aria-live="polite">
-            <Orb state={orb} size={40} markUrl={markUrl} />
-            <span className="g-body">{line}</span>
-          </div>
+      <div className="g-section">
+        <div className="g-row" style={{ gap: 8 }}>
+          <button className="g-btn" onClick={testListen} disabled={!granted}>
+            {orb === "listening" ? "Stop" : "Test listening"}
+          </button>
+          <button className="g-btn" onClick={testSpeak} disabled={!server?.reachable}>
+            Test speaking
+          </button>
+          <button className="g-btn g-btn-ghost" onClick={() => void refresh()}>
+            Check again
+          </button>
         </div>
-      )}
+        <div className="g-row" style={{ gap: 12, minHeight: 44 }} aria-live="polite">
+          <Orb state={orb} size={40} markUrl={markUrl} />
+          <span className="g-body">{line}</span>
+        </div>
+        <span className="g-meta" data-testid="voice-credit">
+          {VOICE_CREDIT}
+        </span>
+      </div>
     </section>
+  );
+}
+
+/** For developers (Settings > Developer): the raw checks, the API's provider strings and the browser's fallback. */
+export function VoiceDiagnostics({ status: { diag, server } }: { status: VoiceStatus }) {
+  if (!diag) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <span className="g-ui">Voice diagnostics</span>
+      <dl className="g-facts" aria-label="Voice diagnostics">
+        <dt>Browser</dt>
+        <dd>
+          {diag.browser.name} {diag.browser.version}
+        </dd>
+        <dt>Transcription (Glance API)</dt>
+        <dd>{server?.transcription ?? "…"}</dd>
+        <dt>Spoken replies (Glance API)</dt>
+        <dd>{server?.speech ?? "…"}</dd>
+        <dt>Understanding (Glance API)</dt>
+        <dd>{server?.intent ?? "…"}</dd>
+        <dt>Speech recognition</dt>
+        <dd>{sttCredit(server?.stt) ? `${sttCredit(server?.stt)}${server?.stt?.model ? ` (${server.stt.model})` : ""}` : "…"}</dd>
+        <dt>Browser speech recognition</dt>
+        <dd>{diag.recognition ? "available (fallback only)" : "missing in this build (not needed: transcription is server-side)"}</dd>
+        <dt>Microphone permission</dt>
+        <dd>{{ granted: "granted to Glance", prompt: "not asked yet", denied: "blocked", unknown: "unknown" }[diag.micPermission]}</dd>
+        <dt>Microphone device</dt>
+        <dd>{diag.micDevice === null ? "unknown" : diag.micDevice ? "found" : "none found"}</dd>
+      </dl>
+    </div>
   );
 }

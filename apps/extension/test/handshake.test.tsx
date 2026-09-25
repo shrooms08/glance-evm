@@ -139,6 +139,9 @@ describe("settings: This browser", () => {
     const own = render(createElement(BrowserLink, { vault: VAULT }));
     await act(async () => {});
     expect(buttons(own.host)).toEqual(["Link Glance", "Unlink this browser"]);
+    // The title and its status are separate elements: never "This browserNot linked."
+    expect(own.host.querySelector('[data-testid="link-status"]')?.textContent).toBe("Not linked");
+    expect(own.host.textContent).not.toMatch(/This browserNot/);
     own.unmount();
     expect(vaultSourceLine("console", VAULT)).toMatch(/Set by the console/);
     expect(vaultSourceLine(null, "")).toMatch(/Set me up/);

@@ -37,6 +37,8 @@ interface Props {
   companies: PageCompany[];
   onRevealCompany?(symbol: string): void;
   onSwitchMode(): void;
+  /** False in a browser with no side panel (Arc): "Dock" becomes a short note instead. */
+  canDock?: boolean;
   onClose?(): void;
   /** Focus the command box on open (keyboard users). */
   autoFocusInput?: boolean;
@@ -49,7 +51,7 @@ interface Props {
   renderChart?(symbol: string, onClose?: () => void, range?: import("@glance/core/chart").ChartRange): ReactNode;
 }
 
-export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, onClose, autoFocusInput, pageContext, renderChart }: Props) {
+export function Panel({ layout, assistant, host, companies, onRevealCompany, onSwitchMode, canDock = true, onClose, autoFocusInput, pageContext, renderChart }: Props) {
   const g = useGlance();
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
@@ -290,9 +292,15 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
       </form>
 
       <div className="g-between" style={{ padding: "0 var(--g-s7) var(--g-s5)", flexWrap: "wrap", rowGap: 0 }}>
-        <button className="g-btn g-btn-ghost" onClick={onSwitchMode}>
-          {layout === "tall" ? "Float on the page instead" : "Dock to the side panel"}
-        </button>
+        {layout === "tall" || canDock ? (
+          <button className="g-btn g-btn-ghost" onClick={onSwitchMode}>
+            {layout === "tall" ? "Float on the page instead" : "Dock to the side panel"}
+          </button>
+        ) : (
+          <span className="g-meta" data-testid="no-side-panel">
+            This browser keeps Glance as a floating panel.
+          </span>
+        )}
         <button className="g-btn g-btn-ghost" onClick={() => assistant.setCard({ kind: "portfolio", key: Date.now() })}>
           Portfolio
         </button>

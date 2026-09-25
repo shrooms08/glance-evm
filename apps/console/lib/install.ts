@@ -3,6 +3,12 @@
  */
 export type BrowserKey = "chrome" | "brave" | "arc" | "edge";
 
+/** Every install of Glance has this ID (the manifest's fixed key); the API allows it by name. */
+export const GLANCE_EXTENSION_ID = "gmcdcaoneeohbacbnafjdnkkoojgnogl";
+
+/** Glance runs in Chromium browsers only. */
+export const UNSUPPORTED_BROWSERS_NOTE = "Firefox and Safari aren't supported: Glance needs Chrome, Brave, Edge or Arc.";
+
 export const BROWSERS: Record<BrowserKey, { name: string; extensionsPage: string; developerMode: string; pin: string }> = {
   chrome: { name: "Chrome", extensionsPage: "chrome://extensions", developerMode: "Turn on Developer mode (top right).", pin: "Click the puzzle piece in the toolbar, then the pin next to Glance." },
   brave: { name: "Brave", extensionsPage: "brave://extensions", developerMode: "Turn on Developer mode (top right).", pin: "Click the puzzle piece in the toolbar, then the pin next to Glance." },
@@ -35,6 +41,8 @@ export function installSteps(browser: BrowserKey, downloadUrl: string): InstallS
     { title: `Open ${b.name}'s extensions page`, detail: "Paste this into the address bar (a page can't open it for you).", copy: b.extensionsPage },
     { title: "Turn on Developer mode", detail: b.developerMode },
     { title: "Load unpacked", detail: "Choose the unzipped Glance folder." },
+    { title: "Check it's Glance", detail: `Its ID on the extensions page should be ${GLANCE_EXTENSION_ID}.`, copy: GLANCE_EXTENSION_ID },
     { title: "Pin Glance", detail: b.pin },
+    { title: "Set me up", detail: "Click the Glance orb (or open its panel) and press Set me up: it opens Get started here, where you connect a wallet and create your vault." },
   ];
 }

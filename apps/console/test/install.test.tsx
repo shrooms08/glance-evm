@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InstallGuide } from "../app/install/page";
 import { BROWSERS, detectBrowser, installSteps } from "../lib/install";
+import { env } from "../lib/env";
 
 afterEach(cleanup);
 
@@ -20,9 +21,20 @@ describe("which browser", () => {
 });
 
 describe("the steps", () => {
-  it("download, unzip, the browser's own extensions page, Developer mode, Load unpacked, pin", () => {
+  it("download, unzip, the browser's own extensions page, Developer mode, Load unpacked, check the ID, pin, Set me up", () => {
     const steps = installSteps("brave", "https://example.com/glance.zip");
-    expect(steps.map((s) => s.title)).toEqual(["Download Glance", "Unzip it", "Open Brave's extensions page", "Turn on Developer mode", "Load unpacked", "Pin Glance"]);
+    expect(steps.map((s) => s.title)).toEqual([
+      "Download Glance",
+      "Unzip it",
+      "Open Brave's extensions page",
+      "Turn on Developer mode",
+      "Load unpacked",
+      "Check it's Glance",
+      "Pin Glance",
+      "Set me up",
+    ]);
+    expect(steps[5]!.detail).toBe("Its ID on the extensions page should be gmcdcaoneeohbacbnafjdnkkoojgnogl.");
+    expect(steps[7]!.detail).toMatch(/connect a wallet and create your vault/);
     expect(steps[2]!.copy).toBe("brave://extensions");
     for (const b of ["chrome", "arc", "edge"] as const) expect(installSteps(b, "")[2]!.copy).toBe(BROWSERS[b].extensionsPage);
   });
@@ -37,8 +49,15 @@ describe("the steps", () => {
     render(<InstallGuide installed={false} browser="arc" onBrowser={() => {}} downloadUrl="https://example.com/glance.zip" />);
     expect(screen.getByRole("link", { name: "Download Glance" }).getAttribute("href")).toBe("https://example.com/glance.zip");
     expect(screen.getByText("arc://extensions")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[0]!);
     expect(writeText).toHaveBeenCalledWith("arc://extensions");
+    // Plainly: which browsers aren't supported, and the way on to Set me up.
+    expect(screen.getByTestId("unsupported").textContent).toBe("Firefox and Safari aren't supported: Glance needs Chrome, Brave, Edge or Arc.");
+    expect(screen.getByRole("link", { name: "Set me up" }).getAttribute("href")).toBe("/start");
+  });
+
+  it("by default the download is the zip this console serves (pnpm release:extension writes it)", () => {
+    expect(env.extensionDownloadUrl).toBe("/downloads/glance-extension-latest.zip");
   });
 
   it("once Glance is detected: 'You're set. Open any news article.', with the shortcuts", () => {

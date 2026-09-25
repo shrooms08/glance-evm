@@ -18,6 +18,7 @@ import { capRows, freesUp, marketNow, type CapRow, type CapState, type CapUse } 
 import { addressUrl } from "@/lib/chain";
 import { formatDuration, formatUsd, formatWhen, shortAddress } from "@/lib/format";
 import { useHref, usePortfolio, useVaultView } from "@/lib/vault";
+import { approvedLine } from "@/lib/symbolList";
 
 export default function Dashboard() {
   return <OwnVaultGate>{(vault) => <DashboardFor vault={vault} />}</OwnVaultGate>;
@@ -256,7 +257,7 @@ function AgentPromise({ v }: { v: VaultView }) {
         <div>
           <p className="eyebrow text-accent">Can</p>
           <ul className="list">
-            <li>Buy and sell the five approved stocks, only through the approved desk.</li>
+            <li>{approvedLine(v)}</li>
             <li>At a price no worse than the oracle's, minus {v.limits.maxSlippage} slippage.</li>
             <li>Up to {v.limits.perTrade.formatted} a trade, {v.limits.dailyBuy.formatted} of buys and {v.limits.dailySell.formatted} of sells in any 24 hours, and {v.limits.weekendCap} of that while the market's closed.</li>
             <li>Only until its permission expires, and never while paused.</li>

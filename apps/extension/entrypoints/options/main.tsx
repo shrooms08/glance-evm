@@ -1,13 +1,17 @@
 /**
- * Settings: API base URL, vault address, the glance and voice keys, floating or docked default, console URL, voice replies, sounds, the
- * "Enable voice" microphone grant with voice diagnostics, and a connection test against GET /health.
+ * Settings. Visible: the vault (or "Set me up"), this browser's link, voice (the microphone, tests, credits), and the
+ * keys and sounds. Under a closed "Developer" section: the API and console URLs, a vault typed by hand, the extension
+ * ID and CORS hint, a connection test against GET /health, and the raw voice diagnostics.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
 import { Orb } from "../../components/Orb";
-import { VoiceSection } from "./VoiceSection";
+import { useVoiceStatus, VoiceDiagnostics, VoiceSection } from "./VoiceSection";
+import { openConsolePage } from "../../lib/linking";
+import { installPageUrl, latestZipUrl } from "../../lib/getGlance";
+import { sidePanelSupported } from "../../lib/sidePanel";
 import { api } from "../../lib/api";
 import type { Health } from "../../lib/api-types";
 import { mountPageStyles } from "../../lib/extensionPage";
@@ -17,6 +21,7 @@ import {
   apiBaseUrl,
   consoleUrl,
   DEFAULT_API_URL,
+  DEFAULT_CONSOLE_URL,
   defaultMode,
   hotkeyLetter,
   isAddress,
@@ -70,6 +75,8 @@ function Settings() {
   const [source, setSource] = useState<VaultSource | null>(null);
   const [loadedVault, setLoadedVault] = useState<string>("");
   const loadedRef = useRef("");
+  // A browser with no side panel (Arc) can't dock: the option says so instead of looking broken.
+  const canDock = sidePanelSupported(browser.sidePanel);
 
   // The console's handshake can set the vault while this page is open: show it (unless it's being edited here).
   useEffect(() => {
@@ -130,7 +137,7 @@ function Settings() {
         return;
       }
     }
-    // The vault is saved only if it was changed here (by hand, under Advanced).
+    // The vault is saved only if it was changed here (by hand, under Developer).
     const vaultChanged = form.vault.trim() !== loadedVault;
     await Promise.all([
       apiBaseUrl.setValue(form.api.replace(/\/+$/, "")),
@@ -152,6 +159,9 @@ function Settings() {
     setTest(res.ok ? { state: "ok", health: res.data } : { state: "failed", message: res.message });
   };
 
+  const voice = useVoiceStatus();
+  const hasVault = isAddress(form.vault);
+
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px 96px", display: "flex", flexDirection: "column", gap: 32 }}>
       <header className="g-row" style={{ gap: 14 }}>
@@ -162,43 +172,40 @@ function Settings() {
         </div>
       </header>
 
-      <section className="g-card" aria-labelledby="conn">
+      <section className="g-card" aria-labelledby="vault-h">
         <div className="g-section">
-          <h2 id="conn" className="g-ui">
-            Connection
+          <h2 id="vault-h" className="g-ui">
+            Vault
           </h2>
-          <Field label="API base URL" hint="Where the Glance API runs. Default http://localhost:8790." error={errors.api}>
-            <input className="g-input" value={form.api} onChange={(e) => set("api", e.target.value.trim())} spellCheck={false} />
-          </Field>
-          <Field label="Vault" hint={vaultSourceLine(source, form.vault)} error={errors.vault}>
-            <span className="g-mono">{isAddress(form.vault) ? form.vault : "None yet"}</span>
-            {/* Filled by the console when you connect Glance there: typing an address is for developers. */}
-            <details>
-              <summary className="g-meta">Advanced: enter a vault address by hand</summary>
-              <input className="g-input g-mono" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
-            </details>
-          </Field>
-          <BrowserLink vault={form.vault} />
-          <div className="g-row">
-            <button className="g-btn" onClick={() => void runTest()} disabled={test.state === "running"}>
-              {test.state === "running" ? "Testing…" : "Test connection"}
-            </button>
-            <span className="g-meta">Extension ID: <span className="g-mono">{browser.runtime.id}</span> (add chrome-extension://{browser.runtime.id} to the API's CORS_ORIGINS)</span>
-          </div>
+          {hasVault ? (
+            <>
+              <span className="g-mono" data-testid="vault-address">
+                {form.vault}
+              </span>
+              <span className="g-meta">{vaultSourceLine(source, form.vault)}</span>
+            </>
+          ) : (
+            <div className="g-row" style={{ gap: 12 }}>
+              <span className="g-ui" data-testid="vault-address">
+                None yet
+              </span>
+              <button className="g-btn g-btn-primary" onClick={() => void openConsolePage("start")}>
+                Set me up
+              </button>
+            </div>
+          )}
         </div>
-        {test.state === "failed" && (
-          <div className="g-section">
-            <span className="g-body">{test.message}</span>
-            <span className="g-meta">Start the API with `pnpm --filter api dev`, then test again.</span>
-          </div>
-        )}
-        {test.state === "ok" && <HealthView health={test.health} />}
+        <div className="g-section">
+          <BrowserLink vault={form.vault} />
+        </div>
       </section>
+
+      <VoiceSection voiceKey={form.voiceKey} status={voice} />
 
       <section className="g-card" aria-labelledby="talk">
         <div className="g-section">
           <h2 id="talk" className="g-ui">
-            Talking to Glance
+            Keys and sounds
           </h2>
           <Field label="Glance key (tap)" hint="Tap with Option (Alt on Windows): scan the page and show the companies found. It never listens." error={errors.hotkey}>
             <div className="g-row">
@@ -212,10 +219,19 @@ function Settings() {
               <input className="g-input g-mono" style={{ width: 64 }} maxLength={1} aria-label="Voice key letter" value={form.voiceKey} onChange={(e) => set("voiceKey", e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))} />
             </div>
           </Field>
-          <Field label="Where Glance lives" hint="Floating orb on every page, or docked in Chrome's side panel.">
+          <Field label="Where Glance lives" hint={canDock ? "Floating orb on every page, or docked in the browser's side panel." : "This browser has no side panel, so Glance stays a floating panel."}>
             <div className="g-chips" role="radiogroup">
               {(["floating", "docked"] as Mode[]).map((m) => (
-                <button key={m} className="g-chip" role="radio" aria-checked={form.mode === m} aria-pressed={form.mode === m} onClick={() => set("mode", m)} style={{ fontFamily: "var(--g-font)" }}>
+                <button
+                  key={m}
+                  className="g-chip"
+                  role="radio"
+                  aria-checked={form.mode === m}
+                  aria-pressed={form.mode === m}
+                  disabled={m === "docked" && !canDock}
+                  onClick={() => set("mode", m)}
+                  style={{ fontFamily: "var(--g-font)" }}
+                >
                   {m === "floating" ? "Floating orb" : "Docked side panel"}
                 </button>
               ))}
@@ -228,20 +244,6 @@ function Settings() {
             <input type="checkbox" checked={form.sounds} onChange={(e) => set("sounds", e.target.checked)} /> Sounds (a soft liquid sound when the panel
             opens and closes)
           </label>
-          <DevToggle />
-        </div>
-      </section>
-
-      <VoiceSection voiceKey={form.voiceKey} />
-
-      <section className="g-card" aria-labelledby="console">
-        <div className="g-section">
-          <h2 id="console" className="g-ui">
-            Console
-          </h2>
-          <Field label="Console URL" hint="Where the owner renews the agent, changes limits and funds the vault." error={errors.console}>
-            <input className="g-input" value={form.console} onChange={(e) => set("console", e.target.value.trim())} spellCheck={false} />
-          </Field>
         </div>
       </section>
 
@@ -253,6 +255,55 @@ function Settings() {
           {saved}
         </span>
       </div>
+
+      <span className="g-meta" data-testid="get-glance">
+        Get Glance for another browser:{" "}
+        <a href={latestZipUrl(form.console || DEFAULT_CONSOLE_URL)} target="_blank" rel="noreferrer">
+          the latest version (zip)
+        </a>{" "}
+        and{" "}
+        <a href={installPageUrl(form.console || DEFAULT_CONSOLE_URL)} target="_blank" rel="noreferrer">
+          the install steps
+        </a>
+        .
+      </span>
+
+      {/* Everything a developer needs, closed by default. */}
+      <details className="g-card" data-testid="developer">
+        <summary className="g-ui" style={{ padding: "var(--g-s5) var(--g-s7)", cursor: "pointer" }}>
+          Developer
+        </summary>
+        <div className="g-section">
+          <Field label="API base URL" hint={`Where the Glance API runs. This build's default: ${DEFAULT_API_URL}.`} error={errors.api}>
+            <input className="g-input" value={form.api} onChange={(e) => set("api", e.target.value.trim())} spellCheck={false} />
+          </Field>
+          <Field label="Console URL" hint="Where the owner renews the agent, changes limits and funds the vault." error={errors.console}>
+            <input className="g-input" value={form.console} onChange={(e) => set("console", e.target.value.trim())} spellCheck={false} />
+          </Field>
+          <Field label="Enter a vault address by hand" hint="The console sets this when you connect Glance there; typing one is for developers." error={errors.vault}>
+            <input className="g-input g-mono" value={form.vault} placeholder="0x…" onChange={(e) => set("vault", e.target.value.trim())} spellCheck={false} />
+          </Field>
+          <span className="g-meta">
+            Extension ID: <span className="g-mono">{browser.runtime.id}</span>. The API allows it through CORS_ORIGINS (chrome-extension://{browser.runtime.id}).
+          </span>
+          <div className="g-row">
+            <button className="g-btn" onClick={() => void runTest()} disabled={test.state === "running"}>
+              {test.state === "running" ? "Testing…" : "Test connection"}
+            </button>
+          </div>
+          {test.state === "failed" && (
+            <>
+              <span className="g-body">{test.message}</span>
+              <span className="g-meta">Start the API with `pnpm --filter api dev`, then test again.</span>
+            </>
+          )}
+        </div>
+        {test.state === "ok" && <HealthView health={test.health} />}
+        <div className="g-section">
+          <VoiceDiagnostics status={voice} />
+          <DevToggle />
+        </div>
+      </details>
     </main>
   );
 }

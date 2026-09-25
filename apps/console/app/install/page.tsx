@@ -3,12 +3,13 @@
  * Get Glance: installing the extension, step by step for Chrome, Brave, Arc and Edge. The page notices the moment Glance
  * is in this browser and moves on: "You're set. Open any news article."
  */
+import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
 
 import { env } from "@/lib/env";
 import { useExtensionInstalled } from "@/lib/extensionPresence";
 import { useGlanceExtension } from "@/lib/glanceExtension";
-import { BROWSERS, detectBrowser, installSteps, type BrowserKey } from "@/lib/install";
+import { BROWSERS, detectBrowser, installSteps, UNSUPPORTED_BROWSERS_NOTE, type BrowserKey } from "@/lib/install";
 
 const noSubscribe = () => () => {};
 
@@ -107,6 +108,12 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
             ))}
           </ol>
           <p className="meta">This page moves on by itself once Glance is installed (reload this page if you installed it in another window).</p>
+          <p className="meta" data-testid="unsupported">
+            {UNSUPPORTED_BROWSERS_NOTE}
+          </p>
+          <Link className="btn" href="/start">
+            Set me up
+          </Link>
         </section>
       )}
     </div>

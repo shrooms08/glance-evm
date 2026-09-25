@@ -95,7 +95,7 @@ Before you start:
 |---|---|---|
 | `NEXT_PUBLIC_GLANCE_API_URL` | the API | your Railway URL (step 1.6) |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect for mobile wallets (public by design) | cloud.reown.com → your project → Project ID |
-| `NEXT_PUBLIC_EXTENSION_DOWNLOAD_URL` | where the install page links the extension zip | wherever you upload the zip from step 4 (e.g. a GitHub release asset) |
+| `NEXT_PUBLIC_EXTENSION_DOWNLOAD_URL` | optional; default `/downloads/glance-extension-latest.zip`, which the console serves itself (`pnpm release:extension` writes it) | leave unset |
 | `NEXT_PUBLIC_EXPLORER_URL` | optional; default: the Robinhood Chain testnet explorer | leave unset |
 | `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_RPC_FALLBACK_URLS` | optional; **leave unset**: the browser uses the public RPC. Never a keyed URL | — |
 
@@ -108,6 +108,17 @@ Set `CORS_ORIGINS` to `chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl,<CONS
 trailing slash) and redeploy. The banner's `CORS origins:` line should show both, and no warning.
 
 ## 4. The extension, pointed at production
+
+To publish the download the console's **Get Glance** page offers (the hosted URLs are the defaults):
+
+```
+pnpm release:extension
+```
+
+This builds the production extension and copies the zip to `apps/console/public/downloads/glance-extension-<version>.zip`
+and `glance-extension-latest.zip`. Commit both: Vercel serves them at `/downloads/…` on the next deploy.
+
+For a build against other URLs:
 
 ```
 API_URL=<your Railway URL> CONSOLE_URL=<your Vercel URL> pnpm --filter extension build:prod

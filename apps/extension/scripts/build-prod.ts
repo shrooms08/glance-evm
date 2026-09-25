@@ -45,20 +45,25 @@ function run(args: string[], env: Record<string, string>) {
   if (r.status !== 0) throw new Error(`wxt ${args.join(" ")} failed`);
 }
 
+/** Builds and zips the production extension; returns the zip's path and the version. Throws with a clear message. */
+export function buildProd(apiUrl: string | undefined, consoleUrlValue: string | undefined): { zip: string; version: string } {
+  const api = productionUrl("API_URL", apiUrl, true);
+  const consoleUrl = productionUrl("CONSOLE_URL", consoleUrlValue, false);
+  const env = { WXT_API_URL: api, WXT_CONSOLE_URL: consoleUrl, WXT_CONSOLE_ORIGINS: consoleUrl, WXT_OUT_DIR: OUT };
+  console.log(`build:prod: API ${api}, console ${consoleUrl}`);
+  run(["build"], env);
+  run(["zip"], env);
+  const manifest = JSON.parse(readFileSync(resolve(here, OUT, "chrome-mv3/manifest.json"), "utf8")) as { key?: string; version: string };
+  const zip = readdirSync(resolve(here, OUT)).find((f) => f === `glance-extension-${manifest.version}.zip`);
+  if (!manifest.key || extensionIdFor(manifest.key) !== EXTENSION_ID) throw new Error("the built manifest's key doesn't give the fixed extension ID");
+  if (!zip || !existsSync(resolve(here, OUT, zip))) throw new Error("the zip wasn't written");
+  console.log(`build:prod: extension ID ${EXTENSION_ID} (the fixed key, checked)`);
+  return { zip: resolve(here, OUT, zip), version: manifest.version };
+}
+
 if (process.argv[1]?.endsWith("build-prod.ts")) {
   try {
-    const api = productionUrl("API_URL", process.env.API_URL, true);
-    const consoleUrl = productionUrl("CONSOLE_URL", process.env.CONSOLE_URL, false);
-    const env = { WXT_API_URL: api, WXT_CONSOLE_URL: consoleUrl, WXT_CONSOLE_ORIGINS: consoleUrl, WXT_OUT_DIR: OUT };
-    console.log(`build:prod: API ${api}, console ${consoleUrl}`);
-    run(["build"], env);
-    run(["zip"], env);
-    const manifest = JSON.parse(readFileSync(resolve(here, OUT, "chrome-mv3/manifest.json"), "utf8")) as { key?: string; version: string };
-    const zip = readdirSync(resolve(here, OUT)).find((f) => f === `glance-extension-${manifest.version}.zip`);
-    if (!manifest.key || extensionIdFor(manifest.key) !== EXTENSION_ID) throw new Error("the built manifest's key doesn't give the fixed extension ID");
-    if (!zip || !existsSync(resolve(here, OUT, zip))) throw new Error("the zip wasn't written");
-    console.log(`build:prod: extension ID ${EXTENSION_ID} (the fixed key, checked)`);
-    console.log(`build:prod: ${resolve(here, OUT, zip)}`);
+    console.log(`build:prod: ${buildProd(process.env.API_URL, process.env.CONSOLE_URL).zip}`);
   } catch (err) {
     console.error(`build:prod: ${(err as Error).message}`);
     process.exit(1);

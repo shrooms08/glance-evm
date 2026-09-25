@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MarketChip } from "../components/MarketChip";
 import type { CatalogStock, FeedStatus } from "../lib/api";
-import { PriceCard } from "../app/prices/page";
+import { PriceCard } from "../components/PriceCard";
 
 afterEach(cleanup);
 

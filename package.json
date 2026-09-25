@@ -15,6 +15,7 @@
     "build": "forge build && pnpm -r build",
     "dev:extension": "pnpm --filter extension dev",
     "dev:console": "pnpm --filter console dev",
-    "build:extension": "pnpm --filter extension build && pnpm --filter extension zip"
+    "build:extension": "pnpm --filter extension build && pnpm --filter extension zip",
+    "release:extension": "pnpm --filter extension release"
   }
 }

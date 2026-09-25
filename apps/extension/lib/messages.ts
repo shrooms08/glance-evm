@@ -10,6 +10,8 @@ export type ApiResponse<T> =
 
 export type PanelMessage =
   | { kind: "panel:open" }
+  /** Whether this browser has a side panel Glance can open (Arc doesn't): the page hides "Dock" without one. */
+  | { kind: "panel:supported" }
   | { kind: "panel:isOpen" }
   | { kind: "panel:changed"; open: boolean };
 

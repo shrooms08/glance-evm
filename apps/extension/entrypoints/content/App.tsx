@@ -112,6 +112,14 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [openedByKeyboard, setOpenedByKeyboard] = useState(false);
   const [docked, setDocked] = useState(false);
+  /** This browser has a side panel Glance can open (false in Arc): without one, Glance stays a floating panel. */
+  const [canDock, setCanDock] = useState(true);
+  useEffect(() => {
+    void send<boolean>({ kind: "panel:supported" }).then(
+      (ok) => setCanDock(ok !== false),
+      () => {},
+    );
+  }, []);
   /** The float <-> dock movement in progress, if any (components/DockTransition.tsx). */
   const [dockAnim, setDockAnim] = useState<null | "dock" | "undock">(null);
   const wasDocked = useRef(false);
@@ -709,7 +717,10 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const requestSidePanel = () => {
     panelRefused.current = false;
     void send<boolean>({ kind: "panel:open" }).then(
-      (ok) => (panelRefused.current = ok === false),
+      (ok) => {
+        panelRefused.current = ok === false;
+        if (ok === false) setCanDock(false);
+      },
       () => (panelRefused.current = true),
     );
   };
@@ -721,7 +732,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     }
     if (assistant.listening) assistant.stopListening();
     // Not set up yet: the orb opens its setup card right here (docking comes once Glance is ready).
-    if (g.gated !== false) {
+    // Not set up yet, or a browser with no side panel (Arc): the orb opens its floating panel right here.
+    if (g.gated !== false || !canDock) {
       setPanelOpen((open) => !open);
       return;
     }
@@ -793,6 +805,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               companies={companies}
               onRevealCompany={(s) => underliner.reveal(s)}
               onSwitchMode={switchToDocked}
+              canDock={canDock}
               onClose={() => {
                 soundCue.current.request("close");
                 setPanelOpen(false);

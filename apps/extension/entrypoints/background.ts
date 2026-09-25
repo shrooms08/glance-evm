@@ -38,6 +38,7 @@ async function openConsole(page: ConsolePage, vault?: string): Promise<string> {
 import { relayShowMe, SHOWME_PORT } from "../lib/showStream";
 import type { ShowMeRequest } from "../lib/api";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../lib/voiceMessages";
+import { sidePanelSupported } from "../lib/sidePanel";
 
 const READ_TIMEOUT_MS = 15_000;
 const TRADE_TIMEOUT_MS = 90_000; // a trade waits for its receipt
@@ -319,6 +320,8 @@ export default defineBackground(() => {
         return browser.runtime.openOptionsPage().then(() => true);
       case "panel:isOpen":
         return Promise.resolve(sender.tab?.windowId !== undefined && openPanels.has(sender.tab.windowId));
+      case "panel:supported":
+        return Promise.resolve(sidePanelSupported(browser.sidePanel));
       case "panel:open": {
         const windowId = sender.tab?.windowId;
         if (windowId === undefined || !browser.sidePanel) return Promise.resolve(false);

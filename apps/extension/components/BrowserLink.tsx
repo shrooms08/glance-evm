@@ -10,8 +10,8 @@ import { isAddress, type VaultSource } from "../lib/settings";
 /** Where the vault came from, in a line. */
 export function vaultSourceLine(source: VaultSource | null, vault: string): string {
   if (source === "console") return "Set by the console when you connected Glance to your vault.";
-  if (source === "manual") return "Entered by hand (Advanced).";
-  return isAddress(vault) ? "Entered by hand (Advanced)." : "Not set up yet: Set me up in the panel opens the console's Get started.";
+  if (source === "manual") return "Entered by hand (Developer).";
+  return isAddress(vault) ? "Entered by hand (Developer)." : "Not set up yet: Set me up opens the console's Get started.";
 }
 
 type LinkView = { state: "checking" } | { state: "linked"; until: number } | { state: "not-linked"; reason: string } | { state: "waiting" } | { state: "unreachable" };
@@ -56,9 +56,16 @@ export function BrowserLink({ vault }: { vault: string }) {
     setView({ state: "not-linked", reason: "unknown" });
   };
 
+  const status = view.state === "linked" ? "Linked" : view.state === "checking" ? "Checking…" : view.state === "waiting" ? "Waiting…" : view.state === "unreachable" ? "Unknown" : "Not linked";
   return (
-    <div className="g-field">
-      <span className="g-ui">This browser</span>
+    // A column of its own (it isn't inside a Field): the title, its status and the line never run together.
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div className="g-row" style={{ gap: 8 }}>
+        <span className="g-ui">This browser</span>{" "}
+        <span className="g-chip" data-testid="link-status" data-linked={view.state === "linked" || undefined}>
+          {status}
+        </span>{" "}
+      </div>
       <span className="g-meta">
         {view.state === "linked"
           ? `${linkedUntil(view.until)}. It may ask Glance to trade this vault within its limits. It can never withdraw.`
