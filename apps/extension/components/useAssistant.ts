@@ -63,6 +63,8 @@ export type AssistantCard =
   | { kind: "chart"; symbol: string; key: number; range?: import("@glance/core/chart").ChartRange }
   /** The Baskets view; `buy` opens straight on a basket's confirm card, `notice` says what just happened. */
   | { kind: "baskets"; key: number; buy?: { basketId: string; amount: string }; notice?: string }
+  /** 2 or 3 stocks side by side, rebased to 100 (`data`: already fetched for the typed path). */
+  | { kind: "compare"; key: number; symbols: string[]; range: import("@glance/core/chart").ChartRange; data?: import("../lib/api-types").ChartFactsView }
   | null;
 
 export interface AssistantOptions {
@@ -203,6 +205,14 @@ export function useAssistant(opts: AssistantOptions = {}) {
           setCard({ kind: "baskets", key: ++seq.current, buy: { basketId: basket.id, amount: cmd.amount } });
           return;
         }
+        case "compare": {
+          // Every number said comes from the computed facts (GET /chart/:symbols/facts), never from a model.
+          g.setOrb({ state: "thinking", line: `Comparing ${cmd.symbols.join(" and ")}`, meta: "" });
+          const res = await api.chartFacts(cmd.symbols, cmd.range, isAddress(g.vaultAddress) ? g.vaultAddress : undefined);
+          setCard({ kind: "compare", key: ++seq.current, symbols: cmd.symbols, range: cmd.range, ...(res.ok ? { data: res.data } : {}) });
+          if (!res.ok) return say(res.message);
+          return say(res.data.comparison?.sentence ?? "", "Rebased to 100 · from Chainlink prices");
+        }
         case "ask":
           if (onAsk.current) return onAsk.current(cmd.question);
           return say(LINES.cantThink);
@@ -249,6 +259,10 @@ export function useAssistant(opts: AssistantOptions = {}) {
             setCard({ kind: "chart", symbol: it.symbol, key: ++seq.current });
             onChart.current?.(it.symbol);
           }
+          break;
+        case "compare":
+          // The API is already speaking the comparison (built from the computed facts); the card draws it.
+          if (it.symbols && it.symbols.length >= 2) setCard({ kind: "compare", key: ++seq.current, symbols: it.symbols, range: it.range ?? "1W" });
           break;
         case "basket-buy":
         case "basket-make":

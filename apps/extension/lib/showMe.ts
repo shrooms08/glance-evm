@@ -84,6 +84,10 @@ export interface ShowMeDeps {
   /** The reply ended (or was cancelled): fade the drawings (or clear them). */
   done(cancelled: boolean): void;
   lastGuard?: () => { code: string; message: string } | null;
+  /** The vault (for "since your last buy" in chart answers). */
+  vault?: () => string | undefined;
+  /** The glance key's label (⌥G): said when a chart on the page can't be seen (no screenshot without it). */
+  glanceKey?: () => string;
   /**
    * Streamed answers (preferred when given): each sentence arrives as soon as Claude has written it, and is spoken as
    * one part of the reply while the next is still being written.
@@ -95,6 +99,24 @@ export interface ShowMeDeps {
 export interface ShowMeRun {
   cancel(): void;
   finished: Promise<void>;
+}
+
+/**
+ * The request: the question and the page, a screenshot when there is one, and (when a chart or image was asked about
+ * and none could be taken) a flag so the answer says how to allow it.
+ */
+function showMeBody(question: string, d: ShowMeDeps, page: ReturnType<ShowMeDeps["readPage"]>, screenshot: string | undefined): ShowMeRequest {
+  const vault = d.vault?.();
+  return {
+    question,
+    surface: d.surface,
+    page,
+    openChart: d.openChart?.() ?? null,
+    ...(screenshot ? { screenshot } : {}),
+    lastGuard: d.lastGuard?.() ?? null,
+    ...(vault ? { vault } : {}),
+    ...(!screenshot && wantsScreenshot(question) ? { noScreenshot: { glanceKey: d.glanceKey?.() ?? "⌥G" } } : {}),
+  };
 }
 
 /** Runs one Show me answer. */
@@ -148,7 +170,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       screenshot = (shot ? await d.downscale(shot).catch(() => null) : null) ?? undefined;
     }
     if (cancelled) return;
-    const res = await d.ask(fitShowMeBody({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null }));
+    const res = await d.ask(fitShowMeBody(showMeBody(question, d, page, screenshot)));
     if (cancelled) return;
     if (!res.ok) {
       d.say(res.message, "idle");
@@ -203,7 +225,7 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       onPartEnd: (i) => perPart[i]?.finish(),
       onCut: (i) => (cutAt = i),
     });
-    const res = await d.askStream!(fitShowMeBody({ question, surface: d.surface, page, openChart: d.openChart?.() ?? null, ...(screenshot ? { screenshot } : {}), lastGuard: d.lastGuard?.() ?? null }), (sentence) => {
+    const res = await d.askStream!(fitShowMeBody(showMeBody(question, d, page, screenshot)), (sentence) => {
       if (cancelled) return;
       if (sentence.chart) chartRange = sentence.chart.range;
       const sched = new ShowScheduler(sentence.actions, sentence.spoken, act);

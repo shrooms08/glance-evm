@@ -12,7 +12,7 @@
  */
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
-import { isAddress } from "viem";
+import { getAddress, isAddress } from "viem";
 import { z } from "zod";
 
 import type { AppContext } from "../context.js";
@@ -20,6 +20,7 @@ import { LINES } from "@glance/core/persona";
 
 import { ApiError, portfolioView, priceView, vaultView, whyView } from "../services.js";
 import { spokenSummary } from "../why.js";
+import { factsView } from "../chartFacts.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
 import { warmAnthropic } from "../anthropicHttp.js";
 import { VOICE_RESTING } from "@glance/core/session";
@@ -145,6 +146,11 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
     case "chart":
       // The extension opens the side panel on the chart; the chart itself is read from GET /chart there.
       return { reply: LINES.hereIsChart(name) };
+    case "compare": {
+      // Numbers from code only: the comparison sentence is built from the computed facts.
+      const view = await factsView(ctx, it.symbols ?? [], it.range ?? "1W", vault && isAddress(vault) ? getAddress(vault) : undefined);
+      return { reply: view.comparison?.sentence ?? "", facts: { compare: view.comparison?.rows ?? [] } };
+    }
     case "basket-buy":
     case "basket-make":
     case "baskets":
@@ -244,6 +250,7 @@ export function registerVoice(
       intent: it.intent,
       symbol: it.symbol,
       amount: it.amount,
+      ...(it.symbols ? { symbols: it.symbols, range: it.range } : {}),
       reply,
       facts: replyFacts,
       source: it.source,

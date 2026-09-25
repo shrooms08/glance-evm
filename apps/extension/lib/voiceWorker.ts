@@ -379,7 +379,10 @@ export class VoiceWorker {
       this.emit(s, { type: "timing", timing });
       return this.emit(s, { type: "end" });
     }
-    this.emit(s, { type: "intent", intent: { intent: intent.intent, symbol: intent.symbol, amount: intent.amount, reply: intent.reply } });
+    this.emit(s, {
+      type: "intent",
+      intent: { intent: intent.intent, symbol: intent.symbol, amount: intent.amount, reply: intent.reply, ...(intent.symbols ? { symbols: intent.symbols, range: intent.range } : {}) },
+    });
     if (!intent.reply.trim()) {
       // Nothing to say here ("ask": the page answers with Show me, and speaks that).
       this.emit(s, { type: "timing", timing });

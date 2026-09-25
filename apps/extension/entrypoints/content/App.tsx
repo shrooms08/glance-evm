@@ -251,6 +251,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           if (docked) void requestCard({ kind: "portfolio" });
           else assistant.setCard({ kind: "portfolio", key: Date.now() });
         },
+        vault: () => (/^0x[0-9a-fA-F]{40}$/.test(g.vaultAddress) ? g.vaultAddress : undefined),
+        glanceKey: () => g.shortcuts?.glance || keyLabel(g.glanceKey),
         say: (line, state, note) => g.setOrb({ state, line, meta: note ?? (onConsole ? "Show me · on the console" : "Show me") }),
         done: (cancelled) => {
           if (cancelled) {

@@ -246,6 +246,25 @@ describe("Show me, end to end (faked API and voice)", () => {
     await run.finished;
   });
 
+  it("no screenshot possible (activeTab only comes with the glance key): the request says so, with the key; the vault goes too", async () => {
+    const d = deps({ capture: vi.fn(async () => null), vault: () => "0x1111111111111111111111111111111111111111", glanceKey: () => "⌥G" });
+    const run = runShowMe("what does this chart show?", d);
+    await flush();
+    const body = (d.ask as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { screenshot?: string; noScreenshot?: { glanceKey: string }; vault?: string };
+    expect(body.screenshot).toBeUndefined();
+    expect(body.noScreenshot).toEqual({ glanceKey: "⌥G" });
+    expect(body.vault).toBe("0x1111111111111111111111111111111111111111");
+    d.end();
+    await run.finished;
+    // A question that isn't about a picture never carries the flag.
+    const d2 = deps({ capture: vi.fn(async () => null) });
+    const run2 = runShowMe("how did Tesla do this week?", d2);
+    await flush();
+    expect(((d2.ask as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { noScreenshot?: unknown }).noScreenshot).toBeUndefined();
+    d2.end();
+    await run2.finished;
+  });
+
   it("Escape cancels: the voice stops, drawings clear, the orb comes home, and nothing else fires", async () => {
     const spoken = "First. Then later, the margin.";
     const d = deps({}, { spoken, actions: [{ kind: "CIRCLE", quote: "gross margin", at: spoken.indexOf("the margin") }] });

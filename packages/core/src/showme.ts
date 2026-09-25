@@ -330,10 +330,26 @@ export function rangeFor(question: string): "1D" | "1W" | "1M" {
 // Which requests are Show me / teach / guide
 // ---------------------------------------------------------------------------------------------------------------------
 
+/**
+ * A question about how a price or chart did (answered by Show me with the computed chart facts): "how did Tesla do this
+ * week?", "what was the biggest drop?", "how much is it down from the peak?", "how am I doing on AMD since I bought?".
+ */
+export function isChartQuestion(text: string): boolean {
+  const t = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ").trim();
+  return (
+    /\bhow (did|has|have|is|was|am|are) (.+ )?(do|did|doing|done|perform|performed|performing|go|gone|going)\b.*\b(today|this week|this month|week|month|since|lately|so far)\b/.test(t) ||
+    /\b(biggest|largest|worst|best|sharpest) (single )?(drop|fall|dip|rise|jump|gain|move|day)\b/.test(t) ||
+    /\b(down|up|off) from (the|its|their) (peak|high|top|low)\b|\bmax(imum)? drawdown\b|\bdrawdown\b/.test(t) ||
+    /\bsince (i|we) (bought|last bought|bought it|got in)\b|\bsince my (last )?buy\b/.test(t) ||
+    /\bhow (bumpy|volatile|choppy|smooth)\b|\bvolatility\b/.test(t)
+  );
+}
+
 /** A question about the page, a concept, or how to use Glance (lowercased, normalised text). */
 export function isAsk(text: string): boolean {
   const t = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ").trim();
   return (
+    isChartQuestion(t) ||
     /\b(this|the|that) (article|page|story|post|piece|chart|graph|image|picture|table|paragraph|section|headline|report)\b/.test(t) ||
     /\bshow me (where|what|how|which)\b|\bwhere (does|did|is) (it|this|the \w+) (say|mention|talk)/.test(t) ||
     /\b(point|circle|underline|highlight) (to |at |out )?(it|that|where|the)\b/.test(t) ||

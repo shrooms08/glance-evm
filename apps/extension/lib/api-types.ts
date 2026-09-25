@@ -216,6 +216,18 @@ export interface WhyMoved {
   cached: boolean;
 }
 
+/** GET /chart/:symbols/facts: the computed breakdown of a chart, or a comparison of up to three. */
+export interface ChartFactsView {
+  range: import("@glance/core/chart").ChartRange;
+  facts: import("@glance/core/chart-facts").ChartFacts[];
+  comparison: {
+    label: "rebased to 100";
+    lines: Array<{ symbol: string; name: string; points: Array<{ t: number; value: number }> }>;
+    rows: import("@glance/core/chart-facts").CompareRow[];
+    sentence: string;
+  } | null;
+}
+
 /** POST /quote/basket: every leg preflighted, then the legs together against the cap left and the vault's USDG. */
 export interface BasketLegCheck {
   symbol: string;

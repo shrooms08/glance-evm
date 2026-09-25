@@ -1,7 +1,7 @@
 /**
  * Typed API client for every extension surface. Calls go through the background service worker.
  */
-import type { BasketJob, BasketLegResult, BasketPreflight, Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
+import type { BasketJob, BasketLegResult, BasketPreflight, Catalog, ChartFactsView, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
 import type { ChartData, ChartRange } from "@glance/core/chart";
 import type { ShowAction } from "@glance/core/showme";
 
@@ -56,6 +56,8 @@ export interface ShowMeRequest {
   openChart?: { symbol: string; range: ChartRange } | null;
   screenshot?: string;
   lastGuard?: { code: string; message: string } | null;
+  vault?: string;
+  noScreenshot?: { glanceKey: string };
 }
 
 export interface ShowMeReply {
@@ -92,6 +94,9 @@ export const api = {
   /** Show me, teach and guide: only when the user asks. The page text is sent once and never kept. */
   showme: (body: ShowMeRequest) => call<ShowMeReply>("POST", "/showme", body),
   chart: (symbol: string, range: ChartRange, vault?: string) => call<ChartData>("GET", `/chart/${encodeURIComponent(symbol)}?${q({ range, vault })}`),
+  /** The chart's computed breakdown, or a comparison ("TSLA,AMD"): numbers from code, never from a model. */
+  chartFacts: (symbols: readonly string[], range: ChartRange, vault?: string) =>
+    call<ChartFactsView>("GET", `/chart/${symbols.map(encodeURIComponent).join(",")}/facts?${q({ range, vault })}`),
   quote: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Quote>("GET", `/quote?${q(p)}`),
   trade: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>

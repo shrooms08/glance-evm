@@ -21,6 +21,7 @@ import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
 import { ApiError, activityView, chartView, portfolioView, whyView, type RefusedAttempt, healthView, priceView, quoteView, rpcUnavailable, tradeView, vaultView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
+import { factsView } from "./chartFacts.js";
 import { chartContextFor } from "./showmeChart.js";
 import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
@@ -83,6 +84,10 @@ const showMeBody = z
     // A downscaled JPEG, base64: the whole request is 64 KB at most, so the extension keeps this under 36 KB.
     screenshot: z.string().max(MAX_JSON_BODY_BYTES).regex(/^[A-Za-z0-9+/=]+$/).optional(),
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
+    // For "since your last buy" (the portfolio event cache; no chain read).
+    vault: address.optional(),
+    // A question about a chart or image on the page with no screenshot possible: the answer says how to allow one.
+    noScreenshot: z.object({ glanceKey: z.string().min(1).max(16) }).nullable().optional(),
   })
   .strict();
 const sessionQuery = z.object({ vault: address, session: address });
@@ -292,8 +297,8 @@ export function createServerApp(ctx: AppContext) {
     const input = parse(showMeBody, await jsonBody(c));
     if (!ctx.showMe) return send(c, { reply: LINES.cantThink, spoken: LINES.cantThink, actions: [], source: "unavailable" });
     // A question about a stock's move (or with its chart open) gets the chart's summary, to draw on (cached reads only).
-    const charts = await chartContextFor(ctx, input);
-    return send(c, await ctx.showMe.answer({ ...input, charts }));
+    const { charts, facts } = await chartContextFor(ctx, input);
+    return send(c, await ctx.showMe.answer({ ...input, charts, facts }));
   });
 
   // The same, streamed as Server-Sent Events: a "sentence" event the moment each sentence is complete (with its tags),
@@ -310,11 +315,18 @@ export function createServerApp(ctx: AppContext) {
         emit({ type: "sentence", sentence: { i: 0, spoken: LINES.cantThink, actions: [] } });
         emit({ type: "done", source: "unavailable" });
       } else {
-        const charts = await chartContextFor(ctx, input);
-        await ctx.showMe.answerStream({ ...input, charts }, emit);
+        const { charts, facts } = await chartContextFor(ctx, input);
+        await ctx.showMe.answerStream({ ...input, charts, facts }, emit);
       }
       await sent;
     });
+  });
+
+  // The chart's breakdown, computed (src/chartFacts.ts): one stock, or up to three compared ("TSLA,AMD").
+  app.get("/chart/:symbols/facts", async (c) => {
+    const { range, vault } = parse(chartQuery, c.req.query());
+    const symbols = c.req.param("symbols").split(",").map((s) => parse(symbol, s.trim()));
+    return send(c, await factsView(ctx, symbols, range, vault ? getAddress(vault) : undefined));
   });
 
   app.get("/chart/:symbol", async (c) => {

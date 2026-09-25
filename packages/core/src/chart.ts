@@ -155,3 +155,16 @@ export function chartColors(theme: ThemeName): ChartColors {
     band: dark ? color.chartBand : color.chartBandInk,
   };
 }
+
+/**
+ * A comparison's lines (up to three), from the design tokens: lime, then the text and soft greys on dark (lime ink,
+ * ink and ink-mute on light). Each also has its own dash, so they're told apart without color.
+ */
+export function compareSeries(theme: ThemeName): Array<{ color: string; dash: string }> {
+  const dark = theme === "dark";
+  return [
+    { color: dark ? color.lime : color.limeInk, dash: "" },
+    { color: dark ? color.text : color.ink, dash: "6 4" },
+    { color: dark ? color.soft : color.inkMute, dash: "2 3" },
+  ];
+}

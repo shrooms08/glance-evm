@@ -248,11 +248,12 @@ describe("Show me's chart summary", () => {
     const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "" }), () => {});
     ctx.chartOverrides = { reader: () => fakeFeed().reader, thresholds: async () => null, now: () => T };
     const summaries = vi.spyOn(ctx.why.summaries, "get");
-    const [c] = await chartContextFor(ctx, { question: "show me where Tesla dropped this week" });
+    const { charts: [c], facts } = await chartContextFor(ctx, { question: "show me where Tesla dropped this week" });
+    expect(facts.map((f) => f.symbol)).toEqual(["TSLA"]); // computed facts come with it
     expect(c).toMatchObject({ symbol: "TSLA", name: "Tesla", range: "1W", source: "Chainlink", news: [] });
     expect(c!.low.price).toBeLessThanOrEqual(c!.high.price);
     expect(summaries).toHaveBeenCalledWith("TSLA"); // the "why" cache is read, never fetched
-    expect(await chartContextFor(ctx, { question: "what's a stock token?" })).toEqual([]);
+    expect(await chartContextFor(ctx, { question: "what's a stock token?" })).toEqual({ charts: [], facts: [] });
     const many = Array.from({ length: 500 }, (_, i) => ({ t: i, price: i === 250 ? 1 : i === 333 ? 999 : 100 }));
     const d = downsample(many);
     expect(d.length).toBeLessThanOrEqual(64);

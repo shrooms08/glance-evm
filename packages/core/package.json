@@ -20,7 +20,8 @@
     "./persona": "./src/persona.ts",
     "./sentences": "./src/sentences.ts",
     "./session": "./src/session.ts",
-    "./basket": "./src/basket.ts"
+    "./basket": "./src/basket.ts",
+    "./chart-facts": "./src/chartFacts.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

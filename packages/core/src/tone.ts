@@ -45,6 +45,9 @@ export const CHART_ADVICE_PATTERNS: readonly RegExp[] = [
   /\bbreak(s|ing)? (out|through)\b/i,
   /\btargets?\b/i,
   /\bwill (hold|bounce|break|test|retest)\b/i,
+  // A chart describes what happened: no "will" at all ("it will keep sliding", "that level will matter").
+  /\bwill\b/i,
+  /\bpredict(s|ed|ion|ions)?\b|\bforecast(s|ed)?\b/i,
   /\bbottomed\b|\bbottoming\b/i,
   /\boversold\b|\boverbought\b/i,
 ];

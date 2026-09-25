@@ -15,11 +15,12 @@ import type { CatalogEntry } from "../catalog.js";
 import type { MessagesClient } from "../llm.js";
 import { logUsage, type LlmBudget, type Log } from "../llmBudget.js";
 import { PERSONA } from "@glance/core/persona";
-import { isAsk } from "@glance/core/showme";
+import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
+import { MAX_COMPARE } from "@glance/core/chart-facts";
 
 import { extractAmounts } from "./amounts.js";
 
-export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "basket-buy", "basket-make", "baskets", "unknown"] as const;
+export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "basket-buy", "basket-make", "baskets", "compare", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
 export interface VoiceContext {
@@ -40,6 +41,9 @@ export interface Intent {
   symbol: string | null;
   /** Whole-dollar or cent amount, only ever one the user said. */
   amount: string | null;
+  /** "compare": the 2 or 3 catalog stocks named, in order, and the range asked about ("today" 1D, "this month" 1M). */
+  symbols?: string[];
+  range?: "1D" | "1W" | "1M";
   /** Why the validator changed it, if it did (for logs and tests; never spoken). */
   note?: string;
   /** Claude's one-sentence reply for explain and unknown (spoken replies for data come from our own code). */
@@ -147,6 +151,14 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
     }
   }
 
+  // "compare Tesla and AMD this week", "Tesla vs AMD today": 2 or 3 catalog stocks, side by side.
+  if (/^(?:(?:ok|okay|hey|glance|please|can you|could you) )*compare\b|\b(vs|versus)\b/.test(t) && companies.length >= 2 && companies.length <= MAX_COMPARE) {
+    return { ...base, symbol: null, intent: "compare", symbols: companies };
+  }
+  // "how did Tesla do this week?", "what was the biggest drop?", "how am I doing on AMD since I bought?": Show me
+  // answers with the chart's computed facts (before "how am I doing", which is the whole portfolio).
+  if (isChartQuestion(t)) return { ...base, intent: "ask" };
+
   const verb = leadingVerb(t);
   if (verb) return { ...base, intent: verb, amount: amounts.length === 1 ? amounts[0]! : null };
   // A trade verb elsewhere ("don't buy Tesla", "should I sell Amazon?"): hand it to the validator, which refuses it as
@@ -240,6 +252,21 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     out.intent = "unknown";
   }
   if (out.intent === "portfolio" || out.intent.startsWith("basket")) out.symbol = null;
+  if (out.intent === "compare") {
+    const named = [...new Set((out.symbols ?? []).map((x) => x.toUpperCase().replace(/^\$/, "")))].filter((x) => symbols.has(x));
+    if (named.length < 2 || named.length > MAX_COMPARE) {
+      notes.push("compare needs 2 or 3 catalog stocks");
+      out.intent = "unknown";
+      delete out.symbols;
+    } else {
+      out.symbols = named;
+      out.range = rangeFor(transcript);
+    }
+    out.symbol = null;
+  } else {
+    delete out.symbols;
+    delete out.range;
+  }
   if (out.intent === "ask") out.amount = null;
   // "sell the tech basket": selling stays in the console, which the reply says (a basket names no single company).
   const basketSell = out.intent === "sell" && !out.symbol && /\bbaskets?\b/i.test(transcript);
@@ -265,6 +292,7 @@ const ClaudeIntent = z.object({
   symbol: z.string().nullable(),
   amount: z.string().nullable(),
   reply: z.string().max(240).nullable(),
+  symbols: z.array(z.string()).max(MAX_COMPARE).nullable().optional(),
 });
 
 export interface IntentModel {
@@ -302,6 +330,7 @@ export function createClaudeIntent(
     "ask (a question about the page they're reading, a request to be shown something on it, a question about what a term",
     "means, or how to use Glance: \"what's this article saying about Tesla?\", \"explain this chart\", \"what's a stock",
     "token?\", \"how do I withdraw?\"),",
+    "compare (compare 2 or 3 named stocks' charts: \"compare Tesla and AMD this week\"; put the tickers in symbols),",
     "basket-buy (buy an amount of a named basket: \"buy $30 of the tech basket\"), basket-make (make a basket:",
     "\"make a basket called EV with Tesla and AMD, 50/50\"), baskets (show their baskets),",
     "unknown (anything else, or ambiguous).",
@@ -327,6 +356,7 @@ export function createClaudeIntent(
         symbol: { type: ["string", "null"], description: "A ticker from the list, or null" },
         amount: { type: ["string", "null"], description: "Dollar amount the user said, as digits, or null" },
         reply: { type: ["string", "null"], description: "One sentence for explain/unknown, else null" },
+        symbols: { type: ["array", "null"], items: { type: "string" }, description: "For compare: 2 or 3 tickers from the list, else null" },
       },
       required: ["intent", "symbol", "amount", "reply"],
     },
@@ -354,8 +384,8 @@ export function createClaudeIntent(
       const use = response.content.find((b) => b.type === "tool_use");
       const parsed = ClaudeIntent.safeParse(use && "input" in use ? use.input : null);
       if (!parsed.success) throw new Error("intent model returned no usable answer");
-      const { intent, symbol, amount, reply } = parsed.data;
-      return { intent, symbol, amount, modelReply: reply ?? undefined, source: "claude" };
+      const { intent, symbol, amount, reply, symbols: named } = parsed.data;
+      return { intent, symbol, amount, modelReply: reply ?? undefined, source: "claude", ...(named ? { symbols: named } : {}) };
     },
   };
 }
@@ -365,7 +395,7 @@ export function createClaudeIntent(
  * ten dollars of Tesla", "show me Tesla's chart") or a clear question for Show me. Explain and unknown need Claude's
  * one-sentence reply (or its better reading of an unclear request).
  */
-const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask", "basket-buy", "basket-make", "baskets"]);
+const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask", "basket-buy", "basket-make", "baskets", "compare"]);
 
 /** Max output for the intent tool call: the answer is four short fields. */
 export const INTENT_MAX_OUTPUT_TOKENS = 150;

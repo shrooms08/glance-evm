@@ -7,10 +7,14 @@
  *   "how much have I spent today", "how much do I have left today"
  *   "buy $30 of the tech basket", "buy the EV basket for $20"
  *   "make a basket called EV with Tesla and AMD, 50/50", "show my baskets"
+ *   "compare Tesla and AMD this week", "Tesla vs AMD today" (2 or 3 stocks)
+ *   "how did Tesla do this week?", "what was the biggest drop?": "ask", answered by Show me with the chart's facts
  *   any other question ("what's this article saying?", "how do I withdraw?"): "ask", answered by Show me
  */
 import { parseSplit } from "@glance/core/basket";
-import { isAsk } from "@glance/core/showme";
+import type { ChartRange } from "@glance/core/chart";
+import { MAX_COMPARE } from "@glance/core/chart-facts";
+import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
 
 export type Command =
   | { kind: "buy"; symbol: string; amount: string }
@@ -24,6 +28,7 @@ export type Command =
   /** Weights in basis points, or null for equal weights. `unmatched`: names that aren't in the catalog. */
   | { kind: "makeBasket"; name: string; symbols: string[]; weights: number[] | null; unmatched: string[] }
   | { kind: "baskets" }
+  | { kind: "compare"; symbols: string[]; range: ChartRange }
   /** Developer check: draw every Show me shape on the current selection. */
   | { kind: "testDrawing" }
   /** A question about the page, a term, or how to use Glance: answered by Show me. */
@@ -161,6 +166,14 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
     const amount = parseAmount(named[1]!.replace(new RegExp(`\\s*${CURRENCY}$`), ""));
     if (amount) return { kind: "buyBasket", basket: named[2]!, amount };
   }
+
+  // "compare Tesla and AMD this week", "Tesla vs AMD": 2 or 3 stocks, side by side.
+  if (/^compare\b|\b(vs|versus)\b/.test(t)) {
+    const symbols = companiesIn(t.replace(/^compare\s+/, ""), table);
+    if (symbols.length >= 2 && symbols.length <= MAX_COMPARE) return { kind: "compare", symbols, range: rangeFor(t) };
+  }
+  // "how did Tesla do this week?", "how am I doing on AMD since I bought?": the chart's facts, before "how am I doing".
+  if (isChartQuestion(t)) return { kind: "ask", question: heard };
 
   if (/\b(spent|spend)\b.*\btoday\b|how much .*\b(spent|left)\b|what have i spent|what's left today|how much can i (still )?(spend|buy)/.test(t)) {
     return { kind: "spent" };

@@ -55,6 +55,10 @@ export const LINES = {
   onlyNow: "I only buy when you ask, right then. Try: buy ten dollars of Tesla.",
   noAdvicePrefix: "I don't give advice, but here's the price. ",
   hereIsChart: (name: string) => `Here's ${name}'s chart.`,
+  /** A chart answer never claims a cause without a cached "Why it moved" source. */
+  noNewsForMove: "I don't have news that explains this move.",
+  /** A question about a chart on the page, with no screenshot possible (activeTab comes with the glance key). */
+  pressGlanceForChart: (glanceKey = "⌥G") => `Press ${glanceKey} on this page first and I can look at that chart.`,
   /** Show me / teach: the "other" budget ran out for today. */
   outOfThinking: "I'm out of thinking for today, but I can still show prices and charts.",
   /** Show me / teach: the answer tripped the advice guard, so it's replaced by this. */

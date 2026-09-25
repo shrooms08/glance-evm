@@ -197,6 +197,9 @@ const components = /* css */ `
 /* ---------- Portfolio, journal, why it moved ---------- */
 .g-up { color: var(--g-lime); }
 .g-chart-box { position: relative; height: 220px; margin: 0 var(--g-s7); border-radius: var(--g-r-md); overflow: hidden; background: var(--g-canvas); }
+.g-compare-base { stroke: var(--g-mute); stroke-width: 1; }
+.g-compare-table { width: 100%; border-collapse: collapse; }
+.g-compare-table th, .g-compare-table td { text-align: left; padding: 4px 6px 4px 0; border-top: 1px solid var(--g-line); font-weight: normal; }
 .g-chart-empty { display: flex; align-items: center; justify-content: center; }
 .g-chart-card .g-tab { padding: 3px 10px; }
 .g-spark { display: block; margin-top: 4px; }

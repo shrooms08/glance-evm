@@ -131,7 +131,15 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       : createClaudeIntent(config.ANTHROPIC_API_KEY, models.intent, catalog.entries, 3_000, { budget, log }),
     llmBudget: budget,
     llmModels: models,
-    showMe: createShowMe({ apiKey: anthropicKey, model: models.other, budget, symbols: catalog.entries.map((e) => e.symbol), log }),
+    showMe: createShowMe({
+      apiKey: anthropicKey,
+      model: models.other,
+      budget,
+      symbols: catalog.entries.map((e) => e.symbol),
+      log,
+      // "S&P 500 ETF", "Nasdaq-100": numbers in a stock's own name are never an ungrounded chart figure.
+      nameNumbers: [...new Set(catalog.entries.flatMap((e) => [e.name, e.legalName, ...e.aliases]).flatMap((n) => (n.match(/\d+/g) ?? []).map(Number)))],
+    }),
     cacheDir,
     sessions,
     faucet: config.FAUCET_PRIVATE_KEY ? faucetFor(config, chain, cacheDir, log) : null,

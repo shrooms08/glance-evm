@@ -16,6 +16,7 @@ import { setupRows } from "../lib/readiness";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
 import { BasketsCard } from "./Baskets";
+import { CompareCard } from "./CompareCard";
 import { WhyCard } from "./Why";
 import { LINES } from "@glance/core/persona";
 import { marketClosed, useGlance } from "./context";
@@ -168,6 +169,12 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         {assistant.card?.kind === "portfolio" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
             <PortfolioCard key={assistant.card.key} initialTab={assistant.card.tab} onClose={() => assistant.setCard(null)} />
+          </div>
+        )}
+
+        {assistant.card?.kind === "compare" && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
+            <CompareCard key={assistant.card.key} symbols={assistant.card.symbols} range={assistant.card.range} data={assistant.card.data} onClose={() => assistant.setCard(null)} />
           </div>
         )}
 
