@@ -45,6 +45,24 @@
       "tickers": ["AMD"],
       "excludePhrases": [],
       "excludeNear": ["macular", "retina", "retinal", "ophthalmolog", "eyesight"]
+    },
+    {
+      "symbol": "SPY",
+      "name": "S&P 500 ETF",
+      "legalName": "SPDR S&P 500 ETF Trust",
+      "names": ["S&P 500 ETF", "S&P 500 ETF Trust", "SPDR S&P 500 ETF", "SPDR S&P 500 ETF Trust", "SPDR S&P 500", "S and P 500 ETF"],
+      "tickers": ["SPY"],
+      "excludePhrases": ["SPY THRILLER", "SPY NOVEL", "SPY AGENCY", "SPY SATELLITE", "SPY X FAMILY"],
+      "excludeNear": ["espionage", "spyware", "intelligence agency"]
+    },
+    {
+      "symbol": "QQQ",
+      "name": "Nasdaq-100 ETF",
+      "legalName": "Invesco QQQ Trust",
+      "names": ["Nasdaq-100", "Nasdaq 100", "Nasdaq-100 ETF", "Nasdaq 100 ETF", "Invesco QQQ", "Invesco QQQ Trust"],
+      "tickers": ["QQQ"],
+      "excludePhrases": [],
+      "excludeNear": []
     }
   ]
 }

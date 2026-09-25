@@ -5,7 +5,8 @@ export
 NETWORK ?= robinhood
 
 .PHONY: help build test test-fork fmt prices dry-run-robinhood dry-run-arbsepolia deploy-robinhood deploy-arbsepolia seed \
-	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume link-demo-session faucet-wallet faucet-status feeds set-freshness fund-paxos check-vaults create-vault deploy-factory-v2 dry-run-factory-v2
+	verify-commands weekend weekday keeper keeper-watch keeper-pause keeper-resume link-demo-session faucet-wallet faucet-status feeds set-freshness fund-paxos check-vaults create-vault deploy-factory-v2 dry-run-factory-v2 \
+	deploy-etf-standins dry-run-etf-standins
 
 TESTNET_RPC_URL ?= https://rpc.testnet.chain.robinhood.com
 MAINNET_RPC_URL ?= https://rpc.mainnet.chain.robinhood.com
@@ -22,6 +23,8 @@ help:
 	@echo "make fund-paxos            stock the Paxos desk and fund the primary Paxos USDG vault (idempotent) [DRY_RUN=1]"
 	@echo "make dry-run-factory-v2    simulate deploying GlanceVaultFactoryV2 (one-transaction vaults); sends nothing"
 	@echo "make deploy-factory-v2     deploy + verify GlanceVaultFactoryV2, record it as factoryV2 [NETWORK=robinhood]"
+	@echo "make dry-run-etf-standins  simulate the SPY and QQQ testnet stand-ins (token, feed from mainnet Chainlink, desk stock); sends nothing"
+	@echo "make deploy-etf-standins   deploy + verify them and record .stocks.SPY / .stocks.QQQ (no vault or factory changes)"
 	@echo "make create-vault          your own vault, configured for the Glance agent and funded [VAULT_USDG=paxos|test DEPOSIT=10 AGENT=0x...]"
 	@echo "make check-vaults          read-only: both demo vaults quote a \$$10 TSLA buy and pass the on-chain preflight"
 	@echo "make seed                  fund the TestUSDG demo vault [NETWORK=robinhood|arbsepolia DEMO_RECIPIENT=0x...]"
@@ -63,6 +66,14 @@ dry-run-factory-v2:
 
 deploy-factory-v2:
 	@script/deploy-factory-v2.sh $(NETWORK)
+
+# ETF stand-ins (SPY, QQQ): Robinhood Chain testnet has no ETF Stock Tokens, so each gets a TestStockToken and a
+# TestPriceFeed mirrored from its Chainlink mainnet feed. Vaults opt in from the console's Limits page.
+dry-run-etf-standins:
+	@script/deploy-etf-standins.sh --dry-run
+
+deploy-etf-standins:
+	@script/deploy-etf-standins.sh
 
 dry-run-arbsepolia:
 	@script/deploy.sh arbsepolia --dry-run

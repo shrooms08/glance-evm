@@ -8,10 +8,14 @@ import { storage } from "wxt/utils/storage";
 
 export const userBaskets = storage.defineItem<Basket[]>("local:baskets", { fallback: [] });
 
-/** The built-in baskets first, then the user's, in the order made. */
-export async function listBaskets(): Promise<Basket[]> {
+/**
+ * The built-in baskets first, then the user's, in the order made. Given the catalog's symbols, a built-in basket shows
+ * only when Glance can trade every stock in it (the ETFs basket, once SPY and QQQ are deployed).
+ */
+export async function listBaskets(known?: readonly string[]): Promise<Basket[]> {
   const mine = await userBaskets.getValue().catch(() => [] as Basket[]);
-  return [...BUILT_IN_BASKETS, ...mine];
+  const builtIn = known ? BUILT_IN_BASKETS.filter((b) => b.legs.every((l) => known.includes(l.symbol))) : BUILT_IN_BASKETS;
+  return [...builtIn, ...mine];
 }
 
 const key = (name: string) =>

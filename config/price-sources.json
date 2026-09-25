@@ -1,5 +1,5 @@
 {
-  "$comment": "Where each testnet stand-in feed gets its price. mainnet-mirror: copied, price AND updatedAt, from the live Chainlink feed on Robinhood Chain mainnet (4663). public-quote: no Chainlink feed exists for this stock, so a free public quote is used, with the quote's own market timestamp. Addresses verified in docs/CHAIN_NOTES.md. Read by apps/keeper, apps/api and script/fetch-prices.sh.",
+  "$comment": "Where each testnet stand-in feed gets its price. mainnet-mirror: copied, price AND updatedAt, from the live Chainlink feed on Robinhood Chain mainnet (4663). public-quote: no Chainlink feed exists for this stock, so a free public quote is used, with the quote's own market timestamp. Addresses verified in docs/CHAIN_NOTES.md. ETFs (SPY, QQQ) mirror their own mainnet Chainlink feeds onto testnet stand-ins (a TestStockToken and a TestPriceFeed each: no ETF Stock Token exists on testnet); a source whose feed isn't deployed yet is simply not mirrored. Read by apps/keeper, apps/api and script/fetch-prices.sh.",
   "mainnet": {
     "chainId": 4663,
     "name": "Robinhood Chain mainnet"
@@ -9,6 +9,8 @@
     "AMZN": { "kind": "mainnet-mirror", "feed": "0xD5a1508ceD74c084eBf3cBe853e2C968fB2a651C", "description": "Robinhood AMZN / USD" },
     "PLTR": { "kind": "mainnet-mirror", "feed": "0x820ABedFF239034956B7A9d2F0a331f9F075eB4c", "description": "Robinhood PLTR / USD" },
     "AMD": { "kind": "mainnet-mirror", "feed": "0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72", "description": "RHAMD / USD" },
-    "NFLX": { "kind": "public-quote", "provider": "yahoo-finance", "description": "Yahoo Finance NFLX regularMarketPrice (no Chainlink NFLX feed exists on Robinhood Chain)" }
+    "NFLX": { "kind": "public-quote", "provider": "yahoo-finance", "description": "Yahoo Finance NFLX regularMarketPrice (no Chainlink NFLX feed exists on Robinhood Chain)" },
+    "SPY": { "kind": "mainnet-mirror", "feed": "0x319724394D3A0e3669269846abE664Cd621f9f6A", "description": "RHSPY / USD" },
+    "QQQ": { "kind": "mainnet-mirror", "feed": "0x80901d846d5D7B030F26B480776EE3b29374C2ae", "description": "Robinhood QQQ / USD" }
   }
 }

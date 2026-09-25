@@ -15,6 +15,7 @@ The demo on Robinhood Chain testnet (46630):
 | --- | --- | --- | --- |
 | USDG | **Real Paxos USDG** `0x7E955252…802F`, held by the primary demo vault (`demoVaultPaxosUSDG`) | It exists on testnet | Yes: https://faucet.paxos.com/ |
 | Stock Tokens (TSLA, AMZN, PLTR, NFLX, AMD) | **Real**: the official Robinhood Chain testnet Stock Tokens | They exist on testnet | Yes: https://faucet.testnet.chain.robinhood.com (5 of each per claim, plus 0.01 ETH) |
+| ETFs (SPY, QQQ) | **Ours, not deployed yet**: a `TestStockToken` and a `TestPriceFeed` each (`make deploy-etf-standins`), priced from their **mainnet** Chainlink feeds | No ETF Stock Token exists on testnet; both exist on mainnet with live Chainlink feeds | Only through a vault that opts in (console Limits page) |
 | Price feeds | **Ours**: a `TestPriceFeed` per stock, mirroring the live Robinhood Chain **mainnet** Chainlink feeds, price **and** timestamp | Chainlink has no feeds on testnet | Read-only |
 | Trading desk | **Ours**: `StockDesk`, an oracle-priced desk (not an AMM) holding real Stock Tokens and real USDG | No DEX pool exists for these tokens on testnet | Only through a vault |
 | Vault, factory, libraries | **Glance production code** | | `make create-vault` gives anyone their own |
@@ -43,6 +44,7 @@ Details and limits, so nothing is overstated:
 | Stock tokens (TSLA, AMZN, PLTR, NFLX, AMD) | **REAL**: official faucet Stock Tokens | STAND-IN: `TestStockToken` |
 | USDG | **REAL** Paxos USDG for the primary vault `demoVaultPaxosUSDG` (faucet: https://faucet.paxos.com/); STAND-IN `TestUSDG` for the fallback vault | STAND-IN: `TestUSDG` |
 | Stock price feeds | STAND-IN: `TestPriceFeed`, mirroring live Chainlink **mainnet** prices and timestamps | STAND-IN: `TestPriceFeed` |
+| ETFs (SPY, QQQ) | STAND-IN, not deployed yet: `TestStockToken` + `TestPriceFeed` mirroring the mainnet SPY and QQQ Chainlink feeds | Not planned |
 | L2 sequencer uptime feed | None exists: check left disabled | None exists: check left disabled |
 | Trading venue | STAND-IN: `StockDesk` (no DEX pools exist); one desk per USDG | STAND-IN: `StockDesk` |
 | Vault, factory, libraries | Glance production code | Glance production code |
@@ -142,6 +144,34 @@ https://docs.chain.link/data-feeds/price-feeds/addresses?network=robinhood (both
 the JSON they are built from: https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json and
 https://github.com/smartcontractkit/documentation/blob/main/src/features/data/chains.ts. Robinhood's own
 oracle page (https://docs.robinhood.com/chain/oracles-and-price-feeds) defers to Chainlink.
+
+### ETFs: SPY and QQQ, as stand-ins (researched 2026-09-25)
+
+Robinhood Chain **mainnet** lists 17 ETF Stock Tokens (`https://api.robinhood.com/rhj/assets`, all on chain 4663 only):
+BND, EWT, EWY, GLD, INDA, QQQ, SCHD, SGOV, SHY, SLV, SMH, SOXX, SPMO, SPY, USO, VTI, XLK. Chainlink's Robinhood directory
+has feeds for six of them: SPY, QQQ, EWY, SLV, USO and SGOV (and a "GLD / USD" feed classed as a crypto pegged asset, not
+the ETF). No Robinhood **testnet** directory exists (`feeds-robinhood-testnet.json` and `feeds-robinhood-sepolia.json`
+return 404), and the testnet faucet's `getFullTokenList()` still returns only the five stocks above.
+
+We picked the two broad-market ETFs, SPY and QQQ. Both mainnet feeds were read over RPC on 2026-09-25:
+
+| ETF | Mainnet Stock Token | Mainnet Chainlink proxy | Read | Testnet stand-in |
+| --- | --- | --- | --- | --- |
+| SPY | `0x117cc2133c37B721F49dE2A7a74833232B3B4C0C` ("SPDR S&P 500 ETF Trust • Robinhood Token") | `0x319724394D3A0e3669269846abE664Cd621f9f6A` | "RHSPY / USD", 8 dp, $768.43, updated 2026-09-25T04:04Z, heartbeat 86400, `us_equities_24/5` | **Not deployed yet.** `TestStockToken` "SPDR S&P 500 ETF (Glance TESTNET STAND-IN, not a Robinhood Stock Token)", 18 dp; `TestPriceFeed` "TEST FEED (Glance testnet stand-in): SPY / USD", mirrored by the keeper |
+| QQQ | `0xD5f3879160bc7c32ebb4dC785F8a4F505888de68` ("Invesco QQQ • Robinhood Token") | `0x80901d846d5D7B030F26B480776EE3b29374C2ae` | "Robinhood QQQ / USD", 8 dp, $741.78, updated 2026-09-24T16:41Z, heartbeat 86400, `us_equities_24/5` | **Not deployed yet.** `TestStockToken` "Invesco QQQ (Glance TESTNET STAND-IN, not a Robinhood Stock Token)", 18 dp; `TestPriceFeed` "TEST FEED (Glance testnet stand-in): QQQ / USD", mirrored by the keeper |
+
+Unlike the five stocks, the **tokens are ours too**: a stand-in ETF share is minted by the deployer, so it's worth
+nothing and says so in its name. The price is honest in the same way as the stocks: the keeper copies each mainnet
+feed's answer and its own `updatedAt`. No public quote is used for either. `make dry-run-etf-standins` simulates the
+deploy (sends nothing, writes nothing); `make deploy-etf-standins` deploys and verifies them, lists them on both desks
+with 2 of each in inventory, and records `.stocks.SPY` and `.stocks.QQQ` (with `etfStandIn: true`, `mainnetToken` and
+`mainnetFeed`) in `deployments/46630.json`. No vault or factory changes: new console vaults include them in their
+default config, and existing vaults add them from the Limits page (two wallet prompts per ETF: `setTokenApproval`,
+then `setTokenFreshness`).
+
+Sources: https://api.robinhood.com/rhj/assets, https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json,
+https://docs.chain.link/data-feeds/price-feeds/addresses?network=robinhood, and
+https://docs.robinhood.com/chain/oracles-and-price-feeds ("live prices for tokenized equities and ETFs").
 
 ### L2 sequencer uptime feed: none
 

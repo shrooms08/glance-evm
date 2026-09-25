@@ -16,7 +16,7 @@ import { formatUsd } from "@glance/core/format";
 import { erc20Abi, isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
 
 import { safeAgentExpiry } from "./agentExpiry";
-import { factory, factoryV2 as deployedFactoryV2, sequencerUptimeFeed, stocks, VAULT_SETUP, type DemoVault } from "./deployment";
+import { etfs as deployedEtfs, factory, factoryV2 as deployedFactoryV2, sequencerUptimeFeed, stocks, VAULT_SETUP, type DemoVault, type EtfStock } from "./deployment";
 
 export interface TokenState {
   approved: boolean;
@@ -97,15 +97,16 @@ export interface VaultConfigArg {
 /**
  * The same vault the step-by-step setup leaves, as one config: the deployment's agent for 30 days from the block the
  * vault is created in, the five stocks with 20h/96h freshness, the desk for this USDG, $100 / $500 / $500, 1% slippage, 25%
- * while the market's closed, and the chain's sequencer feed (none on Robinhood Chain testnet).
+ * while the market's closed, and the chain's sequencer feed (none on Robinhood Chain testnet). Once the ETF stand-ins
+ * are deployed, a new vault allows SPY and QQQ too (existing vaults add them from the Limits page).
  */
-export function consoleVaultConfig(flavour: DemoVault, usdgDecimals: number): VaultConfigArg {
+export function consoleVaultConfig(flavour: DemoVault, usdgDecimals: number, etfs: readonly EtfStock[] = deployedEtfs): VaultConfigArg {
   const unit = 10n ** BigInt(usdgDecimals);
   return {
     usdg: flavour.usdg,
     agent: flavour.agent,
     agentDuration: BigInt(VAULT_SETUP.newAgentDurationSeconds),
-    tokens: stocks.map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: VAULT_SETUP.openMaxAge, closedMaxAge: VAULT_SETUP.closedMaxAge })),
+    tokens: [...stocks, ...etfs].map((s) => ({ token: s.token, priceFeed: s.feed, openMaxAge: VAULT_SETUP.openMaxAge, closedMaxAge: VAULT_SETUP.closedMaxAge })),
     routers: [flavour.desk],
     perBuyCap: VAULT_SETUP.perTradeWhole * unit,
     dailyCap: VAULT_SETUP.dailyWhole * unit,

@@ -25,7 +25,7 @@ import { exitCodeFor, runOnce, type KeeperSymbol } from "./keeper.js";
 import { pauseState } from "./pause.js";
 import { NonceSender, type ChainIO } from "./sender.js";
 import { fetchYahooQuote } from "./quote.js";
-import { loadPriceSources, loadTestnetFeeds } from "./sources.js";
+import { keeperSymbols, loadPriceSources, loadTestnetFeeds } from "./sources.js";
 
 const aggregatorAbi = parseAbi([
   "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
@@ -83,12 +83,7 @@ async function main() {
     throw new Error(`MAINNET_RPC_URL is chain ${mainnetChainId}, expected ${sources.mainnet.name} (${sources.mainnet.chainId})`);
   }
 
-  const symbols: KeeperSymbol[] = [];
-  for (const [symbol, testnetFeed] of Object.entries(feeds)) {
-    const source = sources.sources[symbol];
-    if (!source) throw new Error(`${symbol} is deployed but has no entry in ${paths.priceSources}`);
-    symbols.push({ symbol, testnetFeed, source });
-  }
+  const symbols: KeeperSymbol[] = keeperSymbols(feeds, sources, paths.priceSources);
 
   // Fail loudly on anything that would make a write wrong or impossible.
   for (const s of symbols) {

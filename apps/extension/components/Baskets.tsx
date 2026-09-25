@@ -36,7 +36,8 @@ export function BasketsCard({
   const flow = useBasketFlow({ pageContext });
   const allowed = allowedSymbols(g.vault, g.catalog);
 
-  const reload = useCallback(async () => setBaskets(await listBaskets()), []);
+  const known = g.catalog.map((s) => s.symbol).join(",");
+  const reload = useCallback(async () => setBaskets(await listBaskets(known ? known.split(",") : undefined)), [known]);
   useEffect(() => {
     void reload();
   }, [reload]);

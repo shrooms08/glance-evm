@@ -72,14 +72,16 @@ describe("parsing (typed, or voice read in the browser)", () => {
 
 describe("baskets in this browser", () => {
   it("built-ins first, then yours; saved, renamed, re-weighted, deleted", async () => {
-    expect((await listBaskets()).map((b) => b.name)).toEqual(["Tech"]);
+    expect((await listBaskets(ALLOWED)).map((b) => b.name)).toEqual(["Tech"]);
+    // The ETFs basket once SPY and QQQ are in the catalog.
+    expect((await listBaskets([...ALLOWED, "SPY", "QQQ"])).map((b) => b.name)).toEqual(["Tech", "ETFs"]);
     const ev = await saveBasket(draftBasket("EV", ["TSLA", "AMD"], [5000, 5000]), ALLOWED);
-    expect((await listBaskets()).map((b) => b.name)).toEqual(["Tech", "EV"]);
+    expect((await listBaskets(ALLOWED)).map((b) => b.name)).toEqual(["Tech", "EV"]);
     await saveBasket({ ...ev, name: "Electric", legs: [{ symbol: "TSLA", weightBps: 7000 }, { symbol: "AMD", weightBps: 3000 }] }, ALLOWED);
-    const mine = (await listBaskets())[1]!;
+    const mine = (await listBaskets(ALLOWED))[1]!;
     expect(mine).toMatchObject({ id: ev.id, name: "Electric", legs: [{ symbol: "TSLA", weightBps: 7000 }, { symbol: "AMD", weightBps: 3000 }] });
     await deleteBasket(ev.id);
-    expect((await listBaskets()).map((b) => b.name)).toEqual(["Tech"]);
+    expect((await listBaskets(ALLOWED)).map((b) => b.name)).toEqual(["Tech"]);
   });
 
   it("refuses bad weights, a name taken, a token the vault doesn't allow, and edits to Glance's own", async () => {

@@ -126,7 +126,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
   /** Typed commands (and the browser-fallback transcript), parsed here. */
   const run = useCallback(
     async (text: string, source: "typed" | "voice" = "typed") => {
-      const baskets = await listBaskets();
+      const baskets = await listBaskets(g.catalog.map((s) => s.symbol));
       const cmd = parseCommand(
         text,
         g.catalog.map((s) => ({ symbol: s.symbol, aliases: s.aliases })),

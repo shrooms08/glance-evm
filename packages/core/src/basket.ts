@@ -29,8 +29,11 @@ export function equalWeights(symbols: readonly string[]): BasketLeg[] {
   return symbols.map((symbol) => ({ symbol, weightBps: base + (extra-- > 0 ? 1 : 0) }));
 }
 
-/** Glance's own baskets. */
-export const BUILT_IN_BASKETS: readonly Basket[] = [{ id: "tech", name: "Tech", legs: equalWeights(["TSLA", "AMZN", "AMD", "NFLX", "PLTR"]), builtIn: true }];
+/** Glance's own baskets. "ETFs" is offered once the SPY and QQQ stand-ins are in the catalog. */
+export const BUILT_IN_BASKETS: readonly Basket[] = [
+  { id: "tech", name: "Tech", legs: equalWeights(["TSLA", "AMZN", "AMD", "NFLX", "PLTR"]), builtIn: true },
+  { id: "etfs", name: "ETFs", legs: equalWeights(["SPY", "QQQ"]), builtIn: true },
+];
 
 /** What's wrong with a basket, in plain words (empty: it's fine). */
 export function basketProblems(b: Pick<Basket, "name" | "legs">, allowed: readonly string[]): string[] {

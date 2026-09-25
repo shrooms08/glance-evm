@@ -120,11 +120,21 @@ function withoutCompanies(t: string, catalog: readonly CatalogEntry[]): string {
   return rest.replace(/[.,!]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** The transcript without names that contain numbers ("S&P 500 ETF", "Nasdaq-100"): those are never amounts. */
+function withoutNumberedNames(transcript: string, catalog: readonly CatalogEntry[]): string {
+  let out = transcript;
+  const names = catalog.flatMap((c) => [...c.aliases, c.name, c.legalName]).filter((a) => /\d/.test(a));
+  for (const name of names.sort((a, b) => b.length - a.length)) {
+    out = out.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[\s-]+/g, "[\\s-]+"), "gi"), " ");
+  }
+  return out;
+}
+
 export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]): Intent {
   const t = normalise(transcript).replace(/\?/g, " ").trim();
   const companies = findCompanies(transcript, catalog);
   const symbol = companies.length === 1 ? companies[0]! : null;
-  const amounts = extractAmounts(transcript);
+  const amounts = extractAmounts(withoutNumberedNames(transcript, catalog));
   const base = { source: "rules" as const, symbol, amount: null };
 
   // Baskets: named in the browser, so the extension reads the words itself ("buy $30 of the tech basket", "make a basket

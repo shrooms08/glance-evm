@@ -34,6 +34,18 @@ const deploymentStock = z.union([
 ]);
 const deployment = z.object({ chainId: z.number().int(), stocks: z.record(z.string(), deploymentStock) });
 
+/**
+ * Each deployed testnet feed with its price source. A source whose feed isn't deployed yet (the ETF stand-ins before
+ * `make deploy-etf-standins`) is simply not mirrored; a deployed feed with no source is an error.
+ */
+export function keeperSymbols(feeds: Record<string, Address>, sources: PriceSources, sourcesPath = "config/price-sources.json"): Array<{ symbol: string; testnetFeed: Address; source: PriceSource }> {
+  return Object.entries(feeds).map(([symbol, testnetFeed]) => {
+    const source = sources.sources[symbol];
+    if (!source) throw new Error(`${symbol} is deployed but has no entry in ${sourcesPath}`);
+    return { symbol, testnetFeed, source };
+  });
+}
+
 /** Our testnet feed address for each listed symbol, from deployments/<chainId>.json. */
 export function loadTestnetFeeds(path: string): { chainId: number; feeds: Record<string, Address> } {
   const d = deployment.parse(JSON.parse(readFileSync(path, "utf8")));

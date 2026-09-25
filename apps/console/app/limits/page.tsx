@@ -2,7 +2,9 @@
 import { glanceVaultAbi } from "@glance/core/abi";
 import { useMemo, useState } from "react";
 import { isAddressEqual, zeroAddress, type Abi, type Address } from "viem";
+import { useReadContracts } from "wagmi";
 
+import { EtfCard } from "@/components/EtfCard";
 import { OwnVaultGate } from "@/components/OwnVaultGate";
 import { ProblemNotice } from "@/components/ProblemNotice";
 import { Skeleton } from "@/components/Skeleton";
@@ -12,7 +14,8 @@ import { GateNotice, WriteGate } from "@/components/WriteGate";
 import { safeAgentExpiry } from "@/lib/agentExpiry";
 import { effectiveCap } from "@/lib/caps";
 import { addressUrl, publicClient } from "@/lib/chain";
-import { demoVaults, VAULT_SETUP } from "@/lib/deployment";
+import { CHAIN_ID, demoVaults, etfs, VAULT_SETUP } from "@/lib/deployment";
+import type { EtfTokenState } from "@/lib/etfs";
 import { formatDuration, formatUsd, formatWhen, shortAddress, toDecimalString } from "@/lib/format";
 import { parseLimits, sameLimits, type LimitsForm } from "@/lib/limits";
 import { useNow } from "@/lib/useNow";
@@ -63,6 +66,7 @@ function LimitsFor({ vault }: { vault: Address }) {
             {/* Keyed so a new agent or a changed gate starts the revoke confirmation over. */}
             <AgentControls key={`${chain.data.agent}-${gate.reason}`} v={chain.data} vault={vault} send={send} onError={tx.fail} />
           </div>
+          <EtfSection vault={vault} send={send} />
           {/* Keyed by the vault's limits, so the form starts from the new values after a change is mined. */}
           <LimitsEditor
             key={`${chain.data.perBuyCap}-${chain.data.dailyCap}-${chain.data.dailySellCap}-${chain.data.maxSlippageBps}-${chain.data.weekendCapBps}`}
@@ -76,6 +80,29 @@ function LimitsFor({ vault }: { vault: Address }) {
 }
 
 type Send = (req: Omit<TxRequest, "address" | "abi">) => Promise<boolean>;
+
+/** "Add SPY and QQQ to your vault": what the vault allows now, read from its tokenConfig (nothing when not deployed). */
+function EtfSection({ vault, send }: { vault: Address; send: Send }) {
+  const read = useReadContracts({
+    contracts: etfs.map((e) => ({ address: vault, abi: glanceVaultAbi, functionName: "tokenConfig", args: [e.token], chainId: CHAIN_ID })) as never,
+    allowFailure: false,
+    query: { enabled: etfs.length > 0 },
+  });
+  const states = (read.data as Array<readonly [boolean, Address, number, number]> | undefined)?.map(
+    ([approved, feed, openMaxAge, closedMaxAge]): EtfTokenState => ({ approved, feed, openMaxAge: Number(openMaxAge), closedMaxAge: Number(closedMaxAge) }),
+  );
+  return (
+    <EtfCard
+      etfs={etfs}
+      states={states ?? null}
+      send={async (step) => {
+        const ok = await send({ label: step.label, functionName: step.functionName, args: step.args as never });
+        void read.refetch();
+        return ok;
+      }}
+    />
+  );
+}
 
 function Controls({ v, send }: { v: VaultChainState; send: Send }) {
   return (

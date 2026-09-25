@@ -68,3 +68,17 @@ describe("confirm, cancel, unknown", () => {
     expect(parse("").kind).toBe("unknown");
   });
 });
+
+describe("ETFs (once SPY and QQQ are in the catalog)", () => {
+  const withEtfs: CompanyAliases[] = [
+    ...companies,
+    { symbol: "SPY", aliases: ["S&P 500 ETF", "SPDR S&P 500 ETF", "SPY"] },
+    { symbol: "QQQ", aliases: ["Nasdaq-100", "Nasdaq 100", "Invesco QQQ", "QQQ"] },
+  ];
+  it.each([
+    ["buy $20 of the S&P 500 ETF", { kind: "buy", symbol: "SPY", amount: "20" }],
+    ["buy $15 of QQQ", { kind: "buy", symbol: "QQQ", amount: "15" }],
+    ["what's the Nasdaq-100 at", { kind: "price", symbol: "QQQ" }],
+    ["show me the SPY chart", { kind: "chart", symbol: "SPY" }],
+  ])("%s", (said, cmd) => expect(parseCommand(said, withEtfs)).toEqual(cmd));
+});

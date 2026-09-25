@@ -82,6 +82,27 @@ export const stocks: Stock[] = SYMBOLS.map((symbol) => {
   return { symbol, token: getAddress(s.token), tokenDecimals: s.tokenDecimals, feed: getAddress(s.feed) };
 });
 
+/** The ETF stand-ins (testnet stand-ins mirrored from Robinhood Chain mainnet's Chainlink SPY and QQQ feeds). */
+export const ETF_SYMBOLS = ["SPY", "QQQ"] as const;
+export type EtfSymbol = (typeof ETF_SYMBOLS)[number];
+export interface EtfStock {
+  symbol: EtfSymbol;
+  token: Address;
+  tokenDecimals: number;
+  feed: Address;
+}
+
+/** The ETFs a deployment record lists (none until `make deploy-etf-standins` has run). */
+export function etfsIn(recordStocks: Record<string, { token?: string; feed?: string; tokenDecimals?: number; skipped?: boolean } | undefined>): EtfStock[] {
+  return ETF_SYMBOLS.flatMap((symbol) => {
+    const s = recordStocks[symbol];
+    if (!s || s.skipped || !s.token || !s.feed) return [];
+    return [{ symbol, token: getAddress(s.token), tokenDecimals: s.tokenDecimals ?? 18, feed: getAddress(s.feed) }];
+  });
+}
+
+export const etfs: EtfStock[] = etfsIn(record.stocks as Record<string, { token?: string; feed?: string; tokenDecimals?: number; skipped?: boolean }>);
+
 /** What `make create-vault` configures (script/CreateVault.s.sol, VaultSetup): the console mirrors it exactly. */
 export const VAULT_SETUP = {
   /** Price freshness per token while the market is open (20h) and closed (96h), in seconds. */

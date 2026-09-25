@@ -8,6 +8,8 @@ export const US_TICKERS: Readonly<Record<string, string>> = {
   PLTR: "PLTR",
   NFLX: "NFLX",
   AMD: "AMD",
+  SPY: "SPY",
+  QQQ: "QQQ",
 };
 
 /** The US ticker for a Stock Token symbol, or null if it isn't one we know. */
