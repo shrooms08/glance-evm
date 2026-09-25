@@ -118,7 +118,7 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
         reply: it.amount ? LINES.buying(spoken(it.amount), name) : LINES.howMuch(name),
       };
     case "sell":
-      return { reply: LINES.sellingElsewhere(name) };
+      return { reply: LINES.sellingElsewhere(name || "the stocks in your baskets") };
     case "price": {
       const p = await priceFact(ctx, it.symbol!, vault);
       const market = p.marketState === "OPEN" ? "The market's open." : p.marketState === "CLOSED" ? "The market's closed." : "That price is too old to trade on.";
@@ -145,6 +145,11 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
     case "chart":
       // The extension opens the side panel on the chart; the chart itself is read from GET /chart there.
       return { reply: LINES.hereIsChart(name) };
+    case "basket-buy":
+    case "basket-make":
+    case "baskets":
+      // Baskets live in the browser: the extension reads the words and answers (and buys only through its confirm card).
+      return { reply: "" };
     case "ask":
       // Answered by the page (POST /showme), which has the page text and draws while it talks: nothing to say here.
       return { reply: "" };

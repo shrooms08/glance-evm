@@ -9,7 +9,7 @@
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 import { storage } from "wxt/utils/storage";
 
-import { bodyHash, MAX_SESSION_SECONDS, randomNonce, SESSION_HEADERS, tradeTypedData } from "@glance/core/session";
+import { basketTypedData, bodyHash, MAX_SESSION_SECONDS, randomNonce, SESSION_HEADERS, tradeTypedData } from "@glance/core/session";
 
 const sessionPrivateKey = storage.defineItem<string | null>("local:sessionPrivateKey", { fallback: null });
 
@@ -83,6 +83,42 @@ export async function signTrade(body: TradeBody, now = Date.now()): Promise<{ ra
       token: body.symbol,
       amount: body.amount,
       side: body.side,
+      maxSlippageBps: body.slippageBps ?? 0,
+      deadline: BigInt(deadline),
+      requestNonce,
+      bodyHash: bodyHash(raw),
+    }),
+  );
+  return {
+    raw,
+    headers: {
+      [SESSION_HEADERS.session]: account.address,
+      [SESSION_HEADERS.signature]: signature,
+      [SESSION_HEADERS.deadline]: String(deadline),
+      [SESSION_HEADERS.nonce]: `0x${requestNonce.toString(16)}`,
+    },
+  };
+}
+
+export interface BasketBody {
+  vault: string;
+  legs: Array<{ symbol: string; amount: string }>;
+  slippageBps?: number;
+}
+
+/**
+ * Signs a basket buy (EIP-712 GlanceBasketRequest): every leg in one signature, with the same deadline, nonce and body
+ * hash rules as a single trade. Baskets only buy.
+ */
+export async function signBasket(body: BasketBody, now = Date.now()): Promise<{ raw: string; headers: Record<string, string> }> {
+  const account = await sessionAccount();
+  const raw = JSON.stringify(body);
+  const deadline = Math.floor(now / 1000) + TRADE_REQUEST_SECONDS;
+  const requestNonce = randomNonce(128);
+  const signature = await account.signTypedData(
+    basketTypedData({
+      vault: body.vault as `0x${string}`,
+      legs: body.legs.map((l) => ({ token: l.symbol, amount: l.amount, side: "buy" })),
       maxSlippageBps: body.slippageBps ?? 0,
       deadline: BigInt(deadline),
       requestNonce,

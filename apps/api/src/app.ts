@@ -27,6 +27,7 @@ import { streamSSE } from "hono/streaming";
 import { SESSION_HEADERS } from "@glance/core/session";
 import { linkBody, revokeBody } from "./sessions.js";
 import { STARTER_USDG } from "./faucet.js";
+import { agentExecutor, BasketJobs, basketPreflight, executeLegs } from "./basket.js";
 
 /** Largest JSON body accepted (Show me's page context included). */
 export const MAX_JSON_BODY_BYTES = 64 * 1024;
@@ -44,6 +45,10 @@ const resolveBody = z.object({ text: z.string().min(1).max(MAX_RESOLVE_CHARS) })
 const namesBody = z.object({ names: z.array(z.string().max(120)).max(200) });
 const quoteQuery = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() });
 const tradeBody = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() }).strict();
+/** A basket: the legs in order, each an amount in dollars (the extension planned them from the weights). */
+const basketBody = z
+  .object({ vault: address, legs: z.array(z.object({ symbol, amount: decimal }).strict()).min(1).max(10), slippageBps: slippageBps.optional() })
+  .strict();
 const activityQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) });
 const priceQuery = z.object({ vault: address.optional() });
 const showMeBody = z
@@ -178,7 +183,10 @@ export function createServerApp(ctx: AppContext) {
   app.use("*", async (c, next) => (c.req.path === "/voice/transcribe" ? next() : jsonLimit(c, next)));
 
   app.use("*", rateLimit({ limit: config.RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "all" }));
-  app.use("/trade", rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" }));
+  // "/trade/*" also matches "/trade" itself: one registration covers single trades and baskets. Only sending counts: a
+  // basket's progress (GET /trade/basket/:jobId, polled while its legs land) is a read.
+  const tradeLimit = rateLimit({ limit: config.TRADE_RATE_LIMIT_PER_MINUTE, trustProxy: config.TRUST_PROXY, name: "trade" });
+  app.use("/trade/*", async (c, next) => (c.req.method === "GET" ? next() : tradeLimit(c, next)));
   /**
    * The paid endpoints (Claude, Deepgram) and the heavier reads: a limit per IP, and the same limit per browser session
    * when the request names one (so one browser can't use a whole office's allowance, nor many IPs one browser's).
@@ -346,6 +354,56 @@ export function createServerApp(ctx: AppContext) {
       if (err instanceof ApiError && err.guard && err.refused) recordRefusal(ctx, "trade", err.refused, err.guard);
       throw err;
     }
+  });
+
+  // ---- Baskets (src/basket.ts): every leg preflighted; one signature; the legs sent one by one ----------------------
+  const jobs = new BasketJobs();
+  app.post("/quote/basket", async (c) => {
+    const body = parse(basketBody, await jsonBody(c));
+    const { calls: _calls, ...report } = await basketPreflight(ctx, { ...body, vault: getAddress(body.vault) });
+    return send(c, report);
+  });
+  app.post("/trade/basket", async (c) => {
+    const raw = await c.req.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      throw new ApiError(400, "INVALID_JSON", "The request body must be JSON.");
+    }
+    const body = parse(basketBody, json);
+    const vault = getAddress(body.vault);
+    await ctx.tradeAuth.checkBasket({ raw, fields: { vault, legs: body.legs.map((l) => ({ ...l, side: "buy" as const })), slippageBps: body.slippageBps }, header: (n) => c.req.header(n), ip: clientIp(c, config.TRUST_PROXY) });
+    const signer = ctx.signer;
+    if (!signer) throw new ApiError(503, "AGENT_KEY_MISSING", "The agent key isn't loaded on this server, so I can't trade.");
+    // Checked again now, just before sending: a leg that would be refused is never sent (the extension sends only
+    // the legs that passed; if one no longer does, nothing is sent and the report says why).
+    const pre = await basketPreflight(ctx, { ...body, vault });
+    if (pre.passing !== pre.legs.length) {
+      const { calls: _calls, ...report } = pre;
+      return c.json({ error: { code: "BASKET_PREFLIGHT", message: "A leg of this basket would be refused now, so nothing was sent.", report } }, 422);
+    }
+    const job = jobs.create(vault, body.legs);
+    // One basket at a time with the agent key (no single trade in between), each leg waiting for the one before.
+    void signer
+      .exclusive(() => executeLegs(body.legs, agentExecutor(ctx, { ...body, vault }, pre.calls as NonNullable<(typeof pre.calls)[number]>[]), (legs) => (job.legs = legs)))
+      .then(
+        (r) => {
+          job.legs = r.results;
+          job.state = r.complete ? "done" : "stopped";
+        },
+        (err: unknown) => {
+          job.state = "failed";
+          job.message = isRpcTrouble(err) ? "The testnet stopped responding part way. Check your activity before trying again." : "The basket stopped part way. Check your activity.";
+          console.error(`[basket] ${(err as Error).name}: ${String((err as Error).message).split("\n")[0]}`);
+        },
+      );
+    return send(c, { jobId: job.id, legs: job.legs });
+  });
+  app.get("/trade/basket/:jobId", (c) => {
+    const job = jobs.get(c.req.param("jobId"));
+    if (!job) throw new ApiError(404, "NOT_FOUND", "No such basket buy (it may have finished over an hour ago).");
+    return send(c, { state: job.state, legs: job.legs, message: job.message ?? null });
   });
 
   registerVoice(app, ctx, send, parse, jsonBody, nodeWs.upgradeWebSocket);

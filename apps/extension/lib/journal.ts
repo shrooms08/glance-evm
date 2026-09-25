@@ -34,6 +34,25 @@ export interface JournalEntry {
   priceAtBuy: string;
   /** Null: the buy wasn't placed from a page. */
   page: PageContext | null;
+  /** A basket buy: one entry for the whole basket (keyed by its first leg's transaction), with every leg sent. */
+  basket?: BasketBuy;
+}
+
+export interface BasketBuyLeg {
+  symbol: string;
+  /** Dollars spent on this leg ("6.00"). */
+  amount: string;
+  /** The quantity bought, as a decimal string ("0.0158"). */
+  qty: string;
+  priceAtBuy: string;
+  txHash: string;
+  explorerUrl: string;
+}
+
+export interface BasketBuy {
+  id: string;
+  name: string;
+  legs: BasketBuyLeg[];
 }
 
 export const journalItem = storage.defineItem<Record<string, JournalEntry>>("local:journal", { fallback: {} });
@@ -143,4 +162,74 @@ export async function recordTrade(
   } catch {
     // nothing: a failed journal write never affects the trade
   }
+}
+
+/**
+ * A basket buy, into the journal: one entry, with every leg that went through (legs that weren't sent are left out).
+ * Its symbol is the basket's name and its amount the dollars actually spent. Errors are swallowed, like recordTrade.
+ */
+export async function recordBasketBuy(
+  page: Promise<PageContext | null> | PageContext | null,
+  basket: { id: string; name: string },
+  legs: ReadonlyArray<{ symbol: string; amount: string; status: string; txHash?: string; explorerUrl?: string; got?: string; priceAtBuy: string | null }>,
+  now: () => number = () => Date.now(),
+): Promise<JournalEntry | null> {
+  try {
+    const done = legs
+      .filter((l) => l.status === "done" && l.txHash)
+      .map((l) => ({ symbol: l.symbol, amount: l.amount, qty: (l.got ?? "").split(" ")[0] ?? "", priceAtBuy: l.priceAtBuy ?? "", txHash: l.txHash!, explorerUrl: l.explorerUrl ?? "" }));
+    if (done.length === 0) return null;
+    const cents = done.reduce((sum, l) => sum + Math.round(Number(l.amount) * 100), 0);
+    const entry: JournalEntry = {
+      txHash: done[0]!.txHash,
+      explorerUrl: done[0]!.explorerUrl,
+      at: now(),
+      symbol: basket.name,
+      amount: (cents / 100).toFixed(2),
+      priceAtBuy: "",
+      page: (await page) ?? null,
+      basket: { id: basket.id, name: basket.name, legs: done },
+    };
+    await recordBuy(entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+export interface BasketHolding {
+  txHash: string;
+  name: string;
+  at: number;
+  /** Dollars spent. */
+  cost: number;
+  /** What its legs are worth at today's prices (null: a price is missing). */
+  valueNow: number | null;
+  legs: Array<BasketBuyLeg & { valueNow: number | null }>;
+  page: PageContext | null;
+}
+
+/**
+ * The Portfolio's "Baskets" section: each basket bought, newest first, its legs, and what they're worth now. The
+ * positions themselves are unchanged (a basket's shares are ordinary positions); this only groups the buys.
+ */
+export function basketHoldings(entries: readonly JournalEntry[], prices: Record<string, string>): BasketHolding[] {
+  return entries
+    .filter((e) => e.basket)
+    .sort((a, b) => b.at - a.at)
+    .map((e) => {
+      const legs = e.basket!.legs.map((l) => {
+        const p = prices[l.symbol];
+        const q = Number(l.qty);
+        return { ...l, valueNow: p !== undefined && l.qty !== "" && Number.isFinite(q) ? q * Number(p) : null };
+      });
+      const cost = legs.reduce((s, l) => s + Number(l.amount), 0);
+      const valueNow = legs.every((l) => l.valueNow !== null) ? legs.reduce((s, l) => s + l.valueNow!, 0) : null;
+      return { txHash: e.txHash, name: e.basket!.name, at: e.at, cost, valueNow, legs, page: e.page };
+    });
+}
+
+/** Every transaction a journal entry covers (a basket's legs each have their own). */
+export function entryHashes(e: JournalEntry): string[] {
+  return e.basket ? e.basket.legs.map((l) => l.txHash.toLowerCase()) : [e.txHash.toLowerCase()];
 }

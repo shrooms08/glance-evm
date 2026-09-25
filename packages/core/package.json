@@ -19,7 +19,8 @@
     "./sketch": "./src/sketch.ts",
     "./persona": "./src/persona.ts",
     "./sentences": "./src/sentences.ts",
-    "./session": "./src/session.ts"
+    "./session": "./src/session.ts",
+    "./basket": "./src/basket.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

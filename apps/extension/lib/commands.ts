@@ -5,8 +5,11 @@
  *   "buy ten dollars of Tesla", "buy $25 of TSLA", "buy twenty five bucks worth of amazon", "buy tesla for $10"
  *   "what's Tesla at", "what is amd trading at", "price of netflix", "how much is palantir"
  *   "how much have I spent today", "how much do I have left today"
+ *   "buy $30 of the tech basket", "buy the EV basket for $20"
+ *   "make a basket called EV with Tesla and AMD, 50/50", "show my baskets"
  *   any other question ("what's this article saying?", "how do I withdraw?"): "ask", answered by Show me
  */
+import { parseSplit } from "@glance/core/basket";
 import { isAsk } from "@glance/core/showme";
 
 export type Command =
@@ -16,6 +19,11 @@ export type Command =
   | { kind: "portfolio" }
   | { kind: "why"; symbol: string }
   | { kind: "chart"; symbol: string }
+  /** A basket, by name as said ("tech"); the caller finds it among this browser's baskets. */
+  | { kind: "buyBasket"; basket: string; amount: string }
+  /** Weights in basis points, or null for equal weights. `unmatched`: names that aren't in the catalog. */
+  | { kind: "makeBasket"; name: string; symbols: string[]; weights: number[] | null; unmatched: string[] }
+  | { kind: "baskets" }
   /** Developer check: draw every Show me shape on the current selection. */
   | { kind: "testDrawing" }
   /** A question about the page, a term, or how to use Glance: answered by Show me. */
@@ -88,9 +96,40 @@ function findCompany(text: string, table: ReturnType<typeof aliasTable>): string
   return null;
 }
 
+/** Every company named in the text, in the order said (longest names first, so "amazon web services" isn't "amazon"). */
+function companiesIn(text: string, table: ReturnType<typeof aliasTable>): string[] {
+  let rest = ` ${normalise(text).replace(/\b(the|some|shares of|stock in)\b/g, " ").replace(/\s+/g, " ").trim()} `;
+  const hits: Array<{ at: number; symbol: string }> = [];
+  for (const row of table) {
+    const at = rest.indexOf(` ${row.phrase} `);
+    if (at < 0) continue;
+    hits.push({ at, symbol: row.symbol });
+    rest = `${rest.slice(0, at + 1)}${"#".repeat(row.phrase.length)}${rest.slice(at + 1 + row.phrase.length)}`;
+  }
+  return hits.sort((a, b) => a.at - b.at).map((h) => h.symbol);
+}
+
 const CURRENCY = "(?:dollars?|bucks|usd|usdg)";
 
-export function parseCommand(input: string, companies: readonly CompanyAliases[]): Command {
+/** "Tesla and AMD, 50/50" -> the companies and the split ("50/50", "60 40", "60% 40%"), if one was given. */
+function basketLegs(text: string, table: ReturnType<typeof aliasTable>): { symbols: string[]; weights: number[] | null; unmatched: string[] } {
+  const split = /(?:[, ]+(?:split |weighted )?)((?:\d+(?:\.\d+)?%?\s*(?:\/|,|\s|and)\s*)+\d+(?:\.\d+)?%?)\s*(?:split)?$/.exec(text);
+  const names = (split ? text.slice(0, split.index) : text)
+    .split(/\s*,\s*|\s+and\s+|\s*&\s*/)
+    .map((n) => n.trim())
+    .filter(Boolean);
+  const symbols: string[] = [];
+  const unmatched: string[] = [];
+  for (const n of names) {
+    // A chunk may name several ("netflix amazon": the commas are gone by now), in the order said.
+    const found = companiesIn(n, table);
+    if (found.length === 0) unmatched.push(n);
+    for (const symbol of found) if (!symbols.includes(symbol)) symbols.push(symbol);
+  }
+  return { symbols, weights: split ? parseSplit(split[1]!, symbols.length) : null, unmatched };
+}
+
+export function parseCommand(input: string, companies: readonly CompanyAliases[], baskets: readonly string[] = []): Command {
   const heard = input.trim();
   const t = normalise(heard).replace(/^(ok |okay |hey |please |glance )+/, "").replace(/ please$/, "");
   const table = aliasTable(companies);
@@ -98,6 +137,30 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   if (/^(glance )?test drawings?$/.test(t) || normalise(heard) === "glance test drawing") return { kind: "testDrawing" };
   if (/^(yes|yeah|yep|confirm|do it|go ahead|buy it)$/.test(t)) return { kind: "confirm" };
   if (/^(no|nope|cancel|stop|never mind|nevermind)$/.test(t)) return { kind: "cancel" };
+
+  // Baskets, before the single-stock buy: "buy $30 of the tech basket", "buy the EV basket for $20", "make a basket
+  // called EV with Tesla and AMD, 50/50", "show my baskets".
+  if (/^(?:(?:show|list|see|open)(?: me)? )?(?:my |the )?baskets$|^what baskets\b/.test(t)) return { kind: "baskets" };
+  let b = /^(?:make|create|build|start)(?: me)? (?:a |an )?(?:new )?basket (?:called|named) (.+?) (?:with|of|from) (.+)$/.exec(t);
+  if (b) return { kind: "makeBasket", name: titleCase(heardName(heard, b[1]!)), ...basketLegs(b[2]!, table) };
+  b =
+    new RegExp(`^(?:buy|get|purchase|grab)\\s+(.+?)\\s*${CURRENCY}?\\s+(?:worth\\s+)?of\\s+(?:the\\s+|my\\s+)?(.+?)\\s+basket$`).exec(t) ??
+    new RegExp(`^(?:buy|get|purchase|grab)\\s+(.+?)\\s*${CURRENCY}?\\s+(?:worth\\s+)?of\\s+(?:the\\s+|my\\s+)?basket\\s+(.+)$`).exec(t);
+  if (b) {
+    const amount = parseAmount(b[1]!.replace(new RegExp(`\\s*${CURRENCY}$`), ""));
+    if (amount) return { kind: "buyBasket", basket: b[2]!, amount };
+  }
+  b = new RegExp(`^(?:buy|get|purchase|grab)\\s+(?:the\\s+|my\\s+)?(.+?)\\s+basket\\s+for\\s+(.+?)(?:\\s+${CURRENCY})?$`).exec(t);
+  if (b) {
+    const amount = parseAmount(b[2]!);
+    if (amount) return { kind: "buyBasket", basket: b[1]!, amount };
+  }
+  // "buy $30 of tech": a basket's own name, when it isn't also a company.
+  const named = new RegExp(`^(?:buy|get|purchase|grab)\\s+(.+?)\\s*${CURRENCY}?\\s+(?:worth\\s+)?of\\s+(?:the\\s+|my\\s+)?(.+)$`).exec(t);
+  if (named && baskets.some((n) => normalise(n) === named[2]) && !findCompany(named[2]!, table)) {
+    const amount = parseAmount(named[1]!.replace(new RegExp(`\\s*${CURRENCY}$`), ""));
+    if (amount) return { kind: "buyBasket", basket: named[2]!, amount };
+  }
 
   if (/\b(spent|spend)\b.*\btoday\b|how much .*\b(spent|left)\b|what have i spent|what's left today|how much can i (still )?(spend|buy)/.test(t)) {
     return { kind: "spent" };
@@ -156,4 +219,18 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   }
 
   return { kind: "unknown", heard };
+}
+
+/** The basket's name as the user wrote it (their capitals), found back in the original text. */
+function heardName(heard: string, lowered: string): string {
+  const at = heard.toLowerCase().indexOf(lowered);
+  return at >= 0 ? heard.slice(at, at + lowered.length) : lowered;
+}
+
+/** "ev" -> "EV" (short names read as initials), "clean energy" -> "Clean Energy"; names typed with capitals are kept. */
+function titleCase(name: string): string {
+  if (/[A-Z]/.test(name)) return name.trim();
+  const n = name.trim();
+  if (n.length <= 3 && !n.includes(" ")) return n.toUpperCase();
+  return n.replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }

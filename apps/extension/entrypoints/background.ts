@@ -10,7 +10,7 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import type { ApiRequest, ApiResponse, Message } from "../lib/messages";
 import { apiBaseUrl } from "../lib/settings";
-import { forgetSession, linkExpiry, sessionAddress, signTrade, type TradeBody } from "../lib/session";
+import { forgetSession, linkExpiry, sessionAddress, signBasket, signTrade, type BasketBody, type TradeBody } from "../lib/session";
 import { consoleUrl } from "../lib/settings";
 import type { ConsolePage, SessionInfo, SessionLinkStarted, Shortcuts } from "../lib/messages";
 import { captureForShowMe, forwardCommand } from "../lib/commandRouting";
@@ -75,7 +75,9 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
   let res: Response;
   try {
     // A trade is signed with this browser's session key (lib/session.ts): the API checks it before the agent signs.
-    const signed = req.method === "POST" && req.path === "/trade" ? await signTrade(req.body as TradeBody) : null;
+    // A basket buy is signed the same way, every leg in one signature (GlanceBasketRequest).
+    const signed =
+      req.method !== "POST" ? null : req.path === "/trade" ? await signTrade(req.body as TradeBody) : req.path === "/trade/basket" ? await signBasket(req.body as BasketBody) : null;
     // Every request names this browser's session (its address only), so the API can limit per browser as well as per IP.
     const session = { [SESSION_HEADERS.session]: await sessionAddress() };
     res = await fetch(`${base}${req.path}`, {

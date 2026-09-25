@@ -60,6 +60,36 @@ export const TRADE_TYPES = {
   ],
 } as const;
 
+/** A basket buy: every leg in one signature (the same rules as GlanceTradeRequest: linked session, deadline, replay, body). */
+export const BASKET_TYPES = {
+  BasketLeg: [
+    { name: "token", type: "string" },
+    { name: "amount", type: "string" },
+    { name: "side", type: "string" },
+  ],
+  GlanceBasketRequest: [
+    { name: "vault", type: "address" },
+    { name: "legs", type: "BasketLeg[]" },
+    { name: "maxSlippageBps", type: "uint16" },
+    { name: "deadline", type: "uint64" },
+    { name: "requestNonce", type: "uint128" },
+    { name: "bodyHash", type: "bytes32" },
+  ],
+} as const;
+
+export interface GlanceBasketRequest {
+  vault: Address;
+  legs: Array<{ token: string; amount: string; side: string }>;
+  maxSlippageBps: number;
+  deadline: bigint;
+  requestNonce: bigint;
+  bodyHash: Hex;
+}
+
+export function basketTypedData(m: GlanceBasketRequest, chainId: number = SESSION_CHAIN_ID) {
+  return { domain: sessionDomain(m.vault, chainId), types: BASKET_TYPES, primaryType: "GlanceBasketRequest", message: m } as const;
+}
+
 export interface GlanceSession {
   vault: Address;
   sessionKey: Address;
@@ -123,7 +153,6 @@ export const SESSION_MESSAGES: Record<SessionErrorCode, string> = {
 
 export const ONLY_OWNER = "Only the vault owner can link a browser.";
 export const VOICE_RESTING = "Voice is resting for today. You can still type.";
-export const DEMO_VAULT_LABEL = "Demo vault: open for trying Glance";
 
 /** "12 October 2026": a link's expiry, as the owner reads it. */
 export function formatExpiry(expiresAt: number): string {

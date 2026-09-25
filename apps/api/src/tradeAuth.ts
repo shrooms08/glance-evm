@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 
 import { isAddressEqual, recoverTypedDataAddress, type Address, type Hex } from "viem";
-import { bodyHash, MAX_REQUEST_SECONDS, SESSION_HEADERS, SESSION_MESSAGES, tradeTypedData, type SessionErrorCode } from "@glance/core/session";
+import { basketTypedData, bodyHash, MAX_REQUEST_SECONDS, SESSION_HEADERS, SESSION_MESSAGES, tradeTypedData, type SessionErrorCode } from "@glance/core/session";
 
 import { ApiError } from "./services.js";
 import type { Sessions } from "./sessions.js";
@@ -32,6 +32,12 @@ export interface TradeFields {
   symbol: string;
   side: "buy" | "sell";
   amount: string;
+  slippageBps?: number;
+}
+
+export interface BasketFields {
+  vault: Address;
+  legs: Array<{ symbol: string; amount: string; side: "buy" }>;
   slippageBps?: number;
 }
 
@@ -79,58 +85,69 @@ export function createTradeAuth(d: TradeAuthDeps) {
 
     /**
      * Checks one trade request. `raw` is the exact body as received (its hash is signed); `fields` is that body, parsed.
-     * Throws a 401 ApiError with one of the four codes, or 429 when an open demo vault's limit is reached.
+     * Throws a 401 ApiError with one of the four codes, or 429 when an open vault's limit is reached.
      */
     async check(input: { raw: string; fields: TradeFields; header(name: string): string | undefined; ip: string }): Promise<TradeAuthResult> {
-      const { fields, header } = input;
-      const t = now();
-      const sessionKey = header(SESSION_HEADERS.session);
-      const demoVault = isDemo(fields.vault);
-
-      if (!sessionKey || !/^0x[0-9a-fA-F]{40}$/.test(sessionKey)) return demoVault ? openDemoTrade(fields.vault, input.ip) : refuse("SESSION_REQUIRED");
-      const status = d.sessions.status(fields.vault, sessionKey as Address);
-      if (!status.linked) {
-        // Not linked to this vault: the demo vaults stay open; every other vault needs the owner's link.
-        if (demoVault) return openDemoTrade(fields.vault, input.ip);
-        return refuse(status.reason === "expired" ? "SESSION_EXPIRED" : "SESSION_REQUIRED");
-      }
-
-      const signature = header(SESSION_HEADERS.signature);
-      const deadlineText = header(SESSION_HEADERS.deadline);
-      const nonceText = header(SESSION_HEADERS.nonce);
-      if (!signature || !/^0x[0-9a-fA-F]{130}$/.test(signature) || !deadlineText || !/^\d{1,12}$/.test(deadlineText) || !nonceText || !/^0x[0-9a-fA-F]{1,32}$/.test(nonceText)) {
-        return refuse("BAD_SIGNATURE");
-      }
-      const deadline = Number(deadlineText);
-      if (deadline > t + MAX_REQUEST_SECONDS + SKEW_SECONDS) return refuse("BAD_SIGNATURE");
-      if (deadline < t) return refuse("REPLAYED");
-
-      const requestNonce = BigInt(nonceText);
-      const typed = tradeTypedData(
-        {
-          vault: fields.vault,
-          action: "trade",
-          token: fields.symbol,
-          amount: fields.amount,
-          side: fields.side,
-          maxSlippageBps: fields.slippageBps ?? 0,
-          deadline: BigInt(deadline),
-          requestNonce,
-          bodyHash: bodyHash(input.raw),
-        },
-        d.chainId,
+      const f = input.fields;
+      return checkSigned({ ...input, vault: f.vault }, (deadline, requestNonce, hash) =>
+        tradeTypedData(
+          { vault: f.vault, action: "trade", token: f.symbol, amount: f.amount, side: f.side, maxSlippageBps: f.slippageBps ?? 0, deadline, requestNonce, bodyHash: hash },
+          d.chainId,
+        ),
       );
-      const signer = await recoverTypedDataAddress({ ...typed, signature: signature as Hex }).catch(() => null);
-      if (!signer || !isAddressEqual(signer, sessionKey as Address)) return refuse("BAD_SIGNATURE");
+    },
 
-      // Only now, with the session's own signature checked: the nonce is single use.
-      for (const [k, until] of seen) if (until < t) seen.delete(k);
-      const nonceKey = `${fields.vault.toLowerCase()}:${requestNonce.toString(16)}`;
-      if (seen.has(nonceKey)) return refuse("REPLAYED");
-      seen.set(nonceKey, deadline);
-      return { via: "session", session: sessionKey as Address };
+    /** Checks a basket request (GlanceBasketRequest): the same rules, over every leg in one signature. */
+    async checkBasket(input: { raw: string; fields: BasketFields; header(name: string): string | undefined; ip: string }): Promise<TradeAuthResult> {
+      const f = input.fields;
+      return checkSigned({ ...input, vault: f.vault }, (deadline, requestNonce, hash) =>
+        basketTypedData(
+          { vault: f.vault, legs: f.legs.map((l) => ({ token: l.symbol, amount: l.amount, side: l.side })), maxSlippageBps: f.slippageBps ?? 0, deadline, requestNonce, bodyHash: hash },
+          d.chainId,
+        ),
+      );
     },
   };
+
+  /** The rules every signed request shares: a linked session, a signature over the exact body, a deadline, one use. */
+  async function checkSigned(
+    input: { raw: string; vault: Address; header(name: string): string | undefined; ip: string },
+    typed: (deadline: bigint, requestNonce: bigint, bodyHash: Hex) => object,
+  ): Promise<TradeAuthResult> {
+    const { header } = input;
+    const t = now();
+    const sessionKey = header(SESSION_HEADERS.session);
+    const demoVault = isDemo(input.vault);
+
+    if (!sessionKey || !/^0x[0-9a-fA-F]{40}$/.test(sessionKey)) return demoVault ? openDemoTrade(input.vault, input.ip) : refuse("SESSION_REQUIRED");
+    const status = d.sessions.status(input.vault, sessionKey as Address);
+    if (!status.linked) {
+      // Not linked to this vault: an open vault (recording day) stays open; every other vault needs the owner's link.
+      if (demoVault) return openDemoTrade(input.vault, input.ip);
+      return refuse(status.reason === "expired" ? "SESSION_EXPIRED" : "SESSION_REQUIRED");
+    }
+
+    const signature = header(SESSION_HEADERS.signature);
+    const deadlineText = header(SESSION_HEADERS.deadline);
+    const nonceText = header(SESSION_HEADERS.nonce);
+    if (!signature || !/^0x[0-9a-fA-F]{130}$/.test(signature) || !deadlineText || !/^\d{1,12}$/.test(deadlineText) || !nonceText || !/^0x[0-9a-fA-F]{1,32}$/.test(nonceText)) {
+      return refuse("BAD_SIGNATURE");
+    }
+    const deadline = Number(deadlineText);
+    if (deadline > t + MAX_REQUEST_SECONDS + SKEW_SECONDS) return refuse("BAD_SIGNATURE");
+    if (deadline < t) return refuse("REPLAYED");
+
+    const requestNonce = BigInt(nonceText);
+    const signer = await recoverTypedDataAddress({ ...(typed(BigInt(deadline), requestNonce, bodyHash(input.raw)) as Parameters<typeof recoverTypedDataAddress>[0]), signature: signature as Hex }).catch(() => null);
+    if (!signer || !isAddressEqual(signer, sessionKey as Address)) return refuse("BAD_SIGNATURE");
+
+    // Only now, with the session's own signature checked: the nonce is single use.
+    for (const [k, until] of seen) if (until < t) seen.delete(k);
+    const nonceKey = `${input.vault.toLowerCase()}:${requestNonce.toString(16)}`;
+    if (seen.has(nonceKey)) return refuse("REPLAYED");
+    seen.set(nonceKey, deadline);
+    return { via: "session", session: sessionKey as Address };
+  }
 }
 
 export type TradeAuth = ReturnType<typeof createTradeAuth>;

@@ -132,6 +132,8 @@ export interface Position {
   quantity: Amount;
   value: Amount;
   marketState: MarketState;
+  /** The vault allows buying it (absent from older APIs: treat as allowed). */
+  allowed?: boolean;
 }
 
 export interface Vault {
@@ -212,4 +214,42 @@ export interface WhyMoved {
   sources: Array<{ title: string; url: string; site: string; publishedAt: string }>;
   generatedAt: string;
   cached: boolean;
+}
+
+/** POST /quote/basket: every leg preflighted, then the legs together against the cap left and the vault's USDG. */
+export interface BasketLegCheck {
+  symbol: string;
+  amount: string;
+  price: string | null;
+  ok: boolean;
+  code?: string;
+  reason?: string;
+}
+
+export interface BasketPreflight {
+  legs: BasketLegCheck[];
+  total: string;
+  passing: number;
+  capLeft: string;
+  capLeftAfter: string;
+}
+
+export type BasketLegStatus = "waiting" | "sending" | "done" | "reverted" | "not-sent";
+
+export interface BasketLegResult {
+  symbol: string;
+  amount: string;
+  status: BasketLegStatus;
+  txHash?: string;
+  explorerUrl?: string;
+  /** What the leg bought ("0.0263 TSLA"). */
+  got?: string;
+  reason?: string;
+}
+
+/** GET /trade/basket/:jobId. */
+export interface BasketJob {
+  state: "running" | "done" | "stopped" | "failed";
+  legs: BasketLegResult[];
+  message: string | null;
 }

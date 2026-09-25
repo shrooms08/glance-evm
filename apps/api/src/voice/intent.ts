@@ -19,7 +19,7 @@ import { isAsk } from "@glance/core/showme";
 
 import { extractAmounts } from "./amounts.js";
 
-export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "unknown"] as const;
+export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "basket-buy", "basket-make", "baskets", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
 export interface VoiceContext {
@@ -127,6 +127,16 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   const amounts = extractAmounts(transcript);
   const base = { source: "rules" as const, symbol, amount: null };
 
+  // Baskets: named in the browser, so the extension reads the words itself ("buy $30 of the tech basket", "make a basket
+  // called EV with Tesla and AMD, 50/50", "show my baskets").
+  if (/\bbaskets?\b/.test(t)) {
+    if (leadingVerb(t) === "buy" && !blocksTrade(transcript)) return { ...base, symbol: null, intent: "basket-buy", amount: amounts.length === 1 ? amounts[0]! : null };
+    if (new RegExp(`^${LEAD}(make|create|build|start|new)\\b`).test(t) && !blocksTrade(transcript)) return { ...base, symbol: null, intent: "basket-make" };
+    if (/^(?:(?:ok|okay|hey|glance|please|can you|could you) )*((show|list|see|open)( me)? )?(my |the )?baskets$|\bwhat baskets\b|\b(show|list|see|open)( me)? (my |the )?baskets\b/.test(t)) {
+      return { ...base, symbol: null, intent: "baskets" };
+    }
+  }
+
   const verb = leadingVerb(t);
   if (verb) return { ...base, intent: verb, amount: amounts.length === 1 ? amounts[0]! : null };
   // A trade verb elsewhere ("don't buy Tesla", "should I sell Amazon?"): hand it to the validator, which refuses it as
@@ -219,14 +229,16 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     notes.push("chart without a catalog company");
     out.intent = "unknown";
   }
-  if (out.intent === "portfolio") out.symbol = null;
+  if (out.intent === "portfolio" || out.intent.startsWith("basket")) out.symbol = null;
   if (out.intent === "ask") out.amount = null;
-  if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol) {
+  // "sell the tech basket": selling stays in the console, which the reply says (a basket names no single company).
+  const basketSell = out.intent === "sell" && !out.symbol && /\bbaskets?\b/i.test(transcript);
+  if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol && !basketSell) {
     notes.push(`${out.intent} without a catalog company`);
     out.intent = "unknown";
     out.amount = null;
   }
-  if (out.intent !== "buy" && out.intent !== "sell") out.amount = null;
+  if (out.intent !== "buy" && out.intent !== "sell" && out.intent !== "basket-buy") out.amount = null;
   if (out.intent === "spend-so-far" || out.intent === "explain" || out.intent === "unknown") {
     if (out.intent !== "unknown") out.symbol = null;
   }
@@ -280,6 +292,8 @@ export function createClaudeIntent(
     "ask (a question about the page they're reading, a request to be shown something on it, a question about what a term",
     "means, or how to use Glance: \"what's this article saying about Tesla?\", \"explain this chart\", \"what's a stock",
     "token?\", \"how do I withdraw?\"),",
+    "basket-buy (buy an amount of a named basket: \"buy $30 of the tech basket\"), basket-make (make a basket:",
+    "\"make a basket called EV with Tesla and AMD, 50/50\"), baskets (show their baskets),",
     "unknown (anything else, or ambiguous).",
     "Rules:",
     "- symbol: ONLY a ticker from the list below, or null. Never any other ticker.",
@@ -341,7 +355,7 @@ export function createClaudeIntent(
  * ten dollars of Tesla", "show me Tesla's chart") or a clear question for Show me. Explain and unknown need Claude's
  * one-sentence reply (or its better reading of an unclear request).
  */
-const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask"]);
+const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask", "basket-buy", "basket-make", "baskets"]);
 
 /** Max output for the intent tool call: the answer is four short fields. */
 export const INTENT_MAX_OUTPUT_TOKENS = 150;

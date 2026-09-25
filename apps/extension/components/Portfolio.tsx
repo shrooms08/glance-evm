@@ -2,7 +2,8 @@
  * The Portfolio view (side panel and floating panel): USDG cash, each position with its value and PnL ($ and %; lime
  * when up, a muted red when down), the price's age, and the total. Each position says which headline its latest buy
  * came from, from the headline journal (kept only in this browser), and how the price has moved since.
- * The Journal tab lists every buy's headline, newest first.
+ * The Journal tab lists every buy's headline, newest first. Baskets bought are grouped in their own section (each
+ * basket, its legs, and what they're worth now); the positions themselves are unchanged.
  */
 import { BOUGHT_OUTSIDE_PAGE, EMPTY_PORTFOLIO } from "@glance/core/tone";
 import { useCallback, useEffect, useState } from "react";
@@ -12,7 +13,7 @@ import { cachedPortfolio, cacheAge, savePortfolio } from "../lib/portfolioCache"
 import { api } from "../lib/api";
 import type { Portfolio, PortfolioPosition } from "../lib/api-types";
 import { ageHours, priceUsd, shortHash } from "../lib/format";
-import { clearJournal, deleteEntry, listJournal, sinceThen, type JournalEntry } from "../lib/journal";
+import { basketHoldings, clearJournal, deleteEntry, entryHashes, listJournal, sinceThen, type JournalEntry } from "../lib/journal";
 import { isAddress } from "../lib/settings";
 import { useGlance } from "./context";
 
@@ -55,7 +56,7 @@ export function PortfolioCard({ initialTab = "positions", onClose }: { initialTa
   useEffect(() => {
     if (tab !== "journal") return;
     const held = new Set((data?.positions ?? []).map((p) => p.symbol));
-    const missing = [...new Set(journal.map((j) => j.symbol))].filter((s) => !held.has(s) && !(s in otherPrices));
+    const missing = [...new Set(journal.flatMap((j) => (j.basket ? j.basket.legs.map((l) => l.symbol) : [j.symbol])))].filter((s) => !held.has(s) && !(s in otherPrices));
     if (missing.length === 0) return;
     void Promise.all(missing.map(async (s) => [s, await api.price(s)] as const)).then((rows) => {
       const found: Record<string, string> = {};
@@ -142,7 +143,8 @@ export function Positions({
       </div>
     );
   }
-  const byHash = new Map(journal.map((j) => [j.txHash.toLowerCase(), j]));
+  const byHash = new Map(journal.flatMap((j) => entryHashes(j).map((h) => [h, j] as const)));
+  const baskets = basketHoldings(journal, Object.fromEntries(data.positions.map((p) => [p.symbol, p.price.value])));
   const t = data.totals;
   return (
     <div className="g-portfolio">
@@ -183,13 +185,44 @@ export function Positions({
           ))}
         </ul>
       )}
+      {baskets.length > 0 && <BasketsSection holdings={baskets} />}
       {t.realizedPnl.raw !== "0" && <span className="g-meta">Realized from sales: <span className={tone(t.realizedPnl.formatted)}>{t.realizedPnl.formatted}</span></span>}
     </div>
   );
 }
 
+const usd = (n: number) => `$${n.toFixed(2)}`;
+
+/** Each basket bought: its legs and what they're worth now (a leg sold since still counts what it bought). */
+function BasketsSection({ holdings }: { holdings: ReturnType<typeof basketHoldings> }) {
+  return (
+    <div className="g-baskets" aria-label="Baskets bought">
+      <span className="g-meta">Baskets</span>
+      <ul className="g-positions">
+        {holdings.map((h) => (
+          <li key={h.txHash} className="g-position" data-basket-holding={h.name}>
+            <div className="g-between">
+              <span className="g-ui">{h.name}</span>
+              <span className="g-data">{h.valueNow === null ? "?" : usd(h.valueNow)}</span>
+            </div>
+            <span className="g-meta">
+              {h.legs.map((l) => `${l.symbol} ${l.valueNow === null ? "?" : usd(l.valueNow)}`).join(" · ")}
+            </span>
+            <span className="g-meta">
+              Paid {usd(h.cost)} on {new Date(h.at).toLocaleDateString()}
+              {h.page ? ` · from ${h.page.site}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function PositionRow({ p, entry }: { p: PortfolioPosition; entry: JournalEntry | null }) {
-  const since = entry ? sinceThen(entry.priceAtBuy, p.price.value) : null;
+  // A basket's entry covers several transactions: the price at this stock's own leg.
+  const priceAtBuy = entry?.basket ? (entry.basket.legs.find((l) => l.txHash.toLowerCase() === p.lastBuy?.txHash.toLowerCase())?.priceAtBuy ?? "") : entry?.priceAtBuy;
+  const since = entry && priceAtBuy ? sinceThen(priceAtBuy, p.price.value) : null;
   return (
     <li className="g-position">
       <div className="g-between">
@@ -239,7 +272,8 @@ export function Journal({ entries, prices, onDelete, onClear }: { entries: Journ
       <span className="g-meta">Kept only in this browser. Glance never sends it anywhere.</span>
       <ul className="g-positions">
         {entries.map((e) => {
-          const now = prices[e.symbol];
+          // A basket names no single price: its legs are listed, and valued in the Portfolio's Baskets section.
+          const now = e.basket ? undefined : prices[e.symbol];
           const since = now ? sinceThen(e.priceAtBuy, now) : null;
           return (
             <li key={e.txHash} className="g-position">
@@ -253,7 +287,15 @@ export function Journal({ entries, prices, onDelete, onClear }: { entries: Journ
               {e.page?.sentence && <span className="g-meta g-quote">“{e.page.sentence}”</span>}
               <span className="g-meta">
                 {e.page ? `${e.page.site} · ` : ""}
-                <span className="g-ticker">{e.symbol}</span> ${e.amount} at {priceUsd(e.priceAtBuy)}
+                {e.basket ? (
+                  <>
+                    {e.basket.name} basket, ${e.amount}: {e.basket.legs.map((l) => `${l.symbol} $${l.amount}`).join(", ")}
+                  </>
+                ) : (
+                  <>
+                    <span className="g-ticker">{e.symbol}</span> ${e.amount} at {priceUsd(e.priceAtBuy)}
+                  </>
+                )}
                 {now ? ` · now ${priceUsd(now)}` : ""}
                 {since ? (
                   <>

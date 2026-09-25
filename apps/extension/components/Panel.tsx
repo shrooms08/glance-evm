@@ -15,6 +15,7 @@ import { LostBanner, RelinkNotice, SetupCard } from "./Setup";
 import { setupRows } from "../lib/readiness";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
 import { PortfolioCard } from "./Portfolio";
+import { BasketsCard } from "./Baskets";
 import { WhyCard } from "./Why";
 import { LINES } from "@glance/core/persona";
 import { marketClosed, useGlance } from "./context";
@@ -170,6 +171,18 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
           </div>
         )}
 
+        {assistant.card?.kind === "baskets" && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
+            <BasketsCard
+              key={assistant.card.key}
+              initialBuy={assistant.card.buy}
+              notice={assistant.card.notice}
+              onClose={() => assistant.setCard(null)}
+              pageContext={pageContext ? () => pageContext(companies[0]?.symbol ?? "") : undefined}
+            />
+          </div>
+        )}
+
         {assistant.card?.kind === "why" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
             <WhyCard
@@ -262,6 +275,9 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
         </button>
         <button className="g-btn g-btn-ghost" onClick={() => assistant.setCard({ kind: "portfolio", key: Date.now() })}>
           Portfolio
+        </button>
+        <button className="g-btn g-btn-ghost" onClick={() => assistant.setCard({ kind: "baskets", key: Date.now() })}>
+          Baskets
         </button>
         <button className="g-btn g-btn-ghost" onClick={g.openSettings}>
           Settings

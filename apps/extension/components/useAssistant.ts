@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { parseCommand } from "../lib/commands";
+import { allowedSymbols, describeLegs, draftBasket, findBasket, listBaskets, saveBasket } from "../lib/baskets";
 import { ageHours, priceUsd, until } from "../lib/format";
 import { isAddress } from "../lib/settings";
 import { keyLabel } from "../lib/hotkeys";
@@ -60,6 +61,8 @@ export type AssistantCard =
   | { kind: "portfolio"; key: number; tab?: "positions" | "journal" }
   | { kind: "why"; symbol: string; key: number }
   | { kind: "chart"; symbol: string; key: number; range?: import("@glance/core/chart").ChartRange }
+  /** The Baskets view; `buy` opens straight on a basket's confirm card, `notice` says what just happened. */
+  | { kind: "baskets"; key: number; buy?: { basketId: string; amount: string }; notice?: string }
   | null;
 
 export interface AssistantOptions {
@@ -123,7 +126,12 @@ export function useAssistant(opts: AssistantOptions = {}) {
   /** Typed commands (and the browser-fallback transcript), parsed here. */
   const run = useCallback(
     async (text: string, source: "typed" | "voice" = "typed") => {
-      const cmd = parseCommand(text, g.catalog.map((s) => ({ symbol: s.symbol, aliases: s.aliases })));
+      const baskets = await listBaskets();
+      const cmd = parseCommand(
+        text,
+        g.catalog.map((s) => ({ symbol: s.symbol, aliases: s.aliases })),
+        baskets.map((b) => b.name),
+      );
       setHeard(text);
       void tick("ask"); // "Getting started": asked Glance something
       switch (cmd.kind) {
@@ -168,6 +176,32 @@ export function useAssistant(opts: AssistantOptions = {}) {
           onChart.current?.(cmd.symbol);
           const name = g.catalog.find((s) => s.symbol === cmd.symbol)?.name ?? cmd.symbol;
           return say(LINES.hereIsChart(name), "Chainlink price history");
+        }
+        case "baskets":
+          setCard({ kind: "baskets", key: ++seq.current });
+          return say(baskets.length === 1 ? "Here's your basket." : `Here are your ${baskets.length} baskets.`, "Baskets");
+        case "makeBasket": {
+          if (cmd.unmatched.length) return say(`I don't know ${cmd.unmatched.join(" or ")}. A basket can hold only stocks Glance can trade.`);
+          if (cmd.symbols.length === 0) return say("Which stocks should go in it?");
+          try {
+            const saved = await saveBasket(draftBasket(cmd.name, cmd.symbols, cmd.weights), allowedSymbols(g.vault, g.catalog));
+            const line = `Saved ${saved.name}: ${describeLegs(saved.legs)}.`;
+            setCard({ kind: "baskets", key: ++seq.current, notice: line });
+            return say(line, "Baskets");
+          } catch (err) {
+            setCard({ kind: "baskets", key: ++seq.current });
+            return say((err as Error).message);
+          }
+        }
+        case "buyBasket": {
+          const basket = findBasket(cmd.basket, baskets);
+          if (!basket) {
+            setCard({ kind: "baskets", key: ++seq.current });
+            return say(`You don't have a basket called ${cmd.basket}.`, "Baskets");
+          }
+          // The same rule as a single buy: the confirm card, every leg preflighted, and nothing moves without the tap.
+          setCard({ kind: "baskets", key: ++seq.current, buy: { basketId: basket.id, amount: cmd.amount } });
+          return;
         }
         case "ask":
           if (onAsk.current) return onAsk.current(cmd.question);
@@ -216,6 +250,12 @@ export function useAssistant(opts: AssistantOptions = {}) {
             onChart.current?.(it.symbol);
           }
           break;
+        case "basket-buy":
+        case "basket-make":
+        case "baskets":
+          // Baskets are named in this browser: read the words here, like typed text (a buy still needs the tap).
+          void run(said, "voice");
+          return;
         case "ask":
           // Show me answers with the page in view, and speaks for itself.
           if (onAsk.current) {
@@ -228,7 +268,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
       // replies off, there is nothing to wait for.
       g.setOrb({ state: g.voiceReplies ? "thinking" : "idle", line: it.reply, meta });
     },
-    [g],
+    [g, run],
   );
 
   /** Voice failures never block typing: the reason shows in the orb line and the text box stays ready. */

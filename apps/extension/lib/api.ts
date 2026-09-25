@@ -1,7 +1,7 @@
 /**
  * Typed API client for every extension surface. Calls go through the background service worker.
  */
-import type { Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
+import type { BasketJob, BasketLegResult, BasketPreflight, Catalog, Health, Portfolio, Price, Quote, Resolve, ResolveNames, Side, Trade, Vault, WhyMoved } from "./api-types";
 import type { ChartData, ChartRange } from "@glance/core/chart";
 import type { ShowAction } from "@glance/core/showme";
 
@@ -96,6 +96,11 @@ export const api = {
     call<Quote>("GET", `/quote?${q(p)}`),
   trade: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Trade>("POST", "/trade", p),
+  /** Every leg of a basket, preflighted together (nothing is sent). */
+  quoteBasket: (p: { vault: string; legs: Array<{ symbol: string; amount: string }> }) => call<BasketPreflight>("POST", "/quote/basket", p),
+  /** A basket buy: signed in the background (one GlanceBasketRequest for every leg); the legs are then sent one by one. */
+  tradeBasket: (p: { vault: string; legs: Array<{ symbol: string; amount: string }> }) => call<{ jobId: string; legs: BasketLegResult[] }>("POST", "/trade/basket", p),
+  basketJob: (jobId: string) => call<BasketJob>("GET", `/trade/basket/${encodeURIComponent(jobId)}`),
   /** Whether the vault's owner has linked this browser (polled while they sign in the console). */
   sessionStatus: (vault: string, session: string) =>
     call<{ linked: true; expiresAt: number; linkedAt: number } | { linked: false; reason: "unknown" | "revoked" | "expired"; expiresAt?: number }>(

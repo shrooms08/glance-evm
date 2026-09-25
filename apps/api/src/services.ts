@@ -115,6 +115,8 @@ export interface PriceReading {
   state: MarketState;
   openMaxAge: number;
   closedMaxAge: number;
+  /** The vault allows this token (tokenConfig.approved). */
+  approved?: boolean;
 }
 
 function classify(age: number, openMaxAge: number, closedMaxAge: number): MarketState {
@@ -148,7 +150,7 @@ export async function readPrice(ctx: AppContext, stock: CatalogEntry, vault: Add
     latestTimestamp(ctx),
   ]);
   const [, answer, , updatedAtRaw] = round;
-  const [, , openMaxAge, closedMaxAge] = config;
+  const [approved, , openMaxAge, closedMaxAge] = config;
   const updatedAt = Number(updatedAtRaw);
   const age = Math.max(0, now - updatedAt);
   return {
@@ -161,6 +163,7 @@ export async function readPrice(ctx: AppContext, stock: CatalogEntry, vault: Add
     state: answer <= 0n ? "STALE" : classify(age, openMaxAge, closedMaxAge),
     openMaxAge,
     closedMaxAge,
+    approved,
   };
 }
 
@@ -353,6 +356,8 @@ export async function vaultView(ctx: AppContext, vaultParam: string) {
           quantity: quantity(balance, stock.tokenDecimals, stock.symbol),
           value: money(value, v.usdgDecimals),
           marketState: price.state,
+          /** The vault allows buying it (baskets use only these). */
+          allowed: price.approved !== false,
           effectiveCaps: price.state === "STALE" ? null : effectiveCaps(v, price.state),
         };
       }),
