@@ -107,6 +107,8 @@ const envSchema = z.object({
    * Haiku by default; claude-sonnet-4-5 if Haiku's calibration error is too high; Opus refused unless ALLOW_OPUS.
    */
   CHART_VISION_MODEL: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** Chart-calibration vision calls a UTC day (POST /chart/calibrate); past it, the extension lays Glance's lens over the chart. */
+  CHART_VISION_DAILY_LIMIT: z.coerce.number().int().min(0).default(20),
   /** Robinhood Chain mainnet, read-only: the Chainlink feeds behind the price charts (GET /chart). */
   RPC_MAINNET_URL: z.url().default("https://rpc.mainnet.chain.robinhood.com"),
   CHART_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(60),

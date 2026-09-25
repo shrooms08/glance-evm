@@ -99,3 +99,25 @@ export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: numbe
 }
 
 export type VoiceMeters = ReturnType<typeof voiceMeters>;
+
+/** One daily meter in its own small file ({ day, used }): e.g. chart-calibration vision calls. */
+export function fileMeter(limit: number, file: string | null, now: () => number = Date.now): DailyMeter {
+  const store = {
+    load: () => {
+      if (!file || !existsSync(file)) return 0;
+      try {
+        const d = JSON.parse(readFileSync(file, "utf8")) as { day?: string; used?: number };
+        return d.day === today(now()) ? (d.used ?? 0) : 0;
+      } catch {
+        return 0;
+      }
+    },
+    save: (used: number) => {
+      if (!file) return;
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(`${file}.tmp`, JSON.stringify({ day: today(now()), used }));
+      renameSync(`${file}.tmp`, file);
+    },
+  };
+  return new DailyMeter(limit, store, now);
+}

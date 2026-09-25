@@ -4,7 +4,9 @@
  *   1. which chart, which stock, which range (lib/pageChart.ts); unsure: one short question first ("Which chart:
  *      TSLA 5 days?"), never a guess
  *   2. calibrate: the DOM labels, else a screenshot crop read by the vision model (needs activeTab: Option+G); no
- *      screenshot possible: "Press ⌥G once so I can see this chart", and the lens is offered instead
+ *      screenshot possible: "Press ⌥G once so I can see this chart", and the lens is offered instead. A vision
+ *      calibration is kept for 10 minutes per page URL + chart box + range, so asking about the same chart again makes
+ *      no new vision call; past the API's daily vision limit (CHART_VISION_DAILY_LIMIT), the lens
  *   3. check: our high and low inside the plot, our line on the page's; failing that, the lens
  *   4. Show me answers from Glance's computed facts, and its chart tags are drawn through the calibration on the page
  *      chart, or on the lens
@@ -27,7 +29,8 @@ export interface LensFlowDeps {
   /** The stock the question names, if any. */
   named: string | null;
   capture(): Promise<string | null>;
-  vision(img: { base64: string; width: number; height: number }): Promise<{ labels: unknown } | null>;
+  /** The labels read, null if they couldn't be, or `limit` (today's vision calls are used up: the lens, saying why). */
+  vision(img: { base64: string; width: number; height: number }): Promise<{ labels: unknown } | { limit: string } | null>;
   chart(symbol: string, range: ChartRange): Promise<ChartData | null>;
   facts(symbol: string, range: ChartRange): Promise<ChartFacts | null>;
   drawings(): ShowDrawings | null;
@@ -59,6 +62,16 @@ export type Prepared =
   | { kind: "unavailable"; message: string }
   | PageChartSession;
 
+/** How long a vision calibration is reused for the same chart (page URL, chart box on the page, range). */
+export const CALIBRATION_TTL_MS = 10 * 60_000;
+type Box = PageChartTarget["box"];
+const calibrations = new Map<string, { at: number; cal: Calibration; lineAt?: (x: number) => number[] | null; box: Box }>();
+/** The page URL, the chart's box on the page (not the viewport: scrolling doesn't change it), and the range. */
+const calibrationKey = (win: Window, box: Box, range: ChartRange) =>
+  [win.location.href, Math.round(box.x + win.scrollX), Math.round(box.y + win.scrollY), Math.round(box.width), Math.round(box.height), range].join("|");
+/** For tests. */
+export const clearCalibrations = () => calibrations.clear();
+
 export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: { symbol: string; range: ChartRange }; forceLens?: boolean } = {}): Promise<Prepared> {
   const log = deps.log ?? (() => {});
   const target = pickPageChart(deps.doc, deps.win, deps.symbols, deps.named, deps.aliases);
@@ -77,23 +90,35 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   };
   if (opts.forceLens) return lens("asked for the lens");
 
-  const asOf = Math.floor((deps.now?.() ?? Date.now()) / 1000);
+  const nowMs = deps.now?.() ?? Date.now();
+  const asOf = Math.floor(nowMs / 1000);
   let cal: Calibration | null = null;
   let lineAt: ((x: number) => number[] | null) | undefined;
+  /** Where the chart was when it was calibrated (the marks follow it from there). */
+  let calibratedAt = target.box;
+  const key = calibrationKey(deps.win, target.box, range);
+  const kept = calibrations.get(key);
   // a) the DOM's own labels
   const dom = calibrate(readDomLabels(target.el, deps.win), target.box, "dom", asOf);
   if (dom.ok) cal = dom.calibration;
-  else {
+  else if (kept && nowMs - kept.at < CALIBRATION_TTL_MS) {
+    // b) this chart was read in the last 10 minutes: no new screenshot or vision call
+    ({ cal, lineAt, box: calibratedAt } = kept);
+    log(`[glance] chart lens: calibration reused (${Math.round((nowMs - kept.at) / 1000)}s old)`);
+  } else {
     // b) a screenshot, read by the vision model (only the labels; the scale is fitted here)
     const shot = await deps.capture();
     if (!shot) return { kind: "no-screenshot", symbol, range };
     const crop = await (deps.crop ?? cropScreenshot)(shot, target.box, { width: deps.win.innerWidth, height: deps.win.innerHeight, dpr: deps.win.devicePixelRatio || 1 });
     const read = await deps.vision(crop);
     if (!read) return lens("the chart's labels couldn't be read");
+    if ("limit" in read) return lens(read.limit);
     const vision = calibrate(parseVisionLabels(read.labels, crop.crop, crop.scale), crop.crop, "vision", asOf);
     if (!vision.ok) return lens(vision.reason);
     cal = vision.calibration;
     lineAt = (deps.readLine ?? pixelLineReader)(crop.pixels, crop.crop, crop.scale);
+    for (const [k, v] of calibrations) if (nowMs - v.at >= CALIBRATION_TTL_MS) calibrations.delete(k);
+    calibrations.set(key, { at: nowMs, cal, lineAt, box: target.box });
   }
   lineAt ??= svgLineReader(target.el) ?? undefined;
 
@@ -106,7 +131,7 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
     data.points.map((p) => ({ t: p.t, price: p.price })),
     [facts.first, facts.last, facts.high, facts.low, ...[facts.biggestDrop, facts.biggestRise, facts.maxDrawdown].flatMap((m) => (m ? [m.from, m.to] : []))],
   );
-  const anchor = { at: target.box, now: () => (target.el.isConnected ? rectOf(target.el) : null) };
+  const anchor = { at: calibratedAt, now: () => (target.el.isConnected ? rectOf(target.el) : null) };
   log(`[glance] chart lens: drawing on the page's chart (${cal.method}, ${cal.time.kind} time axis; ${check.reason})`);
   return {
     kind: "ready",

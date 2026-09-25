@@ -27,7 +27,7 @@ import { createClaudeIntent, type IntentModel } from "./voice/intent.js";
 import { erc20Abi, glanceVaultAbi } from "./abi.generated.js";
 import { createSessions, JsonSessionStore, type Sessions } from "./sessions.js";
 import { createTradeAuth, type TradeAuth } from "./tradeAuth.js";
-import { voiceMeters } from "./voice/dailyCaps.js";
+import { fileMeter, voiceMeters } from "./voice/dailyCaps.js";
 import { createFaucet, JsonFaucetStore, PAXOS_USDG, type Faucet } from "./faucet.js";
 import { looksLikePlaceholder, selectVoiceProviders, type VoiceProviders } from "./voice/providers.js";
 
@@ -136,7 +136,13 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
       : createClaudeIntent(config.ANTHROPIC_API_KEY, models.intent, catalog.entries, 3_000, { budget, log }),
     llmBudget: budget,
     llmModels: models,
-    chartVision: createChartVision({ apiKey: anthropicKey, model: models.vision, budget, log }),
+    chartVision: createChartVision({
+      apiKey: anthropicKey,
+      model: models.vision,
+      budget,
+      log,
+      daily: fileMeter(config.CHART_VISION_DAILY_LIMIT, cacheDir ? join(cacheDir, "chart-vision-usage.json") : null),
+    }),
     showMe: createShowMe({
       apiKey: anthropicKey,
       model: models.other,

@@ -7,12 +7,16 @@
  *
  * CHART_VISION_MODEL (Haiku by default; Sonnet allowed; Opus refused unless ALLOW_OPUS), budget purpose "other". The
  * image is used for this one call: never stored, never logged (the log line is purpose, model and token counts).
+ * At most CHART_VISION_DAILY_LIMIT calls a UTC day (default 20): past it, "daily-limit", and the extension lays Glance's
+ * own chart (the lens) over the page's instead. The extension also keeps each calibration for 10 minutes, so asking
+ * about the same chart again makes no new call.
  */
 import Anthropic from "@anthropic-ai/sdk";
 
 import { VISION_INSTRUCTIONS } from "@glance/core/page-chart";
 
 import { anthropicFetch } from "./anthropicHttp.js";
+import type { DailyMeter } from "./voice/dailyCaps.js";
 import type { MessagesClient } from "./llm.js";
 import { logUsage, type LlmBudget, type Log } from "./llmBudget.js";
 
@@ -27,7 +31,7 @@ export interface RawLabel {
   y: number;
 }
 
-export type VisionResult = { ok: true; labels: RawLabel[]; model: string } | { ok: false; reason: "budget" | "unavailable" };
+export type VisionResult = { ok: true; labels: RawLabel[]; model: string } | { ok: false; reason: "budget" | "unavailable" | "daily-limit" };
 
 export interface ChartVision {
   readonly model: string;
@@ -58,14 +62,17 @@ const tool = {
   },
 };
 
-export function createChartVision(o: { apiKey?: string; model: string; budget: LlmBudget; log?: Log; client?: MessagesClient }): ChartVision | null {
+export function createChartVision(o: { apiKey?: string; model: string; budget: LlmBudget; log?: Log; client?: MessagesClient; daily?: DailyMeter | null }): ChartVision | null {
   if (!o.apiKey && !o.client) return null;
   const log = o.log ?? ((l: string) => console.log(l));
   const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 20_000, maxRetries: 0, fetch: anthropicFetch });
   return {
     model: o.model,
     async readLabels(image) {
+      if (o.daily?.resting) return { ok: false, reason: "daily-limit" };
       if (!o.budget.tryAcquire("other")) return { ok: false, reason: "budget" };
+      // Every call that reaches the model counts, answered or not.
+      o.daily?.add(1);
       let response;
       try {
         response = await client.messages.create({

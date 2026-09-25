@@ -1,10 +1,12 @@
 /**
  * The chart lens, API side: POST /chart/calibrate (the vision model reads only the axis labels, through a fixed tool
- * schema; the image is never logged), CHART_VISION_MODEL (Haiku by default, Sonnet allowed, Opus refused), and Show me
+ * schema; the image is never logged; at most CHART_VISION_DAILY_LIMIT calls a day), CHART_VISION_MODEL (Haiku by default, Sonnet allowed, Opus refused), and Show me
  * about a chart on the page: its stock and range give the facts, the Chainlink line is added only when the marks go on
  * the page's own chart, and the number grounding is unchanged. A fake Claude: no network.
  */
-import { resolve } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -18,6 +20,7 @@ import { createContext } from "../../src/context.js";
 import type { MessagesClient } from "../../src/llm.js";
 import { chooseModel, HAIKU, LlmBudget } from "../../src/llmBudget.js";
 import { createShowMe, type ShowMeInput } from "../../src/showme.js";
+import { DailyMeter, fileMeter } from "../../src/voice/dailyCaps.js";
 import type { ChartSummary } from "../../src/showmeChart.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
@@ -58,6 +61,32 @@ describe("POST /chart/calibrate", () => {
     const res = await createApp(ctx).request("/chart/calibrate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: IMAGE, width: 1000, height: 278 }) });
     expect(res.status).toBe(429);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("CHART_VISION_DAILY_LIMIT (default 20): past it, 429 VISION_DAILY_LIMIT and no call (the extension uses the lens)", async () => {
+    expect(loadConfig(env).CHART_VISION_DAILY_LIMIT).toBe(20);
+    const ctx = createContext(loadConfig(env), () => {});
+    const { client, create } = visionClient(labels);
+    ctx.chartVision = createChartVision({ model: HAIKU, budget: budget(), client, log: () => {}, daily: new DailyMeter(2) });
+    const app = createApp(ctx);
+    const read = () => app.request("/chart/calibrate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image: IMAGE, width: 1000, height: 278 }) });
+    expect((await read()).status).toBe(200);
+    expect((await read()).status).toBe(200);
+    const res = await read();
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("VISION_DAILY_LIMIT");
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("the count survives a restart the same day, and starts again the next", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "glance-vision-")), "chart-vision-usage.json");
+    let now = Date.parse("2026-09-25T10:00:00Z");
+    const a = fileMeter(20, file, () => now);
+    a.add(1);
+    a.add(1);
+    expect(fileMeter(20, file, () => now).usedToday).toBe(2);
+    now = Date.parse("2026-09-26T00:00:01Z");
+    expect(fileMeter(20, file, () => now).usedToday).toBe(0);
   });
 
   it("bad requests: not an image, too small, extra fields", async () => {

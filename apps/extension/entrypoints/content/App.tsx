@@ -300,7 +300,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
             aliases,
             named,
             capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null, () => null),
-            vision: (img) => api.calibrateChart(img).then((r) => (r.ok ? r.data : null)),
+            vision: (img) =>
+              api.calibrateChart(img).then((r) => (r.ok ? r.data : r.code === "VISION_DAILY_LIMIT" ? { limit: "today's chart readings are used up" } : null)),
             chart: (symbol, range) => api.chart(symbol, range).then((r) => (r.ok && r.data.points.length > 1 ? r.data : null)),
             facts: (symbol, range) => api.chartFacts([symbol], range).then((r) => (r.ok ? (r.data.facts[0] ?? null) : null)),
             drawings: () => drawings.current,

@@ -16,7 +16,7 @@ import { calibrate, calibrationError, datedTimes, detectSymbol, fitLine, parsePr
 
 import { chartMarkGeometry, priceLookup } from "../lib/chartMarks";
 import { ChartLens, LENS_LABEL } from "../lib/chartLens";
-import { preparePageChart, type LensFlowDeps } from "../lib/chartLensFlow";
+import { CALIBRATION_TTL_MS, clearCalibrations, preparePageChart, type LensFlowDeps } from "../lib/chartLensFlow";
 import { pickPageChart, readDomLabels, wantsPageChart } from "../lib/pageChart";
 import { ShowDrawings } from "../lib/showDraw";
 
@@ -250,6 +250,7 @@ describe("the sanity check (real captures, real Chainlink prices, the page's lin
 });
 
 describe("the flow: page chart, lens, or a question first", () => {
+  beforeEach(clearCalibrations);
   const facts1D = { ...facts, range: "1D" as const };
   const deps = (over: Partial<LensFlowDeps> = {}) => {
     const lensAnnotate = vi.fn();
@@ -309,6 +310,36 @@ describe("the flow: page chart, lens, or a question first", () => {
     expect(await preparePageChart(d)).toEqual({ kind: "no-screenshot", symbol: "TSLA", range: "1D" });
     const { d: d2, openLens } = deps({ capture: vi.fn(async () => null) });
     expect(await preparePageChart(d2, { confirmed: { symbol: "TSLA", range: "1D" }, forceLens: true })).toMatchObject({ drawOn: "lens" });
+    expect(openLens).toHaveBeenCalled();
+  });
+
+  it("the same chart asked about again within 10 minutes: the calibration is reused, no screenshot or vision call", async () => {
+    tradingViewLike({ labels: false });
+    let now = asOfOf("tradingview") * 1000;
+    const { d } = deps({ now: () => now });
+    expect(await preparePageChart(d)).toMatchObject({ drawOn: "page", method: "vision" });
+    now += CALIBRATION_TTL_MS - 1_000;
+    expect(await preparePageChart(d)).toMatchObject({ drawOn: "page", method: "vision" });
+    expect(d.vision).toHaveBeenCalledTimes(1);
+    expect(d.capture).toHaveBeenCalledTimes(1);
+    // Ten minutes on: read again.
+    now += 2_000;
+    await preparePageChart(d);
+    expect(d.vision).toHaveBeenCalledTimes(2);
+  });
+
+  it("another range of the same chart is its own calibration", async () => {
+    tradingViewLike({ labels: false });
+    const { d } = deps();
+    await preparePageChart(d);
+    await preparePageChart(d, { confirmed: { symbol: "TSLA", range: "1M" } });
+    expect(d.vision).toHaveBeenCalledTimes(2);
+  });
+
+  it("the API's daily vision limit reached: the Glance lens, saying why", async () => {
+    tradingViewLike({ labels: false });
+    const { d, openLens } = deps({ vision: vi.fn(async () => ({ limit: "today's chart readings are used up" })) });
+    expect(await preparePageChart(d)).toMatchObject({ kind: "ready", drawOn: "lens", reason: "today's chart readings are used up" });
     expect(openLens).toHaveBeenCalled();
   });
 

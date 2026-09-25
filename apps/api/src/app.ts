@@ -340,6 +340,8 @@ export function createServerApp(ctx: AppContext) {
     const body = parse(calibrateBody, await jsonBody(c));
     if (!ctx.chartVision) throw new ApiError(503, "VISION_UNAVAILABLE", "Reading charts from a screenshot isn't set up on this server.");
     const r = await ctx.chartVision.readLabels({ base64: body.image, width: body.width, height: body.height });
+    // Today's vision calls used up (CHART_VISION_DAILY_LIMIT): the extension lays Glance's lens over the chart instead.
+    if (!r.ok && r.reason === "daily-limit") throw new ApiError(429, "VISION_DAILY_LIMIT", "I've read enough page charts for today, so I'll lay Glance's chart over this one.");
     if (!r.ok) throw new ApiError(r.reason === "budget" ? 429 : 503, r.reason === "budget" ? "BUDGET" : "VISION_UNAVAILABLE", r.reason === "budget" ? LINES.outOfThinking : LINES.cantThink);
     return send(c, { labels: r.labels, model: r.model });
   });
