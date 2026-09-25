@@ -61,10 +61,14 @@ export class DailyMeter {
   }
 }
 
-/** Both meters in one file: { day, sttSeconds, ttsChars }. */
-export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: number; file: string | null; now?: () => number }) {
+/**
+ * The meters in one file: { day, sttSeconds, ttsChars, aaiSeconds }. `assemblyai` counts AssemblyAI streaming seconds
+ * as it bills them (session wall-clock; ASSEMBLYAI_STT_SECONDS_PER_DAY): when it's used up, Deepgram listens instead,
+ * and `stt` (every provider's audio seconds) still decides when voice rests.
+ */
+export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: number; assemblyaiSecondsPerDay?: number; file: string | null; now?: () => number }) {
   const now = o.now ?? Date.now;
-  let data: { day: string; sttSeconds: number; ttsChars: number } = { day: today(now()), sttSeconds: 0, ttsChars: 0 };
+  let data: { day: string; sttSeconds: number; ttsChars: number; aaiSeconds?: number } = { day: today(now()), sttSeconds: 0, ttsChars: 0, aaiSeconds: 0 };
   if (o.file && existsSync(o.file)) {
     try {
       const read = JSON.parse(readFileSync(o.file, "utf8")) as typeof data;
@@ -79,10 +83,10 @@ export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: numbe
     writeFileSync(`${o.file}.tmp`, JSON.stringify(data));
     renameSync(`${o.file}.tmp`, o.file);
   };
-  const field = (k: "sttSeconds" | "ttsChars") => ({
-    load: () => data[k],
+  const field = (k: "sttSeconds" | "ttsChars" | "aaiSeconds") => ({
+    load: () => data[k] ?? 0,
     save: (used: number) => {
-      if (data.day !== today(now())) data = { day: today(now()), sttSeconds: 0, ttsChars: 0 };
+      if (data.day !== today(now())) data = { day: today(now()), sttSeconds: 0, ttsChars: 0, aaiSeconds: 0 };
       data[k] = used;
       write();
     },
@@ -90,6 +94,7 @@ export function voiceMeters(o: { sttSecondsPerDay: number; ttsCharsPerDay: numbe
   return {
     stt: new DailyMeter(o.sttSecondsPerDay, field("sttSeconds"), now),
     tts: new DailyMeter(o.ttsCharsPerDay, field("ttsChars"), now),
+    assemblyai: new DailyMeter(o.assemblyaiSecondsPerDay ?? 1_800, field("aaiSeconds"), now),
   };
 }
 

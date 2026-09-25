@@ -141,7 +141,7 @@ const worker = new VoiceWorker({
 browser.runtime.onMessage.addListener((msg: OffscreenRequest) => {
   switch (msg.kind) {
     case "offscreen:start":
-      void worker.start(msg.session, msg.lang, msg.api, msg.context, msg.vault);
+      void worker.start(msg.session, msg.lang, msg.api, msg.context, msg.vault, msg.listen);
       break;
     case "offscreen:stop":
       void worker.stop(msg.session);

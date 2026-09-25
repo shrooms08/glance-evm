@@ -25,6 +25,10 @@ import { understand, type Intent, type VoiceContext } from "./intent.js";
 import { warmAnthropic } from "../anthropicHttp.js";
 import { VOICE_RESTING } from "@glance/core/session";
 import { VoiceRestingError } from "./dailyCaps.js";
+import { buildKeyterms, sessionKeyterms } from "@glance/core/keyterms";
+
+/** Conversation mode with a provider that doesn't end turns itself (the Deepgram fallback): this much quiet ends one. */
+export const CONVERSATION_QUIET_MS = 1_200;
 
 /** A command is at most 30 seconds of audio: the stream finishes there, and a longer upload is refused (413). */
 export const MAX_AUDIO_SECONDS = 30;
@@ -84,14 +88,16 @@ const commandBody = z
   .strict();
 const speakBody = z.object({ text: z.string().trim().min(1).max(1_500) }).strict();
 
-/** The words Deepgram should expect: our companies and tickers. */
-export function keyterms(ctx: AppContext): string[] {
-  const out = new Set<string>(["Glance"]);
-  for (const c of ctx.catalog.entries) {
-    out.add(c.name);
-    out.add(c.symbol);
-  }
-  return [...out].slice(0, 40);
+/**
+ * The words speech recognition should expect (@glance/core/keyterms): every stock Glance trades, by ticker and name
+ * (and short aliases like "Nasdaq-100"), Glance's own words, the command verbs, and the session's basket names.
+ * Within AssemblyAI's limits: 100 terms, 50 characters each.
+ */
+export function keyterms(ctx: AppContext, session: readonly string[] = []): string[] {
+  return buildKeyterms(
+    ctx.catalog.entries.map((c) => ({ symbol: c.symbol, name: c.name, aliases: c.aliases })),
+    session,
+  );
 }
 
 function unavailable(what: "transcription" | "speech"): never {
@@ -211,6 +217,8 @@ export function registerVoice(
       speechChain: v.speech.chain,
       speechFallbacks: v.status.speechFallbacks,
       intent: v.status.intent,
+      // Which provider listens ("assemblyai", "universal-3-5-pro") and its fallback: the settings page credits it.
+      stt: v.status.stt ?? null,
       available: { transcription: v.stt !== null, speech: v.tts !== null, stream: v.stt !== null && Boolean(upgradeWebSocket) },
       // A daily cap used up: that direction rests until midnight UTC (the extension says so, in text).
       resting: { transcription: v.meters?.stt.resting ?? false, speech: v.meters?.tts.resting ?? false },
@@ -338,6 +346,16 @@ export function registerVoice(
         let bytes = 0;
         let timer: ReturnType<typeof setTimeout> | undefined;
         let rewarm: ReturnType<typeof setInterval> | undefined;
+        let quiet: ReturnType<typeof setTimeout> | undefined;
+        // Conversation mode: one tap starts listening, and the end of the speaker's turn sends the utterance (no release).
+        const conversation = c.req.query("mode") === "conversation";
+        // The session's own words (the user's basket names), as JSON: validated, and only ever added to the list.
+        let extra: string[] = [];
+        try {
+          extra = sessionKeyterms(JSON.parse(c.req.query("keyterms") ?? "[]"));
+        } catch {
+          extra = [];
+        }
         return {
           onOpen(_e, ws) {
             if (!allowed) return ws.close(1008, "origin not allowed");
@@ -351,7 +369,25 @@ export function registerVoice(
               ws.send(JSON.stringify({ type: "error", code: "VOICE_RESTING", message: VOICE_RESTING }));
               return ws.close(1000);
             }
-            live = v.stt.stream(keyterms(ctx));
+            const socket = ws;
+            live = v.stt.stream(keyterms(ctx, extra), {
+              // The words so far, for the panel's live transcript (sent to this browser only; never logged).
+              onPartial: (text) => {
+                try {
+                  socket.send(JSON.stringify({ type: "partial", text }));
+                } catch {
+                  // closed
+                }
+                // A provider that doesn't end turns itself (the Deepgram fallback): a quiet spell ends the turn.
+                if (conversation && live && !live.turnDetection && text.trim()) {
+                  clearTimeout(quiet);
+                  quiet = setTimeout(() => void finish(socket, "end-of-turn"), CONVERSATION_QUIET_MS);
+                }
+              },
+              onEndOfTurn: () => {
+                if (conversation) void finish(socket, "end-of-turn");
+              },
+            });
             // The reply will need the speech provider soon: open its connection while the user is still speaking, and
             // keep it open through a long hold (the provider's edge drops idle connections after about 5s).
             v.prewarmSpeech();
@@ -379,16 +415,18 @@ export function registerVoice(
           },
           onClose() {
             clearTimeout(timer);
+            clearTimeout(quiet);
             clearInterval(rewarm);
             live?.abort();
             live = null;
           },
         };
-        async function finish(ws: { send(data: string): void; close(code?: number, reason?: string): void }) {
+        async function finish(ws: { send(data: string): void; close(code?: number, reason?: string): void }, why: "release" | "end-of-turn" = "release") {
           const stream = live;
           if (!stream) return;
-          live = null; // once only: the key's release and the 30-second timer may both get here
+          live = null; // once only: the key's release, the end of a turn and the 30-second timer may all get here
           clearTimeout(timer);
+          clearTimeout(quiet);
           clearInterval(rewarm);
           // The seconds actually sent to the provider count against today's cap.
           v.meters?.stt.add(bytes / PCM_BYTES_PER_SECOND);
@@ -399,9 +437,9 @@ export function registerVoice(
             const tm = t.timing;
             // Where the time went (timings only: the words stay out of the logs).
             console.log(
-              `[voice] transcription: connect ${tm?.warm ? "0ms (warm connection reused)" : `${tm?.connectMs ?? "?"}ms (new connection, during speech)`}, release to final ${tm?.releaseToFinalMs ?? ms}ms, ${t.text.length} chars`,
+              `[voice] transcription (${t.provider ?? v.stt?.name}${why === "end-of-turn" ? ", end of turn" : ""}): connect ${tm?.warm ? "0ms (warm connection reused)" : `${tm?.connectMs ?? "?"}ms (new connection, during speech)`}, release to final ${tm?.releaseToFinalMs ?? ms}ms, ${t.text.length} chars`,
             );
-            ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms, timing: tm }));
+            ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms, timing: tm, provider: t.provider ?? v.stt?.name, endOfTurn: why === "end-of-turn" }));
           } catch (err) {
             ws.send(JSON.stringify({ type: "error", code: "TRANSCRIPTION_FAILED", message: (err as Error).message }));
           }

@@ -98,6 +98,7 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
   const meters = voiceMeters({
     sttSecondsPerDay: config.VOICE_STT_SECONDS_PER_DAY,
     ttsCharsPerDay: config.VOICE_TTS_CHARS_PER_DAY,
+    assemblyaiSecondsPerDay: config.ASSEMBLYAI_STT_SECONDS_PER_DAY,
     file: cacheDir ? join(cacheDir, "voice-usage.json") : null,
   });
   const voice = selectVoiceProviders({ ...config, INTENT_MODEL: models.intent }, { meters });

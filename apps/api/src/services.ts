@@ -944,6 +944,8 @@ export function llmHealth(ctx: Pick<AppContext, "llm" | "intentModel" | "llmMode
 export function voiceHealth(ctx: Pick<AppContext, "voice"> & { prerecorded?: AppContext["prerecorded"] }) {
   const [inUse, ...fallbacks] = ctx.voice.speech.chain;
   return {
+    /** Speech recognition: the provider and model that listen, and the fallback (AssemblyAI -> Deepgram). */
+    transcription: ctx.voice.status.stt ?? null,
     speech: inUse ? { provider: inUse.provider, voice: inUse.voice, endpoint: inUse.endpoint } : null,
     fallbacks: fallbacks.map((f) => ({ provider: f.provider, voice: f.voice, endpoint: f.endpoint })),
     lastServedBy: ctx.voice.speech.lastServedBy()?.voice ?? null,

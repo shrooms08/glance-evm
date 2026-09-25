@@ -18,6 +18,15 @@ export interface VoiceIntent {
   reply: string;
 }
 
+/**
+ * How to listen: conversation mode (one tap starts; the speaker's end of turn sends it, no release) and the session's
+ * own words for speech recognition (the user's basket names).
+ */
+export interface ListenOptions {
+  conversation?: boolean;
+  keyterms?: string[];
+}
+
 /** Milliseconds from the key's release to each step. */
 export interface VoiceTiming {
   transcript: number;
@@ -69,7 +78,7 @@ export interface VoiceCommandContext {
 }
 
 export type VoiceRequest =
-  | { kind: "voice:start"; session: string; lang: string; context: VoiceCommandContext; vault?: string }
+  | { kind: "voice:start"; session: string; lang: string; context: VoiceCommandContext; vault?: string; listen?: ListenOptions }
   | { kind: "voice:stop"; session: string }
   | { kind: "voice:abort"; session: string }
   | { kind: "voice:speak"; id: string; text: string }
@@ -87,7 +96,7 @@ export type VoiceRequest =
 
 /** Background -> offscreen document. The background adds the API's address, which the offscreen document can't read. */
 export type OffscreenRequest =
-  | { kind: "offscreen:start"; session: string; lang: string; api: string; context: VoiceCommandContext; vault?: string }
+  | { kind: "offscreen:start"; session: string; lang: string; api: string; context: VoiceCommandContext; vault?: string; listen?: ListenOptions }
   | { kind: "offscreen:stop"; session: string }
   | { kind: "offscreen:abort"; session: string }
   | { kind: "offscreen:speak"; id: string; text: string; api: string }

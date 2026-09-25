@@ -13,10 +13,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { parseCommand } from "../lib/commands";
-import { allowedSymbols, describeLegs, draftBasket, findBasket, listBaskets, saveBasket } from "../lib/baskets";
+import { allowedSymbols, describeLegs, draftBasket, findBasket, listBaskets, saveBasket, userBaskets } from "../lib/baskets";
 import { ageHours, priceUsd, until } from "../lib/format";
 import { isAddress } from "../lib/settings";
 import { keyLabel } from "../lib/hotkeys";
+import { talkKey } from "../lib/talkMode";
 import { hush, speak, startVoice, type VoiceSession } from "../lib/voiceClient";
 import type { FallbackReason, VoiceCommandContext, VoiceIntent, VoiceTiming } from "../lib/voiceMessages";
 import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, type VoiceFailureKind } from "../lib/voiceReasons";
@@ -100,6 +101,18 @@ export function useAssistant(opts: AssistantOptions = {}) {
   /** Increments to tell the open company card to confirm (+1) or cancel (-1) its pending review (typed only). */
   const [decision, setDecision] = useState<{ n: number; confirm: boolean }>({ n: 0, confirm: true });
   const listener = useRef<VoiceSession | null>(null);
+  /** Set by Escape (cancelListening): the session ends without a "didn't catch that". */
+  const cancelled = useRef(false);
+  /** The user's basket names, sent with each voice session so speech recognition expects them. */
+  const basketNames = useRef<string[]>([]);
+  useEffect(() => {
+    const load = () =>
+      void listBaskets()
+        .then((b) => (basketNames.current = b.map((x) => x.name).slice(0, 10)))
+        .catch(() => {});
+    load();
+    return userBaskets.watch(load);
+  }, []);
   const seq = useRef(0);
   const contextRef = useRef(opts.context);
   contextRef.current = opts.context;
@@ -300,11 +313,12 @@ export function useAssistant(opts: AssistantOptions = {}) {
 
   const startListening = useCallback(() => {
     if (listener.current) return;
+    cancelled.current = false;
     hush();
     setHeard("");
     setMicHint(null);
     setListening(true);
-    g.setOrb({ state: "listening", line: "Listening…", meta: "Release to send" });
+    g.setOrb({ state: "listening", line: "Listening…", meta: g.conversation ? "Just talk: I'll send it when you finish" : "Release to send" });
     let failed = false;
     let finalText = "";
     let fallback = "";
@@ -357,17 +371,42 @@ export function useAssistant(opts: AssistantOptions = {}) {
           clearTimeout(slow);
           listener.current = null;
           setListening(false);
+          // Cancelled (Escape): nothing to say.
+          if (cancelled.current) return g.setOrb({ state: "idle" });
           if (failed || intentSeen) return;
           // No intent: the browser fallback (or the API couldn't answer). Parse it here, like typed text.
           if (finalText) void run(finalText, "voice");
           else g.setOrb({ state: "idle", line: LINES.noSpeech, meta: KIND_META["no-speech"] });
         },
       },
-      { context, vault: isAddress(g.vaultAddress) ? g.vaultAddress : undefined },
+      {
+        context,
+        vault: isAddress(g.vaultAddress) ? g.vaultAddress : undefined,
+        // Conversation mode (a setting), and the user's basket names as extra words for speech recognition.
+        listen: { conversation: g.conversation, keyterms: basketNames.current },
+      },
     );
   }, [g, run, voiceFailed, applyIntent, card]);
 
   const stopListening = useCallback(() => listener.current?.stop(), []);
+  /** Escape: stop listening and send nothing. Says whether there was anything to cancel. */
+  const cancelListening = useCallback(() => {
+    if (!listener.current) return false;
+    cancelled.current = true;
+    listener.current.abort();
+    return true;
+  }, []);
+  /** Option+V went down / came up (lib/talkMode: hold-to-talk, or conversation mode). */
+  const talk = useCallback(
+    (edge: "down" | "up") => {
+      const act = talkKey(edge, { conversation: g.conversation, listening: Boolean(listener.current) });
+      if (act === "start") startListening();
+      else if (act === "stop") stopListening();
+    },
+    [g.conversation, startListening, stopListening],
+  );
+  const talkDown = useCallback(() => talk("down"), [talk]);
+  const talkUp = useCallback(() => talk("up"), [talk]);
 
-  return { card, setCard, heard, listening, decision, run, startListening, stopListening, voiceFailed, timing, micHint, clearMicHint: () => setMicHint(null) };
+  return { card, setCard, heard, listening, decision, run, startListening, stopListening, cancelListening, talkDown, talkUp, voiceFailed, timing, micHint, clearMicHint: () => setMicHint(null) };
 }

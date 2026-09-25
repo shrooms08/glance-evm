@@ -27,6 +27,7 @@ import { VoiceRestingError, type DailyMeter, type VoiceMeters } from "./dailyCap
 import { Agent, fetch as undiciFetch } from "undici";
 
 import { fakeSpeaker, fakeTranscriber } from "./fake.js";
+import { assemblyai, DEFAULT_ASSEMBLYAI_MODEL } from "./assemblyai.js";
 
 /**
  * Provider requests keep their connections alive between requests: from far away (Lagos to Deepgram is ~300ms a round
@@ -48,6 +49,8 @@ export const providerFetch: typeof fetch = ((url: string | URL, init?: RequestIn
 
 export interface Transcript {
   text: string;
+  /** Which provider heard it (a fallback may have taken over). */
+  provider?: string;
   /** 0-1, from the provider. */
   confidence: number;
   /** Where the time went, for the per-request log. */
@@ -62,7 +65,19 @@ export interface TranscriptTiming {
   releaseToFinalMs: number;
 }
 
+/** What a live stream reports as it goes. */
+export interface StreamHooks {
+  /** The words so far (they may still change), for the panel's live transcript. Never logged. */
+  onPartial?(text: string): void;
+  /** The provider decided the speaker finished (conversation mode sends the utterance then). */
+  onEndOfTurn?(): void;
+  /** The stream failed before finish() (the fallback takes over at once). */
+  onFail?(err: ProviderError): void;
+}
+
 export interface LiveTranscription {
+  /** Whether this stream detects the end of a turn by itself (AssemblyAI does; Deepgram, as we use it, doesn't). */
+  readonly turnDetection?: boolean;
   /** Audio as it is recorded (containerised webm/opus straight from MediaRecorder is fine). */
   send(chunk: Uint8Array): void;
   /** The user let go: flush and return the transcript. */
@@ -75,7 +90,9 @@ export interface Transcriber {
   readonly model: string;
   transcribe(audio: Uint8Array, mime: string, keyterms: readonly string[]): Promise<Transcript>;
   /** Live transcription of raw linear16 16kHz mono audio. */
-  stream(keyterms: readonly string[]): LiveTranscription;
+  stream(keyterms: readonly string[], hooks?: StreamHooks): LiveTranscription;
+  /** The provider ends turns by itself (end-of-turn detection). */
+  readonly turnDetection?: boolean;
   /** Opens (or keeps open) a connection so the next command doesn't pay the handshake. */
   warm?(keyterms: readonly string[]): void;
 }
@@ -392,7 +409,7 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
       const alt = body.results?.channels?.[0]?.alternatives?.[0];
       return { text: (alt?.transcript ?? "").trim(), confidence: alt?.confidence ?? 0, timing: { connectMs: 0, warm: false, releaseToFinalMs: Math.round(now() - started) } };
     },
-    stream(keyterms) {
+    stream(keyterms, hooks: StreamHooks = {}) {
       const { conn, reused } = take(keyterms);
       const startedAt = now();
       /** Where this utterance begins on the connection's timeline: earlier results belong to an earlier command. */
@@ -414,7 +431,7 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
       };
       const finals: Array<{ text: string; confidence: number }> = [];
       const pending: Uint8Array[] = [];
-      let failed: Error | null = null;
+      let failed: ProviderError | null = null;
       let finishing: { resolve(t: Transcript): void; reject(e: Error): void; releasedAt: number; audioEnd: number } | null = null;
       let tailTimer: ReturnType<typeof setTimeout> | undefined;
       let hardTimer: ReturnType<typeof setTimeout> | undefined;
@@ -423,6 +440,7 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
       const result = (): Transcript => {
         const withText = finals.filter((f) => f.text);
         return {
+          provider: "deepgram",
           text: withText.map((f) => f.text).join(" ").trim(),
           confidence: withText.length ? withText.reduce((a, f) => a + f.confidence, 0) / withText.length : 0,
           timing: {
@@ -452,9 +470,14 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
           if (m.start !== undefined) processedTo = Math.max(processedTo, end);
           // Waiting for a late connection's backlog to be processed before finalising (so no word is cut in two).
           if (finishing && !finalizeSent && processedTo >= finishing.audioEnd - BACKLOG_SLACK_S) finalizeNow();
-          if (!m.is_final) return;
           const alt = m.channel?.alternatives?.[0];
+          if (!m.is_final) {
+            // The words so far, for the panel (the finals, then what's still being heard).
+            if (!done) hooks.onPartial?.([...finals.map((f) => f.text), (alt?.transcript ?? "").trim()].filter(Boolean).join(" "));
+            return;
+          }
           finals.push({ text: (alt?.transcript ?? "").trim(), confidence: alt?.confidence ?? 0 });
+          if (!done) hooks.onPartial?.(finals.map((f) => f.text).filter(Boolean).join(" "));
           if (m.start !== undefined) coveredTo = Math.max(coveredTo, end);
           if (!finishing) return;
           // Done as soon as final results cover all the audio sent up to the release: no waiting for silence or an
@@ -472,7 +495,10 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
             if (finals.length) return settle();
             done = true;
             finishing.reject(new ProviderError("deepgram", 0, "Deepgram's live connection closed"));
-          } else failed = new ProviderError("deepgram", 0, "Deepgram's live connection closed");
+          } else {
+            failed = new ProviderError("deepgram", 0, "Deepgram's live connection closed");
+            hooks.onFail?.(failed);
+          }
         },
       );
       let flushed = reused;
@@ -483,7 +509,7 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
           if (finishing && !done) {
             done = true;
             finishing.reject(failed);
-          }
+          } else hooks.onFail?.(failed);
           return;
         }
         burstS = pending.reduce((n, c) => n + c.byteLength, 0) / (2 * STREAM_SAMPLE_RATE);
@@ -504,6 +530,7 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
       }
 
       return {
+        turnDetection: false,
         send(chunk) {
           if (failed || done) return;
           // Keep order: while buffered audio is still waiting to go out, new audio waits behind it.
@@ -644,6 +671,75 @@ const fallReason = (err: ProviderError) =>
 /** True for failures that hand the request to the next speaker: 401, 402, 429, a timeout or a connection error. */
 export function fallsThrough(err: unknown): err is ProviderError {
   return err instanceof ProviderError && (FALL_THROUGH_STATUSES.has(err.status) || err.kind === "timeout" || err.kind === "connection");
+}
+
+/**
+ * Speech recognition with a fallback: `primary` (AssemblyAI) listens; if it can't (a connection error, an auth failure,
+ * too many sessions, or a timeout), `secondary` (Deepgram) takes over, and the audio so far (30 seconds at most) is
+ * replayed into it, so nothing said is lost. One log line per fall-through, never the words. When `primaryResting`
+ * (today's AssemblyAI seconds are used up), the secondary listens from the start. Uploads always go to the secondary.
+ */
+export function withSttFallback(primary: Transcriber, secondary: Transcriber | null, o: { log?: (line: string) => void; primaryResting?: () => boolean } = {}): Transcriber {
+  const log = o.log ?? ((l: string) => console.log(l));
+  return {
+    name: primary.name,
+    model: primary.model,
+    turnDetection: primary.turnDetection,
+    transcribe: (audio, mime, keyterms) => (secondary ?? primary).transcribe(audio, mime, keyterms),
+    // A session opened ahead of time (AssemblyAI's handshake is ~1.4s), and the fallback's connection kept warm.
+    warm: (keyterms) => {
+      if (!o.primaryResting?.()) primary.warm?.(keyterms);
+      secondary?.warm?.(keyterms);
+    },
+    stream(keyterms, hooks = {}) {
+      const secondaryHooks: StreamHooks = { onPartial: hooks.onPartial, onEndOfTurn: hooks.onEndOfTurn };
+      if (secondary && o.primaryResting?.()) {
+        log(`[voice] transcription: ${primary.name}'s daily seconds are used up, ${secondary.name} (${secondary.model}) listens today`);
+        return secondary.stream(keyterms, secondaryHooks);
+      }
+      const audio: Uint8Array[] = [];
+      let finishing = false;
+      let switched = false;
+      let current: LiveTranscription;
+      const toSecondary = (err: ProviderError): boolean => {
+        if (switched || !secondary) return false;
+        switched = true;
+        log(`[voice] transcription: ${primary.name} ${fallReason(err)} (${err.message}), falling through to ${secondary.name} (${secondary.model}) with ${(audio.reduce((n, c) => n + c.byteLength, 0) / (2 * STREAM_SAMPLE_RATE)).toFixed(1)}s of audio`);
+        current.abort();
+        current = secondary.stream(keyterms, secondaryHooks);
+        for (const c of audio) current.send(c);
+        return true;
+      };
+      current = primary.stream(keyterms, {
+        onPartial: hooks.onPartial,
+        onEndOfTurn: hooks.onEndOfTurn,
+        onFail: (err) => {
+          if (!finishing && fallsThrough(err)) toSecondary(err);
+        },
+      });
+      return {
+        get turnDetection() {
+          return Boolean(current.turnDetection);
+        },
+        send(chunk) {
+          audio.push(chunk);
+          current.send(chunk);
+        },
+        async finish() {
+          finishing = true;
+          try {
+            return await current.finish();
+          } catch (err) {
+            if (fallsThrough(err) && toSecondary(err)) return current.finish();
+            throw err;
+          }
+        },
+        abort() {
+          current.abort();
+        },
+      };
+    },
+  };
 }
 
 /**
@@ -929,6 +1025,10 @@ export interface VoiceConfig {
   VOICE_FAKE_DELAY_MS?: number;
   DEEPGRAM_API_KEY?: string;
   DEEPGRAM_MODEL: string;
+  /** Speech recognition: AssemblyAI (with Deepgram as its fallback) or Deepgram alone. */
+  STT_PROVIDER?: "assemblyai" | "deepgram";
+  ASSEMBLYAI_API_KEY?: string;
+  ASSEMBLYAI_MODEL?: string;
   DEEPGRAM_ENDPOINTING_MS?: number;
   /** flux-* (Flux TTS, /v2/speak) or aura-* (Aura-2, /v1/speak). */
   DEEPGRAM_TTS_VOICE: string;
@@ -975,7 +1075,7 @@ export interface VoiceProviders {
   /** The daily caps (speech-to-text seconds, speech characters), when set. */
   meters: VoiceMeters | null;
   /** Human-readable, key-free lines for the startup log and /health. */
-  status: { transcription: string; speech: string; speechFallbacks: string; intent: string; warnings: string[] };
+  status: { transcription: string; speech: string; speechFallbacks: string; intent: string; warnings: string[]; stt?: { provider: string; model: string; fallback: string | null } };
 }
 
 export function selectVoiceProviders(
@@ -1016,7 +1116,10 @@ export function selectVoiceProviders(
   };
   const haveDeepgram = usable("DEEPGRAM_API_KEY", c.DEEPGRAM_API_KEY);
   const haveFish = usable("FISH_API_KEY", c.FISH_API_KEY);
-  const stt = haveDeepgram
+  const wantAssembly = (c.STT_PROVIDER ?? "assemblyai") === "assemblyai";
+  const haveAssembly = wantAssembly && usable("ASSEMBLYAI_API_KEY", c.ASSEMBLYAI_API_KEY);
+  if (c.STT_PROVIDER === "assemblyai" && !c.ASSEMBLYAI_API_KEY) warnings.push("STT_PROVIDER=assemblyai but ASSEMBLYAI_API_KEY is not set: Deepgram listens");
+  const deepgramStt = haveDeepgram
     ? deepgram({
         apiKey: c.DEEPGRAM_API_KEY!,
         model: c.DEEPGRAM_MODEL,
@@ -1026,6 +1129,13 @@ export function selectVoiceProviders(
         WebSocket: deps.WebSocket,
       })
     : null;
+  const assemblyModel = c.ASSEMBLYAI_MODEL?.trim() || DEFAULT_ASSEMBLYAI_MODEL;
+  const stt = haveAssembly
+    ? withSttFallback(assemblyai({ apiKey: c.ASSEMBLYAI_API_KEY!, model: assemblyModel, WebSocket: deps.WebSocket, meter: deps.meters?.assemblyai }), deepgramStt, {
+        log,
+        primaryResting: () => Boolean(deps.meters?.assemblyai.resting),
+      })
+    : deepgramStt;
 
   const voice = c.DEEPGRAM_TTS_VOICE.trim() || DEFAULT_TTS_VOICE;
   if (!/^(flux|aura)-/.test(voice)) warnings.push(`DEEPGRAM_TTS_VOICE "${voice}" is neither a flux- nor an aura- voice: sent to /v1/speak`);
@@ -1084,7 +1194,12 @@ export function selectVoiceProviders(
       );
     },
     status: {
-      transcription: stt ? `deepgram (${stt.model}, live, warm connection reused)` : "none: the extension falls back to the browser's speech recognition",
+      stt: stt ? { provider: stt.name, model: stt.model, fallback: haveAssembly && deepgramStt ? `${deepgramStt.name} (${deepgramStt.model})` : null } : undefined,
+      transcription: haveAssembly
+        ? `assemblyai (${assemblyModel}, Universal-Streaming v3 through this API, keyterms prompting)${deepgramStt ? `, falls back to deepgram (${deepgramStt.model}) on a connection error, auth failure or timeout, and after ASSEMBLYAI_STT_SECONDS_PER_DAY` : ", no fallback (set DEEPGRAM_API_KEY)"}`
+        : stt
+          ? `deepgram (${stt.model}, live, warm connection reused)`
+          : "none: the extension falls back to the browser's speech recognition",
       speech: order.length ? describe(order[0]!) : "none: replies are shown, not spoken (Glance never uses the browser's voice)",
       speechFallbacks:
         order.length > 1

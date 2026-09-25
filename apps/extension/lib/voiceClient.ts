@@ -7,14 +7,14 @@
 import { browser } from "wxt/browser";
 
 import { safely, send as sendSafe } from "./lifecycle";
-import type { FallbackReason, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceRequest, VoiceTiming } from "./voiceMessages";
+import type { FallbackReason, ListenOptions, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceRequest, VoiceTiming } from "./voiceMessages";
 import type { VoiceCode } from "./voiceReasons";
 
 export interface VoiceHandlers {
   onStart?(): void;
   /** The key was released: the audio is being transcribed (show thinking). */
   onReleased?(): void;
-  /** Only from the browser fallback; the server path has no interim text. */
+  /** The words so far: AssemblyAI partials on the server path, or the browser fallback's interim results. */
   onInterim?(text: string): void;
   onFinal(text: string): void;
   /** The reply's audio stopped mid-way (a stall or an error): the rest is shown, never said in another voice. */
@@ -45,7 +45,7 @@ export const MAX_LISTEN_MS = 60_000;
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).toString();
 
-export function startVoice(h: VoiceHandlers, opts: { context?: VoiceCommandContext; vault?: string } = {}): VoiceSession {
+export function startVoice(h: VoiceHandlers, opts: { context?: VoiceCommandContext; vault?: string; listen?: ListenOptions } = {}): VoiceSession {
   const guard = guarded(h);
   return guard.attach(startRemote(guard.handlers, opts));
 }
@@ -119,7 +119,7 @@ function guarded(h: VoiceHandlers) {
   };
 }
 
-function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; vault?: string }): VoiceSession {
+function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; vault?: string; listen?: ListenOptions }): VoiceSession {
   const session = newId();
   let lastSeq = 0;
   let ended = false;
@@ -186,7 +186,7 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
 
   // Subscribe before starting, so no event can arrive unheard.
   safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);
-  const request: VoiceRequest = { kind: "voice:start", session, lang: navigator.language || "en-US", context: opts.context ?? {}, vault: opts.vault };
+  const request: VoiceRequest = { kind: "voice:start", session, lang: navigator.language || "en-US", context: opts.context ?? {}, vault: opts.vault, ...(opts.listen ? { listen: opts.listen } : {}) };
   sendSafe(request).then(
     (ok: unknown) => {
       if (ok === false) {

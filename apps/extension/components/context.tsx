@@ -9,7 +9,7 @@ import { api } from "../lib/api";
 import { chainStatus, onChainStatus } from "../lib/chainStatus";
 import { safely, send } from "../lib/lifecycle";
 import type { CatalogStock, Health, Vault } from "../lib/api-types";
-import { apiBaseUrl, consoleUrl, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, vaultSource, voiceKeyLetter, voiceReplies, type Mode, type VaultSource } from "../lib/settings";
+import { apiBaseUrl, consoleUrl, conversationMode, defaultMode, hotkeyLetter, soundsEnabled, vaultAddress, vaultSource, voiceKeyLetter, voiceReplies, type Mode, type VaultSource } from "../lib/settings";
 import { relinkHint, type RelinkHint } from "../lib/handshake";
 import { lostAction, readiness, setupComplete, setupProgress, type Readiness, type SetupProgress } from "../lib/readiness";
 import type { Shortcuts } from "../lib/messages";
@@ -34,6 +34,8 @@ export interface Glance {
   voiceKey: string;
   mode: Mode;
   voiceReplies: boolean;
+  /** Tap Option+V once, then talk (the end of your turn sends it); off: hold to talk. */
+  conversation: boolean;
   /** The open and close sounds (Settings → "Sounds"). */
   sounds: boolean;
   catalog: CatalogStock[];
@@ -114,6 +116,7 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
   const voiceKey = useSetting(voiceKeyLetter, "V");
   const mode = useSetting<Mode>(defaultMode, "floating");
   const voice = useSetting(voiceReplies, true);
+  const conversation = useSetting(conversationMode, false);
   const sounds = useSetting(soundsEnabled, sound.enabledByDefault);
   const source = useSetting<VaultSource | null | undefined>(vaultSource as never, undefined);
   const [shortcuts, setShortcuts] = useState<Shortcuts | null>(null);
@@ -267,6 +270,7 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       voiceKey,
       mode,
       voiceReplies: voice,
+      conversation,
       sounds,
       catalog,
       health,
@@ -295,7 +299,7 @@ export function GlanceProvider({ children, idleLine }: { children: ReactNode; id
       lost,
       openAddUsdg: () => void openConsolePage("start"),
     }),
-    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link, shortcuts, gated, ready, progress, lost],
+    [apiUrl, vaultAddr, consoleLink, glanceKey, voiceKey, mode, voice, conversation, sounds, catalog, health, vault, offline, offlineMessage, chainTrouble, orb, stillCount, holdStill, setOrb, refreshVault, source, link, shortcuts, gated, ready, progress, lost],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

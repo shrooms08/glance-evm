@@ -148,7 +148,7 @@ async function startVoice(req: Extract<VoiceRequest, { kind: "voice:start" }>, t
   }
   // The spoken reply is played under the session's id: route its playback events to the same tab.
   if (tabId !== undefined) speechTabs.set(req.session, tabId);
-  const start: OffscreenRequest = { kind: "offscreen:start", session: req.session, lang: req.lang, api: await apiBase(), context: req.context, vault: req.vault };
+  const start: OffscreenRequest = { kind: "offscreen:start", session: req.session, lang: req.lang, api: await apiBase(), context: req.context, vault: req.vault, listen: req.listen };
   await browser.runtime.sendMessage(start).catch(() => {});
   return true;
 }

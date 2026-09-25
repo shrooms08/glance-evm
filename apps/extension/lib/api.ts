@@ -79,7 +79,15 @@ const q = (params: Record<string, string | number | undefined>) =>
 export const api = {
   health: () => call<Health>("GET", "/health"),
   voiceStatus: () =>
-    call<{ transcription: string; speech: string; intent: string; available: { transcription: boolean; speech: boolean; stream: boolean }; warnings: string[] }>(
+    call<{
+      transcription: string;
+      speech: string;
+      intent: string;
+      /** Which provider listens (and its fallback): "assemblyai", "universal-3-5-pro". */
+      stt?: { provider: string; model: string; fallback: string | null } | null;
+      available: { transcription: boolean; speech: boolean; stream: boolean };
+      warnings: string[];
+    }>(
       "GET",
       "/voice/status",
     ),

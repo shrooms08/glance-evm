@@ -109,8 +109,8 @@ function SidePanel() {
     const onMessage = (msg: AssistantMessage) => {
       // Option+V held on the page: the panel runs the session, exactly as if it were held here.
       if (msg.kind === "assistant:hold") {
-        if (msg.down) assistant.startListening();
-        else assistant.stopListening();
+        if (msg.down) assistant.talkDown();
+        else assistant.talkUp();
       }
       if (msg.kind === "assistant:glance") {
         setPage(msg.reply);
@@ -141,8 +141,9 @@ function SidePanel() {
     { glance: g.glanceKey, voice: g.voiceKey },
     {
       onGlance: () => g.gated === false && void glance(),
-      onVoiceStart: () => g.gated === false && assistant.startListening(),
-      onVoiceEnd: assistant.stopListening,
+      onVoiceStart: () => g.gated === false && assistant.talkDown(),
+      onVoiceEnd: assistant.talkUp,
+      onEscape: () => void assistant.cancelListening(),
     },
   );
 

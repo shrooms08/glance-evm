@@ -14,6 +14,14 @@ import { hush, speak, startVoice, type VoiceSession } from "../../lib/voiceClien
 import { diagnose, requestMic, type VoiceDiagnostics } from "../../lib/voiceDiagnostics";
 import { ALLOW_FOREVER_LINE, markVoiceEnabled, micSettingsUrl, micStatus, voiceState, type VoiceState } from "../../lib/voicePrefs";
 import { reasonFor, type VoiceCode } from "../../lib/voiceReasons";
+import { conversationMode } from "../../lib/settings";
+
+/** The credit line under the voice settings: who listens, by name ("Speech recognition by AssemblyAI"). */
+export function sttCredit(stt: { provider: string; model: string } | null | undefined): string | null {
+  if (!stt) return null;
+  const name = stt.provider === "assemblyai" ? "AssemblyAI" : stt.provider === "deepgram" ? "Deepgram" : stt.provider;
+  return `Speech recognition by ${name}`;
+}
 
 export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
@@ -21,7 +29,11 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
   const [asking, setAsking] = useState(false);
   const [orb, setOrb] = useState<OrbState>("idle");
   const [line, setLine] = useState("");
-  const [server, setServer] = useState<{ transcription: string; speech: string; intent: string; ok: boolean; reachable: boolean } | null>(null);
+  const [server, setServer] = useState<{ transcription: string; speech: string; intent: string; ok: boolean; reachable: boolean; stt?: { provider: string; model: string } | null } | null>(null);
+  const [conversation, setConversation] = useState(false);
+  useEffect(() => {
+    void conversationMode.getValue().then(setConversation, () => {});
+  }, []);
   const session = useRef<VoiceSession | null>(null);
   const markUrl = browser.runtime.getURL("/glance-mark.png");
 
@@ -154,7 +166,27 @@ export function VoiceSection({ voiceKey }: { voiceKey: string }) {
           </div>
         )}
         {mic?.fix === "enable" && <span className="g-meta">{ALLOW_FOREVER_LINE}</span>}
+        <label className="g-row" style={{ gap: 10, alignItems: "flex-start" }}>
+          <input
+            type="checkbox"
+            checked={conversation}
+            onChange={(e) => {
+              setConversation(e.target.checked);
+              void conversationMode.setValue(e.target.checked);
+            }}
+          />
+          <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span className="g-ui">Conversation mode: tap ⌥ {voiceKey || "V"} once, then just talk</span>
+            <span className="g-meta">Glance sends what you said when you finish, replies, and stops listening. Escape cancels. Off: hold ⌥ {voiceKey || "V"} to talk.</span>
+          </span>
+        </label>
         <span className="g-meta">Typing always works, whatever this says.</span>
+        {sttCredit(server?.stt) && (
+          <span className="g-meta" data-testid="stt-credit">
+            {sttCredit(server?.stt)}
+            {server?.stt?.model ? ` (${server.stt.model})` : ""}
+          </span>
+        )}
       </div>
 
       {diag && (

@@ -28,6 +28,11 @@ export const voiceKeyLetter = storage.defineItem<string>("sync:voiceKeyLetter", 
 export const defaultMode = storage.defineItem<Mode>("sync:defaultMode", { fallback: "floating" });
 export const consoleUrl = storage.defineItem<string>("sync:consoleUrl", { fallback: DEFAULT_CONSOLE_URL });
 export const voiceReplies = storage.defineItem<boolean>("sync:voiceReplies", { fallback: true });
+/**
+ * Conversation mode: tap Option+V once, then just talk. Speech recognition's end of turn sends what was said (no key
+ * to hold), and listening stops after the reply: the microphone is never left on. Off by default: hold-to-talk.
+ */
+export const conversationMode = storage.defineItem<boolean>("sync:conversationMode", { fallback: false });
 /** Developer tools (on in dev builds anyway): "glance test drawing" in the panel draws every Show me shape. */
 export const devTools = storage.defineItem<boolean>("local:devTools", { fallback: false });
 /** The water-drop sound as the panel opens and closes (Settings → "Sounds"). */

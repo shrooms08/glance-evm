@@ -461,7 +461,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       return;
     }
     setPanelOpen(true);
-    assistant.startListening();
+    assistant.talkDown();
     // While they talk: read the page now, so if it's a question about it, the context is ready at the release.
     setTimeout(() => preread.current(), 0);
   }, [docked, assistant, dockAnim, g.gated]);
@@ -470,7 +470,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     if (heldForPanel.current) {
       heldForPanel.current = false;
       void send({ kind: "assistant:hold", down: false } satisfies AssistantMessage).catch(() => {});
-    } else assistant.stopListening();
+    } else assistant.talkUp();
   }, [assistant]);
 
   const closePanel = useCallback(() => {
@@ -496,6 +496,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       onVoiceEnd: stopTalking,
       // Escape stops Show me first (voice, drawings, the orb comes home); pressed again, it closes the panel.
       onEscape: () => {
+        // Listening (conversation mode keeps the microphone open until you finish): Escape cancels it, sending nothing.
+        if (assistant.cancelListening()) return;
         const run = showRun.current;
         showRun.current = null;
         if (run && (flyRange || (drawings.current?.count ?? 0) > 0 || g.orb.state !== "idle")) {

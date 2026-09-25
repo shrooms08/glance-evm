@@ -164,6 +164,16 @@ const envSchema = z.object({
    * and phrases served from memory don't count). When one is used up: "Voice is resting for today. You can still type."
    */
   VOICE_STT_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1_800),
+  /**
+   * Speech recognition: AssemblyAI Universal-Streaming (the default) or Deepgram. With AssemblyAI, Deepgram is the
+   * fallback on a connection error, an auth failure or a timeout, and once ASSEMBLYAI_STT_SECONDS_PER_DAY is used up.
+   */
+  STT_PROVIDER: z.enum(["assemblyai", "deepgram"]).default("assemblyai"),
+  ASSEMBLYAI_API_KEY: z.string().optional().or(z.literal("").transform(() => undefined)),
+  /** universal-3-5-pro (default: fastest, best on names) or universal-streaming-english. */
+  ASSEMBLYAI_MODEL: z.string().default("universal-3-5-pro"),
+  /** AssemblyAI streaming seconds a UTC day (billed as session time). */
+  ASSEMBLYAI_STT_SECONDS_PER_DAY: z.coerce.number().int().min(0).default(1_800),
   VOICE_TTS_CHARS_PER_DAY: z.coerce.number().int().min(0).default(60_000),
   /** /health?admin=<ADMIN_TOKEN> shows the full view in production (agent balance, voice, budgets). Unset: never. */
   ADMIN_TOKEN: z

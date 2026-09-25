@@ -564,3 +564,64 @@ describe("PCM helpers", () => {
     expect(bytes.getUint32(40, true)).toBe(8);
   });
 });
+
+describe("voice worker: conversation mode", () => {
+  it("asks the API for conversation mode with the session's basket names; partials show as the live transcript", async () => {
+    const t = setup();
+    void t.worker.start("c1", "en-US", API, {}, undefined, { conversation: true, keyterms: ["Tech Giants", "ETFs"] });
+    await flush();
+    const u = new URL(FakeWS.last.url);
+    expect(u.searchParams.get("mode")).toBe("conversation");
+    expect(JSON.parse(u.searchParams.get("keyterms")!)).toEqual(["Tech Giants", "ETFs"]);
+    FakeWS.last.open();
+    FakeWS.last.reply({ type: "partial", text: "buy ten" });
+    FakeWS.last.reply({ type: "partial", text: "buy ten dollars of Palantir" });
+    await flush();
+    const interim = t.events.filter((e) => e.kind === "voice:event" && e.type === "interim").map((e) => (e as { text: string }).text);
+    expect(interim).toEqual(["buy ten", "buy ten dollars of Palantir"]);
+  });
+
+  it("the end of the speaker's turn sends it: no key up; the microphone stops, the reply plays, listening ends", async () => {
+    const t = setup({ command: { intent: "buy", symbol: "PLTR", amount: "10", reply: "$10 of Palantir. Let me check your limits first." } });
+    void t.worker.start("c2", "en-US", API, {}, undefined, { conversation: true });
+    await flush();
+    FakeWS.last.open();
+    FakeCapture.last.chunk(1);
+    FakeWS.last.reply({ type: "transcript", text: "Buy $10 of Palantir.", endOfTurn: true });
+    FakeWS.last.close(); // the API closes the stream after its transcript
+    await flush(12);
+    expect(FakeCapture.last.stopped).toBe(true);
+    expect(t.types()).toEqual(expect.arrayContaining(["started", "released", "final", "intent"]));
+    const command = t.requests.find((r) => r.url.endsWith("/voice/command"))!;
+    expect(JSON.parse(String(command.init!.body)).transcript).toBe("Buy $10 of Palantir.");
+    expect(FakeWS.last.sent).not.toContain(JSON.stringify({ type: "stop" })); // the stream had already finished
+    FakeAudio.all.at(-1)!.onplaying!(); // the reply plays; the session (and listening) ends with it
+    await flush();
+    expect(t.types().at(-1)).toBe("end");
+  });
+
+  it("Escape (abort) mid-turn: the microphone and the stream close, nothing is sent", async () => {
+    const t = setup();
+    void t.worker.start("c3", "en-US", API, {}, undefined, { conversation: true });
+    await flush();
+    FakeWS.last.open();
+    FakeCapture.last.chunk(1);
+    t.worker.abort("c3");
+    await flush();
+    expect(FakeCapture.last.stopped).toBe(true);
+    expect(FakeWS.last.readyState).toBe(3);
+    expect(t.requests.some((r) => r.url.endsWith("/voice/command"))).toBe(false);
+    expect(t.types().at(-1)).toBe("end");
+  });
+
+  it("hold-to-talk is unchanged: no mode on the stream, and an end-of-turn transcript alone doesn't stop the capture", async () => {
+    const t = setup();
+    void t.worker.start("h1", "en-US", API, {});
+    await flush();
+    expect(FakeWS.last.url).toBe("ws://localhost:8790/voice/stream");
+    FakeWS.last.open();
+    FakeWS.last.reply({ type: "partial", text: "what's" });
+    await flush();
+    expect(FakeCapture.last.stopped).toBe(false);
+  });
+});

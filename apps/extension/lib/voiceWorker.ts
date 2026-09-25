@@ -5,8 +5,13 @@
  *   key down   warm the API's provider connections (/voice/warm), check the microphone, open a WebSocket to the
  *              API's /voice/stream, and stream raw 16kHz PCM in 40ms slices as it is captured (an AudioWorklet: no
  *              encoder buffering, and a format the API's warm Deepgram connection can take utterance after utterance)
- *   key up     flush the capture, send {"type":"stop"} (the API sends Deepgram's Finalize at once), and get the
- *              transcript. If the stream couldn't open, POST the recording as WAV to /voice/transcribe instead
+ *   key up     flush the capture, send {"type":"stop"} (the API ends the turn at once: AssemblyAI's ForceEndpoint, or
+ *              Deepgram's Finalize), and get the transcript. If the stream couldn't open, POST the recording as WAV to
+ *              /voice/transcribe instead
+ *   meanwhile  {"type":"partial"} messages carry the words so far (AssemblyAI partials) to the panel
+ *   conversation mode (a setting): one tap starts; there is no key up. The API sends the transcript when the speaker's
+ *              turn ends (AssemblyAI's end-of-turn), and the session carries on from there as if released. Escape
+ *              aborts. Listening stops after the reply: the microphone is never left on.
  *   then       POST the transcript to /voice/command (intent + one-sentence reply), and play the reply from
  *              GET /voice/speak (Deepgram Aura), streamed into a MediaSource so it starts playing on the first chunks
  *
@@ -22,7 +27,7 @@
  * Every browser dependency is injected, so this is unit tested.
  */
 import type { Listener, ListenHandlers } from "./voice";
-import type { FallbackReason, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceTiming } from "./voiceMessages";
+import type { FallbackReason, ListenOptions, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceTiming } from "./voiceMessages";
 import type { VoiceCode } from "./voiceReasons";
 import { ACKS, FIXED_LINES } from "@glance/core/persona";
 import { isSlowRequest } from "@glance/core/showme";
@@ -94,6 +99,8 @@ interface Session {
   vault?: string;
   lang: string;
   mode: "server" | "browser";
+  /** Conversation mode: the API's end of turn stands in for the key's release. */
+  conversation: boolean;
   pending: "stop" | "abort" | null;
   stream?: MediaStream;
   capture?: { stop(): Promise<void> };
@@ -191,10 +198,10 @@ export class VoiceWorker {
     void this.d.fetch(`${api}/voice/warm`, { method: "POST", signal: AbortSignal.timeout(2_000) }).catch(() => {});
   }
 
-  async start(id: string, lang: string, api: string, context: VoiceCommandContext, vault?: string) {
+  async start(id: string, lang: string, api: string, context: VoiceCommandContext, vault?: string, listen: ListenOptions = {}) {
     this.hush();
     this.warm(api);
-    const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", pending: null, chunks: [], capturing: false, released: 0, ended: false };
+    const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", conversation: Boolean(listen.conversation), pending: null, chunks: [], capturing: false, released: 0, ended: false };
     this.sessions.set(id, s);
 
     // The microphone is simply tried (a "prompt" from permissions.query isn't trusted): the permission was granted to
@@ -229,7 +236,11 @@ export class VoiceWorker {
 
     // The stream to the API opens alongside the capture; audio captured before it opens is sent once it does.
     if (status.stream) {
-      const q = s.vault ? `?vault=${encodeURIComponent(s.vault)}` : "";
+      const params = new URLSearchParams();
+      if (s.vault) params.set("vault", s.vault);
+      if (s.conversation) params.set("mode", "conversation");
+      if (listen.keyterms?.length) params.set("keyterms", JSON.stringify(listen.keyterms.slice(0, 10)));
+      const q = params.size ? `?${params.toString()}` : "";
       const ws = new this.d.WebSocket(`${httpToWs(api)}/voice/stream${q}`);
       ws.binaryType = "arraybuffer";
       s.ws = ws;
@@ -241,8 +252,14 @@ export class VoiceWorker {
       s.transcript = new Promise<string | null>((resolve) => {
         ws.onmessage = (m) => {
           try {
-            const msg = JSON.parse(String(m.data)) as { type?: string; text?: string };
-            if (msg.type === "transcript") resolve(msg.text ?? "");
+            const msg = JSON.parse(String(m.data)) as { type?: string; text?: string; endOfTurn?: boolean };
+            // The words so far (AssemblyAI's partials), for the panel's live transcript.
+            if (msg.type === "partial") return this.emit(s, { type: "interim", text: msg.text ?? "" });
+            if (msg.type === "transcript") {
+              resolve(msg.text ?? "");
+              // Conversation mode: the speaker's turn ended, so the session goes on as if the key were released.
+              if (msg.endOfTurn && s.conversation && s.capturing) void this.stop(id);
+            }
             else if (msg.type === "error") {
               if ((msg as { code?: string }).code === "VOICE_RESTING") s.resting = true;
               resolve(null);
@@ -329,7 +346,7 @@ export class VoiceWorker {
     let text: string | null = null;
     let via: VoiceTiming["via"] = "stream";
     if (s.ws && (await Promise.race([s.wsOpen!, new Promise<boolean>((r) => setTimeout(() => r(false), STREAM_OPEN_GRACE_MS))]))) {
-      s.ws.send(JSON.stringify({ type: "stop" }));
+      if (s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: "stop" }));
       text = await Promise.race([s.transcript!, new Promise<null>((r) => setTimeout(() => r(null), TRANSCRIPT_TIMEOUT_MS))]);
     }
     if (text === null) {

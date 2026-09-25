@@ -1,7 +1,7 @@
 # Glance security model
 
-This page covers who can make Glance's agent trade a vault, and how the paid services behind the API (Deepgram and
-Anthropic) are kept from being used by anyone who finds the URL.
+This page covers who can make Glance's agent trade a vault, and how the paid services behind the API (Deepgram,
+AssemblyAI and Anthropic) are kept from being used by anyone who finds the URL.
 
 ## What the chain already guarantees
 
@@ -105,11 +105,16 @@ printed.
   groups has its own limit: `/resolve` 60 (plus `/resolve/names` 20), `/why` 20, `/showme` 10, `/chart` 60,
   `/portfolio` 60, `/voice` 60 (the audio stream included), and `/session` 30. When a request names a browser session
   (`x-glance-session`), the same limit also applies per session.
-- **Daily caps.** Deepgram speech-to-text is capped at 1,800 seconds a day (`VOICE_STT_SECONDS_PER_DAY`) and
-  text-to-speech at 60,000 characters a day (`VOICE_TTS_CHARS_PER_DAY`), per UTC day, surviving restarts. When one
-  runs out, that direction rests until midnight UTC and Glance shows, in text only, "Voice is resting for today. You
-  can still type." Pre-recorded lines and phrases served from memory never reach a provider, so they never count.
+- **Daily caps.** Speech-to-text is capped at 1,800 seconds a day (`VOICE_STT_SECONDS_PER_DAY`, every provider's audio)
+  and text-to-speech at 60,000 characters a day (`VOICE_TTS_CHARS_PER_DAY`), per UTC day, surviving restarts.
+  AssemblyAI has its own 1,800 seconds (`ASSEMBLYAI_STT_SECONDS_PER_DAY`, counted as it bills: session wall-clock);
+  when those run out, Deepgram listens instead. When a direction runs out altogether, it rests until midnight UTC and
+  Glance shows, in text only, "Voice is resting for today. You can still type." Pre-recorded lines and phrases served
+  from memory never reach a provider, so they never count.
   Claude has its own daily budget (`LLM_DAILY_CALL_LIMIT`, see the API README).
+- **Speech recognition keys.** `ASSEMBLYAI_API_KEY` and `DEEPGRAM_API_KEY` stay on the API: the extension streams its
+  audio to `/voice/stream`, and the API streams it on. No key or temporary token is ever sent to the extension. Logs
+  carry timings and lengths only, never audio or transcripts.
 - **Size.** A command's audio is at most 30 seconds: the stream finishes there (the words so far are kept), and a longer
   upload is refused with 413. A JSON body is at most 64 KB (Show me's page context included); larger is refused with
   413. The extension keeps Show me requests under that by shortening the page text from the end and leaving out a
