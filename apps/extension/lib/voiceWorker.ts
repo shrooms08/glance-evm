@@ -31,7 +31,7 @@
 import type { Listener, ListenHandlers } from "./voice";
 import type { FallbackReason, ListenOptions, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceTiming } from "./voiceMessages";
 import type { VoiceCode } from "./voiceReasons";
-import { ACKS, FIXED_LINES } from "@glance/core/persona";
+import { ACKS, FIXED_LINES, LINES } from "@glance/core/persona";
 import { isSlowRequest } from "@glance/core/showme";
 
 const FIXED = new Set(FIXED_LINES);
@@ -77,7 +77,10 @@ export interface WorkerDeps {
 export const STATUS_TIMEOUT_MS = 800;
 /** How long the stream may take to open before the recording is uploaded whole instead. */
 export const STREAM_OPEN_GRACE_MS = 1_500;
-const TRANSCRIPT_TIMEOUT_MS = 6_000;
+/** The API may try the upload path once after the stream (3.5s at most): the transcript gets this long. */
+const TRANSCRIPT_TIMEOUT_MS = 7_000;
+/** Held at least this long and nothing heard: "Didn't catch that", shown and said. A shorter tap stays quiet. */
+export const NOT_HEARD_MIN_HOLD_MS = 600;
 /** Playback that makes no progress for this long, after it started, has stalled: the reply stops there. */
 export const STALL_MS = 2_500;
 const STATUS_TTL_MS = 30_000;
@@ -103,6 +106,13 @@ interface Session {
   mode: "server" | "browser";
   /** Conversation mode: the API's end of turn stands in for the key's release. */
   conversation: boolean;
+  /** When the key went down (now()), for "held at least 0.6s". */
+  downAt: number;
+  /** Escape: the turn is dropped. Nothing more is sent, asked or said for it. */
+  aborted: boolean;
+  /** How many of `chunks` have gone down the stream (audio from before it opened goes first, in order). */
+  sent: number;
+  notHeard?: string;
   pending: "stop" | "abort" | null;
   stream?: MediaStream;
   capture?: { stop(): Promise<void> };
@@ -215,18 +225,34 @@ export class VoiceWorker {
   async start(id: string, lang: string, api: string, context: VoiceCommandContext, vault?: string, listen: ListenOptions = {}) {
     this.hush();
     this.warm(api, listen.conversation ? "conversation" : "key-down");
-    const s: Session = { id, seq: 0, api, context, vault, lang, mode: "server", conversation: Boolean(listen.conversation), pending: null, chunks: [], capturing: false, released: 0, ended: false };
+    const s: Session = {
+      id,
+      seq: 0,
+      api,
+      context,
+      vault,
+      lang,
+      mode: "server",
+      conversation: Boolean(listen.conversation),
+      pending: null,
+      chunks: [],
+      capturing: false,
+      released: 0,
+      ended: false,
+      downAt: this.d.now(),
+      aborted: false,
+      sent: 0,
+      notHeard: listen.notHeard,
+    };
     this.sessions.set(id, s);
 
     // The microphone is simply tried (a "prompt" from permissions.query isn't trusted): the permission was granted to
     // the extension's origin once, and this document shares it. Only a real failure says anything.
-    const [status, mic] = await Promise.all([
-      this.apiStatus(api),
-      this.d.getUserMedia().then(
-        (stream) => ({ stream, error: null }),
-        (err: unknown) => ({ stream: null, error: String((err as DOMException)?.name ?? "Error") }),
-      ),
-    ]);
+    const statusP = this.apiStatus(api);
+    const mic = await this.d.getUserMedia().then(
+      (stream) => ({ stream, error: null }),
+      (err: unknown) => ({ stream: null, error: String((err as DOMException)?.name ?? "Error") }),
+    );
     if (mic.error !== null) {
       this.emit(s, { type: "error", code: await this.d.micFailed(mic.error).catch(() => "mic-denied" as VoiceCode) });
       return this.emit(s, { type: "end" });
@@ -236,17 +262,37 @@ export class VoiceWorker {
       mic.stream!.getTracks().forEach((t) => t.stop());
       return this.emit(s, { type: "end" });
     }
+    s.stream = mic.stream!;
+    // Capture starts the moment the microphone is ours, before anything else is asked: the first word is in the turn's
+    // audio even while the API's status and the stream are still on their way (it goes down the stream once open).
+    try {
+      s.capture = await this.d.capturePcm(s.stream, (pcm) => {
+        s.chunks.push(pcm);
+        if (s.ws) void this.flush(s);
+      });
+    } catch {
+      s.stream.getTracks().forEach((t) => t.stop());
+      this.emit(s, { type: "error", code: "audio-capture" });
+      return this.emit(s, { type: "end" });
+    }
+    const status = await statusP;
+    const dropCapture = () => {
+      void s.capture?.stop();
+      s.capture = undefined;
+      s.stream?.getTracks().forEach((t) => t.stop());
+    };
+    if (s.aborted) return;
     if (status.resting?.transcription) {
       // Today's listening is used up: say so in text, and typing still works.
-      mic.stream!.getTracks().forEach((t) => t.stop());
+      dropCapture();
       this.emit(s, { type: "error", code: "voice-resting" });
       return this.emit(s, { type: "end" });
     }
     if (!status.reachable || !status.transcription) {
-      mic.stream!.getTracks().forEach((t) => t.stop()); // the browser's recognition opens its own
+      dropCapture(); // the browser's recognition opens its own
+      s.chunks = [];
       return this.startBrowser(s, status.reachable ? "no-provider" : "api-unreachable");
     }
-    s.stream = mic.stream!;
 
     // The stream to the API opens alongside the capture; audio captured before it opens is sent once it does.
     if (status.stream) {
@@ -264,6 +310,8 @@ export class VoiceWorker {
         ws.onerror = () => resolve(false);
         ws.onclose = () => resolve(false);
       });
+      // Everything captured so far goes first, then each slice as it comes.
+      void this.flush(s);
       s.transcript = new Promise<string | null>((resolve) => {
         ws.onmessage = (m) => {
           try {
@@ -290,30 +338,20 @@ export class VoiceWorker {
       });
     }
 
-    try {
-      s.capture = await this.d.capturePcm(s.stream, (pcm) => {
-        s.chunks.push(pcm);
-        void this.forward(s, pcm);
-      });
-    } catch {
-      s.stream.getTracks().forEach((t) => t.stop());
-      this.emit(s, { type: "error", code: "audio-capture" });
-      return this.emit(s, { type: "end" });
-    }
     s.capturing = true;
     this.emit(s, { type: "started" });
     if (s.pending === "stop") void this.stop(id);
     else if (s.pending === "abort") this.abort(id);
   }
 
-  /** Sends a chunk down the stream, in order, once it is open. */
+  /** Sends what hasn't gone down the stream yet, in order, once it is open (audio from before it opened first). */
   private sendQueue = Promise.resolve();
-  private forward(s: Session, chunk: Uint8Array) {
+  private flush(s: Session) {
     if (!s.ws || !s.wsOpen) return;
     const ws = s.ws;
     this.sendQueue = this.sendQueue.then(async () => {
-      if (!(await s.wsOpen)) return;
-      if (ws.readyState === 1) ws.send(chunk as Uint8Array<ArrayBuffer>);
+      if (!(await s.wsOpen) || s.aborted) return;
+      while (s.sent < s.chunks.length && ws.readyState === 1) ws.send(s.chunks[s.sent++] as Uint8Array<ArrayBuffer>);
     });
     return this.sendQueue;
   }
@@ -356,14 +394,22 @@ export class VoiceWorker {
     this.emit(s, { type: "released" });
     await s.capture!.stop();
     s.stream?.getTracks().forEach((t) => t.stop());
+    if (s.aborted) return;
+    void this.flush(s);
     await this.sendQueue;
+    if (s.aborted) return;
 
     let text: string | null = null;
     let via: VoiceTiming["via"] = "stream";
     if (s.ws && (await Promise.race([s.wsOpen!, new Promise<boolean>((r) => setTimeout(() => r(false), STREAM_OPEN_GRACE_MS))]))) {
+      if (s.aborted) return;
       if (s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: "stop" }));
       text = await Promise.race([s.transcript!, new Promise<null>((r) => setTimeout(() => r(null), TRANSCRIPT_TIMEOUT_MS))]);
     }
+    // Escape while waiting: the turn is dropped (no upload, no command, nothing said).
+    if (s.aborted) return;
+    // Only when the stream gave no answer at all (it never opened, or went quiet): the API itself already tried the
+    // upload path for a stream that answered with nothing, so this never runs alongside a working stream.
     if (text === null) {
       via = "upload";
       s.ws?.close();
@@ -378,17 +424,24 @@ export class VoiceWorker {
       } catch {
         text = null;
       }
+      if (s.aborted) return;
     }
     const timing: VoiceTiming = { transcript: this.d.now() - s.released, via };
-    if (text === null) {
-      this.emit(s, { type: "error", code: s.resting ? "voice-resting" : "transcription-failed" });
+    if (text === null && s.resting) {
+      this.emit(s, { type: "error", code: "voice-resting" });
       return this.emit(s, { type: "end" });
     }
-    this.emit(s, { type: "final", text });
-    if (!text.trim()) {
+    if (!text?.trim()) {
+      // Nothing heard. Held long enough to have meant it: never silent ("Didn't catch that", shown and said).
+      if (s.released - s.downAt >= NOT_HEARD_MIN_HOLD_MS) {
+        this.emit(s, { type: "error", code: "not-heard" });
+        void this.speak(`not-heard-${s.id}`, s.notHeard ?? LINES.notHeardSpoken, s.api);
+      } else if (text === null) this.emit(s, { type: "error", code: "transcription-failed" });
+      else this.emit(s, { type: "final", text: "" });
       this.emit(s, { type: "timing", timing });
       return this.emit(s, { type: "end" });
     }
+    this.emit(s, { type: "final", text });
     // A request that takes Claude a moment (Show me, teach, guide, why): an instant "One sec." in Glance's voice,
     // pre-recorded, while the answer is worked out. Prices, the portfolio and buys get none: they should just be fast.
     if (isSlowRequest(text)) void this.speak(`ack-${s.id}`, ACKS[this.ackTurn++ % ACKS.length]!, s.api);
@@ -406,6 +459,7 @@ export class VoiceWorker {
     } catch {
       intent = null;
     }
+    if (s.aborted) return;
     timing.intent = this.d.now() - s.released;
     if (!intent) {
       this.emit(s, { type: "timing", timing });
@@ -428,10 +482,20 @@ export class VoiceWorker {
     });
   }
 
+  /**
+   * Escape: a hard stop. The turn is dropped wherever it is: the API is told to cancel (it closes the provider's
+   * session cleanly and sends nothing back), and nothing more is uploaded, asked or said for it.
+   */
   abort(id: string) {
     const s = this.sessions.get(id);
     if (!s) return;
+    const wasAborted = s.aborted;
+    s.aborted = true;
     s.pending = "abort";
+    if (s.ws?.readyState === 1) s.ws.send(JSON.stringify({ type: "cancel" }));
+    if (wasAborted) return;
+    // Nothing is said for a dropped turn (an "One sec." or a reply already on its way stops too).
+    this.hush();
     if (s.listener) s.listener.abort();
     const capturing = s.capturing;
     s.capturing = false;

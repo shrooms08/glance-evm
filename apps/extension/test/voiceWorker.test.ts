@@ -104,6 +104,8 @@ interface Setup {
   listen?: (h: ListenHandlers) => void;
   /** Answers /voice/speak itself (the default: a clip, always). */
   speak?: (url: string) => Response | undefined;
+  /** /voice/status waits for this (to see what happens before the stream opens). */
+  statusGate?: Promise<void>;
 }
 
 function setup(o: Setup = {}) {
@@ -116,6 +118,7 @@ function setup(o: Setup = {}) {
     requests.push({ url: u, init });
     if (u.endsWith("/voice/warm")) return Response.json({ ok: true });
     if (u.endsWith("/voice/status")) {
+      if (o.statusGate) await o.statusGate;
       if (status === "unreachable") throw new TypeError("Failed to fetch");
       return Response.json({ available: status, speechChain: [{ voice: o.voice ?? "flux-sienna-en" }] });
     }
@@ -632,5 +635,95 @@ describe("voice worker: conversation mode", () => {
     FakeWS.last.reply({ type: "partial", text: "what's" });
     await flush();
     expect(FakeCapture.last.stopped).toBe(false);
+  });
+});
+
+describe("voice worker: no lost turns, never silent, Escape", () => {
+  it("capture starts as soon as the microphone is ours: audio from before the stream opened goes first, in order", async () => {
+    let open!: () => void;
+    const t = setup({ statusGate: new Promise<void>((r) => (open = r)) });
+    void t.worker.start("r1", "en-US", API, {});
+    await flush();
+    // The status check (and so the stream) is still on its way, but the microphone is already captured.
+    FakeCapture.last.chunk(1);
+    FakeCapture.last.chunk(2);
+    open();
+    await flush();
+    FakeWS.last.open();
+    FakeCapture.last.chunk(3);
+    await flush();
+    expect(FakeWS.last.sent.map((c) => [...(c as Uint8Array)])).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+    ]);
+  });
+
+  it("nothing heard after a real hold (0.6s or more): \"Didn't catch that\" in the panel and said in Sienna's pre-recorded line", async () => {
+    const t = setup();
+    void t.worker.start("r2", "en-US", API, {});
+    await flush();
+    FakeWS.last.open();
+    t.advance(900);
+    const stopping = t.worker.stop("r2");
+    await flush();
+    FakeWS.last.reply({ type: "transcript", text: "", heard: false });
+    await stopping;
+    await flush();
+    expect(t.events).toContainEqual(expect.objectContaining({ type: "error", code: "not-heard" }));
+    expect(t.requests.some((r) => r.url.includes("/voice/speak?text=" + encodeURIComponent(LINES.notHeardSpoken)))).toBe(true);
+    expect(t.requests.some((r) => r.url.endsWith("/voice/command") || r.url.endsWith("/voice/transcribe"))).toBe(false);
+    expect(FIXED_LINES).toContain(LINES.notHeardSpoken); // pre-recorded with the other fixed lines
+  });
+
+  it("a short tap (under 0.6s) with nothing heard stays quiet", async () => {
+    const t = setup();
+    void t.worker.start("r3", "en-US", API, {});
+    await flush();
+    FakeWS.last.open();
+    t.advance(300);
+    const stopping = t.worker.stop("r3");
+    await flush();
+    FakeWS.last.reply({ type: "transcript", text: "", heard: false });
+    await stopping;
+    await flush();
+    expect(t.events.some((e) => e.kind === "voice:event" && e.type === "error")).toBe(false);
+    expect(t.requests.some((r) => r.url.includes("/voice/speak"))).toBe(false);
+  });
+
+  it("Escape after the release: the API is told to cancel, and nothing more is uploaded, asked or said", async () => {
+    const t = setup();
+    void t.worker.start("r4", "en-US", API, {});
+    await flush();
+    FakeWS.last.open();
+    FakeCapture.last.chunk(1);
+    t.advance(1_000);
+    const stopping = t.worker.stop("r4");
+    await flush();
+    const ws = FakeWS.last;
+    t.worker.abort("r4");
+    expect(ws.sent).toContain(JSON.stringify({ type: "cancel" }));
+    // A transcript that still arrives is dropped.
+    ws.reply({ type: "transcript", text: "what's Tesla at" });
+    await stopping;
+    await flush();
+    expect(t.requests.some((r) => r.url.endsWith("/voice/transcribe") || r.url.endsWith("/voice/command") || r.url.includes("/voice/speak"))).toBe(false);
+    expect(t.types().filter((x) => x === "final" || x === "intent")).toEqual([]);
+    expect(t.types().at(-1)).toBe("end");
+  });
+
+  it("Escape while holding: cancel, the microphone closes, then the key's release does nothing", async () => {
+    const t = setup();
+    void t.worker.start("r5", "en-US", API, {});
+    await flush();
+    FakeWS.last.open();
+    FakeCapture.last.chunk(1);
+    t.worker.abort("r5");
+    await t.worker.stop("r5");
+    await flush();
+    expect(FakeWS.last.sent).toContain(JSON.stringify({ type: "cancel" }));
+    expect(FakeWS.last.sent).not.toContain(JSON.stringify({ type: "stop" }));
+    expect(FakeCapture.last.stopped).toBe(true);
+    expect(t.requests.filter((r) => !r.url.includes("/voice/warm") && !r.url.endsWith("/voice/status"))).toEqual([]);
   });
 });

@@ -24,7 +24,7 @@ import { detectBrowser, failureKind, micSettingsUrl, reasonFor, type VoiceCode, 
 import { useGlance } from "./context";
 import { tick } from "../lib/onboarding";
 import { spokenWhy } from "./Why";
-import { LINES } from "@glance/core/persona";
+import { LINES, NOT_HEARD } from "@glance/core/persona";
 import { VOICE_RESTING } from "@glance/core/session";
 import { CUT_NOTE, noVoiceNote } from "../lib/showMe";
 
@@ -303,7 +303,9 @@ export function useAssistant(opts: AssistantOptions = {}) {
   /** Voice failures never block typing: the reason shows in the orb line and the text box stays ready. */
   const voiceFailed = useCallback(
     (code: VoiceCode, note = "") => {
-      const line = `${note ? `${note} ` : ""}${voiceReason(code)}`;
+      // Nothing heard after a real hold: the key's own name in it (the worker says it too).
+      const reason = code === "not-heard" ? NOT_HEARD(`⌥${(g.voiceKey || "V").toUpperCase()}`) : voiceReason(code);
+      const line = `${note ? `${note} ` : ""}${reason}`;
       if (code === "mic-temporary" || code === "mic-blocked-again") setMicHint({ line: voiceReason(code), url: micSettingsUrl(browserInfo) });
       if (import.meta.env.DEV) console.info(`[glance] voice error "${code}" (${failureKind(code)}) in ${browserInfo.name} ${browserInfo.version}`);
       g.setOrb({ state: "idle", line, meta: KIND_META[failureKind(code)] });
@@ -383,7 +385,12 @@ export function useAssistant(opts: AssistantOptions = {}) {
         context,
         vault: isAddress(g.vaultAddress) ? g.vaultAddress : undefined,
         // Conversation mode (a setting), and the user's basket names as extra words for speech recognition.
-        listen: { conversation: g.conversation, keyterms: basketNames.current },
+        listen: {
+          conversation: g.conversation,
+          keyterms: basketNames.current,
+          // Said when nothing was heard: pre-recorded for ⌥V, spoken live for another key.
+          notHeard: (g.voiceKey || "V").toUpperCase() === "V" ? LINES.notHeardSpoken : `Didn't catch that. Hold Option ${(g.voiceKey || "V").toUpperCase()} and try again.`,
+        },
       },
     );
   }, [g, run, voiceFailed, applyIntent, card]);

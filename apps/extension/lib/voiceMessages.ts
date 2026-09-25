@@ -25,6 +25,8 @@ export interface VoiceIntent {
 export interface ListenOptions {
   conversation?: boolean;
   keyterms?: string[];
+  /** Said when a turn ends with nothing heard (the key's own name in it; pre-recorded for ⌥V). */
+  notHeard?: string;
 }
 
 /** Milliseconds from the key's release to each step. */

@@ -49,6 +49,8 @@ const TERMINATION_WAIT_MS = 2_000;
 export const WARM_HOLD_MS = 5_000;
 /** One spare per browser (repeat warm calls reuse it), and never more than this many at once in all. */
 export const MAX_SPARES = 2;
+/** A spare this close to its idle close (or already closing) is never handed over: a new session opens instead. */
+export const HANDOVER_MARGIN_MS = 1_000;
 
 type WebSocketCtor = new (url: string, init?: { headers?: Record<string, string> }) => WebSocket;
 
@@ -110,7 +112,18 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
     opts.meter?.add(u.seconds);
     opts.onSession?.(u);
   };
-  type Spare = { ws: WebSocket; started: number; began: boolean; beganAt: number; keyterms: string; timer: ReturnType<typeof setTimeout> };
+  type Spare = {
+    ws: WebSocket;
+    started: number;
+    began: boolean;
+    beganAt: number;
+    keyterms: string;
+    timer: ReturnType<typeof setTimeout>;
+    /** When the idle close fires (a key going down pushes it back). */
+    closesAt: number;
+    closing: boolean;
+  };
+  const holdMs = opts.warmHoldMs ?? WARM_HOLD_MS;
   /** Sessions opened ahead of time, one per browser (ListenMeta.client), for that browser's next stream to take. */
   const spares = new Map<string, Spare>();
   /** Streams open right now, per browser: while one is, that browser gets no spare (the stream has its session). */
@@ -119,6 +132,7 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
   const dropSpare = (client: string) => {
     const s = spares.get(client);
     if (!s) return;
+    s.closing = true;
     clearTimeout(s.timer);
     spares.delete(client);
     try {
@@ -129,10 +143,12 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
     }
     used({ opened: "warm", seconds: (now() - s.started) / 1000, speech: false });
   };
+  /** The browser's spare, unless it is closing, closed, or about to close (then it is dropped: a new session opens). */
   const takeSpare = (client: string) => {
     const s = spares.get(client);
-    if (!s || s.ws.readyState > 1) {
-      if (s) dropSpare(client);
+    if (!s) return null;
+    if (s.closing || s.ws.readyState > 1 || s.closesAt - now() < HANDOVER_MARGIN_MS) {
+      dropSpare(client);
       return null;
     }
     clearTimeout(s.timer);
@@ -148,10 +164,28 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
       // Billed from the moment it opens: only for a key going down, conversation mode starting, or the panel opening.
       if (!meta?.opened) return;
       const client = clientOf(meta);
-      if ((active.get(client) ?? 0) > 0 || (spares.get(client)?.ws.readyState ?? 9) <= 1 || spares.size >= MAX_SPARES) return;
+      if ((active.get(client) ?? 0) > 0) return;
+      const have = spares.get(client);
+      if (have && !have.closing && have.ws.readyState <= 1) {
+        // Reused, and its idle close starts again: a key going down keeps the session it was about to use.
+        clearTimeout(have.timer);
+        have.closesAt = now() + holdMs;
+        have.timer = setTimeout(() => dropSpare(client), holdMs);
+        return;
+      }
+      if (spares.size >= MAX_SPARES) return;
       const ws = open(keyterms);
       ws.binaryType = "arraybuffer";
-      const s: Spare = { ws, started: now(), began: false, beganAt: 0, keyterms: JSON.stringify(keyterms), timer: setTimeout(() => dropSpare(client), opts.warmHoldMs ?? WARM_HOLD_MS) };
+      const s: Spare = {
+        ws,
+        started: now(),
+        began: false,
+        beganAt: 0,
+        keyterms: JSON.stringify(keyterms),
+        timer: setTimeout(() => dropSpare(client), holdMs),
+        closesAt: now() + holdMs,
+        closing: false,
+      };
       ws.onmessage = (m) => {
         try {
           if ((JSON.parse(String(m.data)) as { type?: string }).type === "Begin") {
@@ -242,9 +276,13 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
           terminationTimer = setTimeout(close, TERMINATION_WAIT_MS);
         } else close();
       };
+      /** Audio bytes that actually went out to AssemblyAI (the per-turn log compares them with what arrived). */
+      let sentBytes = 0;
       const sendFrame = (frame: Uint8Array) => {
-        if (began && ws.readyState === 1) ws.send(frame);
-        else queued.push(frame);
+        if (began && ws.readyState === 1) {
+          ws.send(frame);
+          sentBytes += frame.byteLength;
+        } else queued.push(frame);
       };
       /** Audio out in frames of 50ms to 1000ms. `flush`: the last of it, padded with silence to 50ms. */
       const push = (chunk: Uint8Array, flush = false) => {
@@ -301,7 +339,11 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
           beganAt = now();
           clearTimeout(beginTimer);
           if (warm && warm.keyterms !== JSON.stringify(keyterms)) ws.send(JSON.stringify({ type: "UpdateConfiguration", keyterms_prompt: keyterms }));
-          for (const f of queued.splice(0)) if (ws.readyState === 1) ws.send(f);
+          for (const f of queued.splice(0)) {
+            if (ws.readyState !== 1) break;
+            ws.send(f);
+            sentBytes += f.byteLength;
+          }
           if (finishing && ws.readyState === 1) ws.send(JSON.stringify({ type: "ForceEndpoint" }));
         } else if (msg.type === "Turn") {
           const order = msg.turn_order ?? 0;
@@ -328,10 +370,12 @@ export function assemblyai(opts: AssemblyAiOptions): Transcriber {
         if (!done && !terminated) fail(aaiError(e.code, e.reason || "closed"));
       };
 
+      const reusedAgeMs = warm ? Math.round(now() - warm.started) : null;
       return {
         get turnDetection() {
           return true;
         },
+        stats: () => ({ provider: "assemblyai", sentBytes, reused: warm !== null, sessionAgeMs: reusedAgeMs, began }),
         send(chunk) {
           if (failed || done || finishing) return;
           push(chunk);

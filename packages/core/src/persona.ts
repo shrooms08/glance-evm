@@ -51,6 +51,8 @@ export const LINES = {
   sellingElsewhere: (name: string) => `I can't sell from here yet. Your console can sell ${name}.`,
   nothingRefused: "Nothing's been refused yet. So, nothing to explain.",
   noSpeech: "I didn't hear anything. Hold the key while you talk, or just type.",
+  /** Spoken (pre-recorded) when a turn ends with nothing heard after the key was held: the panel shows NOT_HEARD. */
+  notHeardSpoken: "Didn't catch that. Hold Option V and try again.",
   tapToConfirm: "Tap Confirm to buy, or Cancel. I never buy on a spoken yes.",
   onlyNow: "I only buy when you ask, right then. Try: buy ten dollars of Tesla.",
   noAdvicePrefix: "I don't give advice, but here's the price. ",
@@ -78,6 +80,9 @@ export const LINES = {
  * Pre-recorded, so they play at once.
  */
 export const ACKS = ["Let me look.", "One sec.", "Okay, checking."] as const;
+
+/** Shown when a turn ends with nothing heard (the key was held at least 0.6s). */
+export const NOT_HEARD = (key = "⌥V") => `Didn't catch that, hold ${key} and try again`;
 
 /** The greeting as spoken (the key names said out loud): pre-recorded for the default keys. */
 export const SPOKEN_GREETING = (glanceLetter = "G", voiceLetter = "V") => GREETING(`Option ${glanceLetter}`, `Option ${voiceLetter}`);

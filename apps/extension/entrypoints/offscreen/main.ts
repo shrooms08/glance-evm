@@ -17,10 +17,27 @@ import { toPcm16, VoiceWorker } from "../../lib/voiceWorker";
 /** 40ms of audio per message to the API: small enough that little is left to send on release. */
 const SLICE_SAMPLES = 640;
 
+/**
+ * The audio graph (a 16kHz AudioContext with the capture worklet loaded), made once and kept, suspended between turns:
+ * a turn only connects the microphone to it. Made ahead of time when the panel opens (no microphone involved).
+ */
+let graph: Promise<AudioContext> | null = null;
+function audioGraph(): Promise<AudioContext> {
+  graph ??= (async () => {
+    const ctx = new AudioContext({ sampleRate: 16_000 });
+    await ctx.audioWorklet.addModule(browser.runtime.getURL("/pcm-worklet.js"));
+    await ctx.suspend();
+    return ctx;
+  })().catch((err: unknown) => {
+    graph = null;
+    throw err;
+  });
+  return graph;
+}
+
 /** The microphone as 16kHz 16-bit PCM, via an AudioWorklet (public/pcm-worklet.js). */
 async function capturePcm(stream: MediaStream, onChunk: (pcm: Uint8Array) => void) {
-  const ctx = new AudioContext({ sampleRate: 16_000 });
-  await ctx.audioWorklet.addModule(browser.runtime.getURL("/pcm-worklet.js"));
+  const ctx = await audioGraph();
   const source = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, "glance-pcm");
   let buffer = new Float32Array(SLICE_SAMPLES);
@@ -51,9 +68,11 @@ async function capturePcm(stream: MediaStream, onChunk: (pcm: Uint8Array) => voi
       // Let the worklet hand over its last block (one render quantum is 8ms at 16kHz), then send the remainder.
       await new Promise((r) => setTimeout(r, 20));
       source.disconnect();
+      node.disconnect();
+      mute.disconnect();
       node.port.onmessage = null;
       flush();
-      await ctx.close();
+      await ctx.suspend();
     },
   };
 }
@@ -163,6 +182,7 @@ browser.runtime.onMessage.addListener((msg: OffscreenRequest) => {
       break;
     case "offscreen:warm":
       worker.warm(msg.api, msg.panel ? "panel" : undefined);
+      void audioGraph().catch(() => {});
       break;
   }
   return undefined;

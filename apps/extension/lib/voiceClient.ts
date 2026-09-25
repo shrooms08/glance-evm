@@ -123,8 +123,11 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
   const session = newId();
   let lastSeq = 0;
   let ended = false;
+  /** Escape: everything after it for this session is ignored (no transcript, intent or reply reaches the page). */
+  let aborted = false;
 
   const onMessage = (msg: VoiceEvent | SpeechEvent) => {
+    if (aborted) return undefined;
     // The reply to this session is spoken under its id: follow its playback even after the session has ended.
     if (msg?.kind === "voice:speech" && msg.id === session) {
       if (msg.type === "progress") return undefined;
@@ -204,7 +207,9 @@ function startRemote(h: VoiceHandlers, opts: { context?: VoiceCommandContext; va
   return {
     stop: () => send("voice:stop"),
     abort: () => {
+      aborted = true;
       send("voice:abort");
+      safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
       finish();
     },
   };

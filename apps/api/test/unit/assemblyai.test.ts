@@ -5,8 +5,11 @@
  *   adapter      the query (pcm_s16le 16kHz, model, format_turns, keyterms_prompt), the key only in the Authorization
  *                header, audio held until Begin and sent in 50-1000ms frames, partials, ForceEndpoint at the release,
  *                the end of a turn, a warm session taken over (keyterms brought up to date), Termination's seconds metered
- *   fall-through a refused key (1008), an unreachable server, no Begin in time: Deepgram hears the same audio, one log
- *                line; the daily AssemblyAI seconds used up: Deepgram listens; every provider's seconds: voice rests
+ *   fall-through a refused key (1008), an unreachable server: Deepgram hears the same audio, one log line; no Begin in
+ *                time: no replay into a Deepgram stream (the route uploads the turn once); the daily AssemblyAI seconds
+ *                used up: Deepgram listens; every provider's seconds: voice rests
+ *   reliability  the warm-close race, silent audio, an empty answer to speech (the upload fallback, once), the Begin
+ *                timeout (upload, no stream), Escape (cancel: nothing sent after it), the per-turn log line
  *   /voice/stream conversation mode (the end of the turn sends the transcript; the Deepgram fallback ends a turn on
  *                quiet), hold-to-talk unchanged (the transcript only at the release), the session's basket keyterms
  *   keyterms     tickers, names, Glance's words and verbs, within 100 terms of 50 characters
@@ -34,6 +37,7 @@ import { publicHealth } from "../../src/app.js";
 import { voiceHealth } from "../../src/services.js";
 import { selectVoiceProviders, withSttFallback, type LiveTranscription, type StreamHooks, type Transcriber } from "../../src/voice/providers.js";
 import { keyterms } from "../../src/voice/routes.js";
+import { TurnAudio } from "../../src/voice/turnAudio.js";
 
 const DEPLOYMENT_FILE = resolve(import.meta.dirname, "../../../../deployments/46630.json");
 const KEY = "aai0test0key0not0real0000000000000000000";
@@ -61,6 +65,8 @@ interface Behaviour {
   final: string;
   /** Billed seconds in Termination. */
   sessionSeconds: number;
+  /** ForceEndpoint answered with an empty final, whatever was sent. */
+  answerEmpty?: boolean;
 }
 const DEFAULT: Behaviour = { open: "ok", partial: "buy ten", final: "Buy $10 of Palantir.", sessionSeconds: 2.5 };
 
@@ -109,7 +115,9 @@ beforeAll(async () => {
           const m = JSON.parse(e.data) as { type: string };
           s.messages.push(m);
           // Ends the turn in progress; with none (the last one already ended), there's nothing to send.
-          if (m.type === "ForceEndpoint" && s.open) {
+          // An empty final at once (what the real log showed: "release to final 264ms, 0 chars").
+          if (m.type === "ForceEndpoint" && behaviour.answerEmpty) s.turn("", { end: true, formatted: true });
+          else if (m.type === "ForceEndpoint" && s.open) {
             s.turn(behaviour.final.replace(/[$.]/g, "").toLowerCase(), { end: true });
             s.turn(behaviour.final, { end: true, formatted: true });
           }
@@ -250,13 +258,16 @@ describe("AssemblyAI adapter (fake server)", () => {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** A stand-in for Deepgram: records what it heard, answers with a fixed transcript. */
-function fakeDeepgram(text = "buy ten dollars of Palantir"): Transcriber & { heard: number[]; streams: number } {
+function fakeDeepgram(text = "buy ten dollars of Palantir"): Transcriber & { heard: number[]; streams: number; uploads: number[] } {
   const t = {
     name: "deepgram",
     model: "nova-3",
     heard: [] as number[],
     streams: 0,
-    async transcribe() {
+    /** Bytes of each upload (a WAV). */
+    uploads: [] as number[],
+    async transcribe(audio: Uint8Array) {
+      t.uploads.push(audio.byteLength);
       return { text, confidence: 0.9, provider: "deepgram" };
     },
     stream(_k: readonly string[], hooks: StreamHooks = {}): LiveTranscription {
@@ -317,15 +328,15 @@ describe("fall-through to Deepgram", () => {
     expect(logs[0]).toMatch(/couldn't be reached|closed the session/);
   });
 
-  it("no Begin in time (a timeout): Deepgram", async () => {
+  it("no Begin in time (a timeout): no replay into a Deepgram stream; the stream fails (the route uploads the turn once)", async () => {
     behaviour.open = "silent";
     const { logs, dg, stt } = setup({ beginTimeoutMs: 150 });
     const live = stt.stream([]);
     await speak(live, 5);
     await sleep(200);
-    await expect(live.finish()).resolves.toMatchObject({ provider: "deepgram" });
-    expect(dg.heard).toEqual([5 * 1_280]);
-    expect(logs[0]).toMatch(/timed out|didn't open a session within 150ms/);
+    await expect(live.finish()).rejects.toMatchObject({ kind: "timeout" });
+    expect(dg.streams).toBe(0);
+    expect(logs).toEqual([]);
   });
 
   it("AssemblyAI's daily seconds used up: Deepgram listens (no AssemblyAI session opened), with a log line", async () => {
@@ -616,5 +627,187 @@ describe("usage: the counter, test seconds, the banner and /health", () => {
     expect(voiceHealth(ctx).usage?.assemblyai).toMatchObject({ usedSeconds: 12.3, capSeconds: 3_600, resets: "00:00 UTC" });
     const pub = publicHealth({ ok: true, chainId: 1, expectedChainId: 1, blockNumber: "1", keeper: { lastWriteAt: null }, feeds: [], voice: voiceHealth(ctx) } as never);
     expect(JSON.stringify(pub)).not.toMatch(/assemblyai|usedSeconds/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** 16kHz 16-bit PCM: a 220Hz tone at `amplitude` (0.3 is about -13 dBFS RMS: speech level), or silence at 0. */
+function tone(ms: number, amplitude: number): Uint8Array {
+  const n = (ms * 16_000) / 1_000;
+  const out = new Uint8Array(n * 2);
+  const v = new DataView(out.buffer);
+  for (let i = 0; i < n; i++) v.setInt16(i * 2, Math.round(Math.sin((2 * Math.PI * 220 * i) / 16_000) * amplitude * 32_767), true);
+  return out;
+}
+
+describe("the turn's audio: levels and speech", () => {
+  it("silence and a faint hiss are not speech; a voice-level tone is, across odd chunk boundaries", () => {
+    const quiet = new TurnAudio();
+    quiet.add(tone(1_000, 0));
+    expect(quiet.levels).toEqual({ peakDbfs: -120, avgDbfs: -120, speechMs: 0 });
+    expect(quiet.hadSpeech).toBe(false);
+    const hiss = new TurnAudio();
+    hiss.add(tone(1_000, 0.002)); // about -57 dBFS RMS
+    expect(hiss.hadSpeech).toBe(false);
+    const voice = new TurnAudio();
+    const t = tone(500, 0.3);
+    voice.add(t.subarray(0, 1_001)); // odd byte counts: samples split across chunks
+    voice.add(t.subarray(1_001));
+    expect(voice.levels.peakDbfs).toBe(-10);
+    expect(voice.levels.avgDbfs).toBe(-13);
+    expect(voice.levels.speechMs).toBe(480);
+    expect(voice.hadSpeech).toBe(true);
+    const wav = voice.wav();
+    expect(new TextDecoder().decode(wav.subarray(0, 4))).toBe("RIFF");
+    expect(wav.byteLength).toBe(44 + t.byteLength);
+  });
+});
+
+describe("warm session handover", () => {
+  it("never handed over within 1s of its idle close: a new session opens instead", async () => {
+    const aai = make({ warmHoldMs: 1_300 });
+    aai.warm!([], { opened: "panel", client: "browser-r1" });
+    await until(() => sessions.length === 1);
+    await sleep(400); // 900ms left: inside the 1s margin
+    const live = aai.stream([], {}, { opened: "key-down", client: "browser-r1" });
+    live.send(new Uint8Array(3_200));
+    const t = await live.finish();
+    expect(sessions).toHaveLength(2);
+    expect(t.timing?.warm).toBe(false);
+    expect(t.text).toBe("Buy $10 of Palantir.");
+  });
+
+  it("a key going down resets the idle close, so the session it's about to use stays", async () => {
+    const aai = make({ warmHoldMs: 1_300 });
+    aai.warm!([], { opened: "panel", client: "browser-r2" });
+    await until(() => sessions.length === 1);
+    await sleep(400);
+    aai.warm!([], { opened: "key-down", client: "browser-r2" }); // key down: 1.3s again
+    const live = aai.stream([], {}, { opened: "key-down", client: "browser-r2" });
+    live.send(new Uint8Array(3_200));
+    const t = await live.finish();
+    expect(sessions).toHaveLength(1);
+    expect(t.timing?.warm).toBe(true);
+  });
+
+  it("a session already closing is never handed over", async () => {
+    const aai = make({ warmHoldMs: 150 });
+    aai.warm!([], { opened: "panel", client: "browser-r3" });
+    await until(() => sessions.length === 1);
+    await sleep(200); // closed by now
+    const live = aai.stream([], {}, { opened: "key-down", client: "browser-r3" });
+    live.send(new Uint8Array(3_200));
+    expect((await live.finish()).timing?.warm).toBe(false);
+    expect(sessions).toHaveLength(2);
+  });
+});
+
+describe("/voice/stream: no lost turns, never silent, Escape", () => {
+  let port = 0;
+  let stop: () => void = () => {};
+  const ctx = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE, AGENT_PRIVATE_KEY: "", ANTHROPIC_API_KEY: "", VOICE_PROVIDERS: "fake" }), () => {});
+  const lines: string[] = [];
+  const realLog = console.log;
+  beforeAll(async () => {
+    const { app, injectWebSocket } = createServerApp(ctx);
+    const server = serve({ fetch: app.fetch, port: 0 });
+    injectWebSocket(server);
+    await new Promise<void>((r) => server.once("listening", () => r()));
+    port = (server.address() as AddressInfo).port;
+    stop = () => server.close();
+    console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+  });
+  afterAll(() => {
+    console.log = realLog;
+    stop();
+  });
+  beforeEach(() => {
+    lines.length = 0;
+  });
+
+  type Msg = { type: string; text?: string; provider?: string; heard?: boolean };
+  const connect = async (query = "") => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/voice/stream${query}`);
+    const got: Msg[] = [];
+    ws.addEventListener("message", (m) => got.push(JSON.parse(String(m.data)) as Msg));
+    await new Promise((r) => ws.addEventListener("open", r));
+    return { ws, got, transcript: () => got.find((m) => m.type === "transcript") };
+  };
+  const say = async (ws: WebSocket, pcm: Uint8Array) => {
+    for (let at = 0; at < pcm.byteLength; at += 1_280) ws.send(pcm.subarray(at, at + 1_280));
+    await sleep(60);
+  };
+  const turnLine = () => lines.find((l) => l.startsWith("[voice] turn:")) ?? "";
+
+  it("AssemblyAI answers with nothing although there was speech: the turn goes to Deepgram's upload path, once", async () => {
+    behaviour.answerEmpty = true;
+    const dg = fakeDeepgram();
+    ctx.voice.stt = withSttFallback(make(), dg, { log: () => {} });
+    const { ws, transcript } = await connect("?client=browser-u1");
+    await say(ws, tone(800, 0.3));
+    ws.send(JSON.stringify({ type: "stop" }));
+    await until(() => Boolean(transcript()));
+    expect(transcript()).toMatchObject({ text: "buy ten dollars of Palantir", provider: "deepgram upload", heard: true });
+    expect(dg.uploads).toEqual([44 + 25_600]);
+    expect(dg.streams).toBe(0); // never a stream alongside
+    // One line for the turn: what came in, what went out, how loud, the session, how it ended. No words.
+    expect(turnLine()).toMatch(/^\[voice\] turn: release \| 0\.80s audio, 25600 bytes in, 25600 to assemblyai \| level peak -10 avg -13 dBFS, speech 800ms \| session new \| assemblyai: .*0 chars -> upload fallback: 27 chars/);
+    expect(lines.join("\n")).not.toMatch(/Palantir/);
+  });
+
+  it("silent audio (the microphone gave nothing): no upload, and the transcript says nothing was heard", async () => {
+    behaviour.answerEmpty = true;
+    const dg = fakeDeepgram();
+    ctx.voice.stt = withSttFallback(make(), dg, { log: () => {} });
+    const { ws, transcript } = await connect();
+    await say(ws, tone(800, 0));
+    ws.send(JSON.stringify({ type: "stop" }));
+    await until(() => Boolean(transcript()));
+    expect(transcript()).toMatchObject({ text: "", heard: false });
+    expect(dg.uploads).toEqual([]);
+    expect(turnLine()).toMatch(/level peak -120 avg -120 dBFS, speech 0ms/);
+  });
+
+  it("AssemblyAI never opens (3s): the buffered audio goes to the upload path once, no Deepgram stream", async () => {
+    behaviour.open = "silent";
+    const dg = fakeDeepgram();
+    ctx.voice.stt = withSttFallback(make({ beginTimeoutMs: 200 }), dg, { log: () => {} });
+    const { ws, transcript } = await connect();
+    await say(ws, tone(600, 0.3));
+    await sleep(250);
+    ws.send(JSON.stringify({ type: "stop" }));
+    await until(() => Boolean(transcript()));
+    expect(transcript()).toMatchObject({ text: "buy ten dollars of Palantir", provider: "deepgram upload" });
+    expect(dg.uploads).toHaveLength(1);
+    expect(dg.streams).toBe(0);
+    expect(turnLine()).toMatch(/session new, never opened \| assemblyai failed \(AssemblyAI didn't open a session within 200ms\) -> upload fallback: 27 chars/);
+  });
+
+  it("Escape mid-turn: cancel closes the provider session cleanly and nothing more comes back", async () => {
+    const dg = fakeDeepgram();
+    ctx.voice.stt = withSttFallback(make(), dg, { log: () => {} });
+    const { ws, got } = await connect();
+    await say(ws, tone(400, 0.3));
+    await until(() => sessions.length === 1);
+    ws.send(JSON.stringify({ type: "cancel" }));
+    await until(() => sessions[0]!.messages.some((m) => m.type === "Terminate"));
+    await sleep(100);
+    expect(got.filter((m) => m.type === "transcript")).toEqual([]);
+    expect(dg.uploads).toEqual([]);
+    expect(turnLine()).toMatch(/^\[voice\] turn: cancelled .*\| dropped$/);
+  });
+
+  it("Escape after the release, while the answer is on its way: no transcript is sent, and no upload", async () => {
+    behaviour.answerEmpty = true;
+    const dg = fakeDeepgram();
+    ctx.voice.stt = withSttFallback(make(), dg, { log: () => {} });
+    const { ws, got } = await connect();
+    await say(ws, tone(400, 0.3));
+    ws.send(JSON.stringify({ type: "stop" }));
+    ws.send(JSON.stringify({ type: "cancel" }));
+    await sleep(300);
+    expect(got.filter((m) => m.type === "transcript")).toEqual([]);
+    expect(dg.uploads).toEqual([]);
   });
 });

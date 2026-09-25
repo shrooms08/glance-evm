@@ -71,6 +71,7 @@ export type VoiceCode =
   | "ended-early" // it started, then stopped on its own with nothing heard
   | "no-start" // recognition never started within START_TIMEOUT_MS
   | "stop-timeout" // it never answered a stop within STOP_TIMEOUT_MS
+  | "not-heard" // the turn ended with nothing heard after the key was held at least 0.6s (shown and said)
   | string;
 
 /** The five kinds of failure the panel distinguishes (plus "other"). */
@@ -96,6 +97,7 @@ export function failureKind(code: VoiceCode): VoiceFailureKind {
     case "audio-capture":
       return "no-mic";
     case "no-speech":
+    case "not-heard":
       return "no-speech";
     case "aborted":
       return "aborted";

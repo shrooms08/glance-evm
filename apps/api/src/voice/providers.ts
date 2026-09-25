@@ -75,9 +75,22 @@ export interface StreamHooks {
   onFail?(err: ProviderError): void;
 }
 
+/** What a stream did with the turn's audio, for the per-turn log line (never the words). */
+export interface StreamStats {
+  provider: string;
+  /** Audio bytes that went out to the provider. */
+  sentBytes: number;
+  /** Whether a session opened ahead of time (or a warm connection) was used, and how old it was when taken. */
+  reused: boolean;
+  sessionAgeMs: number | null;
+  /** The provider's session had opened (AssemblyAI's Begin). */
+  began?: boolean;
+}
+
 export interface LiveTranscription {
   /** Whether this stream detects the end of a turn by itself (AssemblyAI does; Deepgram, as we use it, doesn't). */
   readonly turnDetection?: boolean;
+  stats?(): StreamStats;
   /** Audio as it is recorded (containerised webm/opus straight from MediaRecorder is fine). */
   send(chunk: Uint8Array): void;
   /** The user let go: flush and return the transcript. */
@@ -512,6 +525,7 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
         },
       );
       let flushed = reused;
+      let sentBytes = 0;
       void conn.opened.then((ok) => {
         flushed = true;
         if (!ok) {
@@ -523,7 +537,10 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
           return;
         }
         burstS = pending.reduce((n, c) => n + c.byteLength, 0) / (2 * STREAM_SAMPLE_RATE);
-        for (const c of pending.splice(0)) conn.sendAudio(c);
+        for (const c of pending.splice(0)) {
+          conn.sendAudio(c);
+          sentBytes += c.byteLength;
+        }
         if (finishing) waitForBacklogThenFinalize();
       });
 
@@ -541,11 +558,14 @@ export function deepgram(opts: DeepgramOptions): Transcriber {
 
       return {
         turnDetection: false,
+        stats: () => ({ provider: "deepgram", sentBytes, reused, sessionAgeMs: null }),
         send(chunk) {
           if (failed || done) return;
           // Keep order: while buffered audio is still waiting to go out, new audio waits behind it.
-          if (conn.open && pending.length === 0 && flushed) conn.sendAudio(chunk);
-          else pending.push(chunk);
+          if (conn.open && pending.length === 0 && flushed) {
+            conn.sendAudio(chunk);
+            sentBytes += chunk.byteLength;
+          } else pending.push(chunk);
         },
         finish() {
           return new Promise<Transcript>((resolve, reject) => {
@@ -714,7 +734,9 @@ export function withSttFallback(primary: Transcriber, secondary: Transcriber | n
       let switched = false;
       let current: LiveTranscription;
       const toSecondary = (err: ProviderError): boolean => {
-        if (switched || !secondary) return false;
+        // AssemblyAI never opened (no Begin in time): no replay into a live Deepgram stream. The turn's audio goes to
+        // Deepgram's upload path once, after the release (the /voice/stream route does it: one fallback per turn).
+        if (switched || !secondary || err.kind === "timeout") return false;
         switched = true;
         log(`[voice] transcription: ${primary.name} ${fallReason(err)} (${err.message}), falling through to ${secondary.name} (${secondary.model}) with ${(audio.reduce((n, c) => n + c.byteLength, 0) / (2 * STREAM_SAMPLE_RATE)).toFixed(1)}s of audio`);
         current.abort();
@@ -737,6 +759,7 @@ export function withSttFallback(primary: Transcriber, secondary: Transcriber | n
         get turnDetection() {
           return Boolean(current.turnDetection);
         },
+        stats: () => current.stats?.() ?? { provider: switched ? secondary!.name : primary.name, sentBytes: 0, reused: false, sessionAgeMs: null },
         send(chunk) {
           audio.push(chunk);
           current.send(chunk);

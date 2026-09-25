@@ -26,6 +26,8 @@ import { warmAnthropic } from "../anthropicHttp.js";
 import { VOICE_RESTING } from "@glance/core/session";
 import { VoiceRestingError } from "./dailyCaps.js";
 import { buildKeyterms, sessionKeyterms } from "@glance/core/keyterms";
+import type { StreamStats, Transcript } from "./providers.js";
+import { TurnAudio } from "./turnAudio.js";
 
 /** Conversation mode with a provider that doesn't end turns itself (the Deepgram fallback): this much quiet ends one. */
 export const CONVERSATION_QUIET_MS = 1_200;
@@ -38,6 +40,8 @@ const MAX_STREAM_MS = MAX_AUDIO_SECONDS * 1_000;
 /** An uploaded recording (WAV, 44-byte header): 30 seconds at most. */
 const MAX_AUDIO_BYTES = MAX_AUDIO_SECONDS * PCM_BYTES_PER_SECOND + 44;
 const MAX_STREAM_BYTES = MAX_AUDIO_SECONDS * PCM_BYTES_PER_SECOND;
+/** The upload fallback gets this long (the extension waits 7s for the whole transcript). */
+const UPLOAD_FALLBACK_MS = 3_500;
 
 /** A capped speaker refused: the day's speech is used up. Anything else is rethrown as it was. */
 const restingOr = (err: unknown): never => {
@@ -350,10 +354,14 @@ export function registerVoice(
       upgradeWebSocket((c) => {
         const allowed = originAllowed(ctx, c.req.header("origin"));
         let live: ReturnType<NonNullable<typeof v.stt>["stream"]> | null = null;
-        let bytes = 0;
+        /** The turn's audio as it arrived, from the first byte (for the upload fallback and the per-turn line). */
+        const turn = new TurnAudio();
         let timer: ReturnType<typeof setTimeout> | undefined;
         let rewarm: ReturnType<typeof setInterval> | undefined;
         let quiet: ReturnType<typeof setTimeout> | undefined;
+        /** Escape (or the page going away) before the transcript: the turn is dropped, nothing more is sent or done. */
+        let cancelled = false;
+        let finishing = false;
         // Conversation mode: one tap starts listening, and the end of the speaker's turn sends the utterance (no release).
         const conversation = c.req.query("mode") === "conversation";
         // The session's own words (the user's basket names), as JSON: validated, and only ever added to the list.
@@ -363,6 +371,20 @@ export function registerVoice(
         } catch {
           extra = [];
         }
+        const words = () => keyterms(ctx, extra);
+        const stopTimers = () => {
+          clearTimeout(timer);
+          clearTimeout(quiet);
+          clearInterval(rewarm);
+        };
+        /** One line per turn: what arrived, what reached the provider, how loud it was, and how the turn ended. */
+        const logTurn = (ended: string, stats: StreamStats | undefined, result: string) => {
+          const l = turn.levels;
+          const session = stats ? (stats.reused ? `reused${stats.sessionAgeMs !== null ? `, ${stats.sessionAgeMs}ms old` : ""}` : "new") + (stats.began === false ? ", never opened" : "") : "none";
+          console.log(
+            `[voice] turn: ${ended} | ${turn.seconds.toFixed(2)}s audio, ${turn.bytes} bytes in, ${stats?.sentBytes ?? 0} to ${stats?.provider ?? v.stt?.name ?? "none"} | level peak ${l.peakDbfs} avg ${l.avgDbfs} dBFS, speech ${l.speechMs}ms | session ${session} | ${result}`,
+          );
+        };
         return {
           onOpen(_e, ws) {
             if (!allowed) return ws.close(1008, "origin not allowed");
@@ -378,33 +400,37 @@ export function registerVoice(
             }
             const socket = ws;
             const meta = { opened: conversation ? ("conversation" as const) : ("key-down" as const), client: clientId(c.req.query("client")) };
-            live = v.stt.stream(keyterms(ctx, extra), {
-              // The words so far, for the panel's live transcript (sent to this browser only; never logged).
-              onPartial: (text) => {
-                try {
-                  socket.send(JSON.stringify({ type: "partial", text }));
-                } catch {
-                  // closed
-                }
-                // A provider that doesn't end turns itself (the Deepgram fallback): a quiet spell ends the turn.
-                if (conversation && live && !live.turnDetection && text.trim()) {
-                  clearTimeout(quiet);
-                  quiet = setTimeout(() => void finish(socket, "end-of-turn"), CONVERSATION_QUIET_MS);
-                }
+            live = v.stt.stream(
+              words(),
+              {
+                // The words so far, for the panel's live transcript (sent to this browser only; never logged).
+                onPartial: (text) => {
+                  if (cancelled) return;
+                  try {
+                    socket.send(JSON.stringify({ type: "partial", text }));
+                  } catch {
+                    // closed
+                  }
+                  // A provider that doesn't end turns itself (the Deepgram fallback): a quiet spell ends the turn.
+                  if (conversation && live && !live.turnDetection && text.trim()) {
+                    clearTimeout(quiet);
+                    quiet = setTimeout(() => void finish(socket, "end-of-turn"), CONVERSATION_QUIET_MS);
+                  }
+                },
+                onEndOfTurn: () => {
+                  if (conversation) void finish(socket, "end-of-turn");
+                },
               },
-              onEndOfTurn: () => {
-                if (conversation) void finish(socket, "end-of-turn");
-              },
-            }, meta);
+              meta,
+            );
             // The reply will need the speech provider soon: open its connection while the user is still speaking, and
             // keep it open through a long hold (the provider's edge drops idle connections after about 5s).
             v.prewarmSpeech();
             rewarm = setInterval(() => v.prewarmSpeech(), 3_000);
             // 30 seconds at most: then it's finished as if the key were released (the words so far are kept).
-            timer = setTimeout(() => void finish(ws), MAX_STREAM_MS);
+            timer = setTimeout(() => void finish(ws, "30s cap"), MAX_STREAM_MS);
           },
           async onMessage(e, ws) {
-            if (!live) return;
             if (typeof e.data === "string") {
               let msg: { type?: string } = {};
               try {
@@ -412,45 +438,88 @@ export function registerVoice(
               } catch {
                 return;
               }
-              if (msg.type !== "stop") return;
+              // Escape: drop the turn. The provider's session is closed cleanly; no transcript, no fallback.
+              if (msg.type === "cancel") return cancel(ws);
+              if (msg.type !== "stop" || !live) return;
               return finish(ws);
             }
+            if (!live || cancelled) return;
             const chunk = e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : new Uint8Array(e.data as unknown as ArrayBufferLike);
             // Past 30 seconds of audio: the rest is dropped (the timer finishes the transcript).
-            if (bytes + chunk.byteLength > MAX_STREAM_BYTES) return;
-            bytes += chunk.byteLength;
+            if (turn.bytes + chunk.byteLength > MAX_STREAM_BYTES) return;
+            turn.add(chunk);
             live.send(chunk);
           },
           onClose() {
-            clearTimeout(timer);
-            clearTimeout(quiet);
-            clearInterval(rewarm);
-            live?.abort();
-            live = null;
+            stopTimers();
+            // Gone before its transcript (the page closed, or Escape): nothing more for this turn.
+            if (live || finishing) cancel(null);
           },
         };
-        async function finish(ws: { send(data: string): void; close(code?: number, reason?: string): void }, why: "release" | "end-of-turn" = "release") {
+        function cancel(ws: { close(code?: number, reason?: string): void } | null) {
+          if (cancelled) return;
+          cancelled = true;
+          stopTimers();
           const stream = live;
-          if (!stream) return;
+          live = null;
+          if (stream) {
+            logTurn("cancelled", stream.stats?.(), "dropped");
+            stream.abort();
+          } else logTurn("cancelled while finishing", undefined, "dropped");
+          try {
+            ws?.close(1000);
+          } catch {
+            // closed
+          }
+        }
+        async function finish(ws: { send(data: string): void; close(code?: number, reason?: string): void }, why: "release" | "end-of-turn" | "30s cap" = "release") {
+          const stream = live;
+          if (!stream || cancelled) return;
           live = null; // once only: the key's release, the end of a turn and the 30-second timer may all get here
-          clearTimeout(timer);
-          clearTimeout(quiet);
-          clearInterval(rewarm);
+          finishing = true;
+          stopTimers();
           // The seconds actually sent to the provider count against today's cap.
-          v.meters?.stt.add(bytes / PCM_BYTES_PER_SECOND);
+          v.meters?.stt.add(turn.seconds);
           const stoppedAt = performance.now();
+          let text = "";
+          let confidence = 0;
+          let timing: Transcript["timing"];
+          let provider = v.stt?.name;
+          let outcome: string;
           try {
             const t = await stream.finish();
-            const ms = Math.round(performance.now() - stoppedAt);
-            const tm = t.timing;
-            // Where the time went (timings only: the words stay out of the logs).
-            console.log(
-              `[voice] transcription (${t.provider ?? v.stt?.name}${why === "end-of-turn" ? ", end of turn" : ""}): connect ${tm?.warm ? "0ms (warm connection reused)" : `${tm?.connectMs ?? "?"}ms (new connection, during speech)`}, release to final ${tm?.releaseToFinalMs ?? ms}ms, ${t.text.length} chars`,
-            );
-            ws.send(JSON.stringify({ type: "transcript", text: t.text, confidence: t.confidence, ms, timing: tm, provider: t.provider ?? v.stt?.name, endOfTurn: why === "end-of-turn" }));
+            ({ text, confidence, timing } = t);
+            provider = t.provider ?? provider;
+            outcome = `${provider}: connect ${timing?.warm ? "0ms (reused)" : `${timing?.connectMs ?? "?"}ms`}, release to final ${timing?.releaseToFinalMs ?? Math.round(performance.now() - stoppedAt)}ms, ${text.length} chars`;
           } catch (err) {
-            ws.send(JSON.stringify({ type: "error", code: "TRANSCRIPTION_FAILED", message: (err as Error).message }));
+            outcome = `${provider} failed (${(err as Error).message})`;
           }
+          const stats = stream.stats?.();
+          if (cancelled) return;
+          // Nothing came back, but there was speech in the audio (or the stream failed): the turn's audio goes to the
+          // upload path once. Never alongside a working stream: only after it has answered.
+          if (!text.trim() && turn.hadSpeech && v.stt) {
+            const t0 = performance.now();
+            try {
+              v.meters?.stt.add(turn.seconds);
+              const up = await Promise.race([
+                v.stt.transcribe(turn.wav(), "audio/wav", words()),
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`no answer in ${UPLOAD_FALLBACK_MS}ms`)), UPLOAD_FALLBACK_MS)),
+              ]);
+              text = up.text;
+              confidence = up.confidence;
+              provider = "deepgram upload";
+              outcome += ` -> upload fallback: ${text.length} chars in ${Math.round(performance.now() - t0)}ms`;
+            } catch (err) {
+              outcome += ` -> upload fallback failed (${(err as Error).message})`;
+            }
+            if (cancelled) return;
+          }
+          logTurn(why, stats, outcome);
+          finishing = false; // answered: the close that follows isn't a cancel
+          const ms = Math.round(performance.now() - stoppedAt);
+          // Always a transcript (possibly empty): the extension says "Didn't catch that" rather than uploading again.
+          ws.send(JSON.stringify({ type: "transcript", text, confidence, ms, timing, provider, endOfTurn: why === "end-of-turn", heard: Boolean(text.trim()) }));
           ws.close(1000);
         }
       }),
