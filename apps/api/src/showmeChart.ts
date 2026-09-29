@@ -71,34 +71,55 @@ export function summarize(data: ChartData, name: string, news: ChartSummary["new
 export const MOVEMENT =
   /\b(chart|graph|move|moved|moving|drop|dropped|dropping|fell|fall|falling|rose|rise|rising|jump|jumped|rally|rallied|slid|slide|plunge|plunged|surge|surged|climb|climbed|high|low|peak|bottom|price|trend|week|today|month|down|up|do|did|doing|done|perform|performed|drawdown|bumpy|volatile|volatility|swing|swings|bought|since)\b/i;
 
+type PageChartInput = { symbol: string; range: ChartRange; drawOn?: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean };
+
+/** The one log line for a chart answer: which chart it's on (the page's, calibrated how; the overlay; Glance's own) and why. */
+export function chartPathLog(pageChart: PageChartInput | null | undefined, chosen: { symbol: string; range: ChartRange; source: string } | null, why: string): string {
+  if (!chosen) return `[chart] no chart data (${why})`;
+  const what = `${chosen.symbol} ${chosen.range}, ${chosen.source} prices`;
+  if (pageChart?.drawOn === "page") return `[chart] ${what}: page chart via ${pageChart.method === "dom" ? "DOM labels" : "vision"} (${pageChart.reason ?? "calibrated"})`;
+  if (pageChart?.drawOn === "lens") return `[chart] ${what}: Glance overlay (${pageChart.forced ? "asked for" : (pageChart.reason ?? "the page's chart couldn't be read")})`;
+  return `[chart] ${what}: Glance's own chart (${why})`;
+}
+
 /**
- * The charts to summarize for this question: the one already open (with its range), else a stock the question names
- * when it's about price movement. Never more than one.
+ * The charts to summarize for this question: the page's chart (any US stock, on the page's own range), else the one
+ * already open (with its range), else a catalog stock the question names when it's about price movement. Never more
+ * than one. Catalog stocks on Glance's ranges use their Chainlink history; anything else, the market's candles.
  */
 export async function chartContextFor(
   ctx: AppContext,
-  input: { question: string; openChart?: { symbol: string; range: ChartRange } | null; vault?: string; pageChart?: { symbol: string; range: ChartRange } | null },
+  input: { question: string; openChart?: { symbol: string; range: ChartRange } | null; vault?: string; pageChart?: PageChartInput | null },
+  log: (line: string) => void = (l) => console.log(l),
 ): Promise<{ charts: ChartSummary[]; facts: ChartFacts[] }> {
-  // A chart on the page (the chart lens) is the chart the question is about: its stock and range, as the extension read them.
-  if (input.pageChart && ctx.catalog.bySymbol.has(input.pageChart.symbol)) input = { ...input, openChart: input.pageChart, question: `${input.question} ${input.pageChart.range === "1D" ? "today" : input.pageChart.range === "1M" ? "this month" : ""}` };
   let symbol: string | null = null;
   let range: ChartRange = rangeFor(input.question);
+  let why = "";
   const named = findCompanies(input.question, ctx.catalog.entries);
-  if (input.openChart && ctx.catalog.bySymbol.has(input.openChart.symbol) && (named.length === 0 || named[0] === input.openChart.symbol)) {
+  if (input.pageChart) {
+    // The chart on the page is the one the question is about: its stock and the page's own timeframe decide.
+    symbol = input.pageChart.symbol.toUpperCase();
+    range = input.pageChart.range;
+    why = "the chart on the page";
+  } else if (input.openChart && ctx.catalog.bySymbol.has(input.openChart.symbol) && (named.length === 0 || named[0] === input.openChart.symbol)) {
     symbol = input.openChart.symbol;
     if (!/\b(today|week|month)\b/i.test(input.question)) range = input.openChart.range;
+    why = "the chart that's open";
   } else if (named.length === 1 && MOVEMENT.test(input.question)) {
     symbol = named[0]!;
+    why = `the question names ${symbol}`;
   }
   if (!symbol) return { charts: [], facts: [] };
   try {
     const vault = input.vault as Address | undefined;
     const data = await chartView(ctx, symbol, range, vault);
     const news = (ctx.why.summaries.get(symbol)?.value.sources ?? []).slice(0, 5).map((s) => ({ title: s.title, site: s.site, publishedAt: s.publishedAt }));
-    const s = summarize(data, ctx.catalog.bySymbol.get(symbol)?.name ?? symbol, news);
     const f = factsFor(ctx, data, vault);
+    const s = summarize(data, f?.name ?? ctx.catalog.bySymbol.get(symbol)?.name ?? symbol, news);
+    log(chartPathLog(input.pageChart, { symbol, range, source: data.source.label }, why));
     return { charts: s ? [s] : [], facts: f ? [f] : [] };
-  } catch {
+  } catch (err) {
+    log(chartPathLog(input.pageChart, null, `${symbol} ${range}: ${(err as Error).message}`));
     return { charts: [], facts: [] }; // no chart data: the answer goes ahead without chart tags
   }
 }
@@ -165,6 +186,11 @@ export function factsBlock(f: ChartFacts): string {
     m("max drawdown (peak to trough)", f.maxDrawdown),
     `latest against the high (how far it is from the peak now): ${f.fromHigh.abs === 0 ? "the latest price is the high" : signed(f.fromHigh.abs, f.fromHigh.pct)}`,
     `how bumpy: ${pct(f.bumpiness.stdevPct)} typical move between prices (${f.bumpiness.label})`,
+    f.bounces.length
+      ? `bounces (a low the price then rose clearly from; for "where did it bounce"): ${f.bounces.map((x) => `up ${pct(x.pct)} (${usd(x.abs)}) from ${usd(x.from.price)} ${when(x.from.t)} to ${usd(x.to.price)} ${when(x.to.t)}`).join("; ")}`
+      : "bounces: none clear in this range",
+    `trend (a straight line through every price): ${f.trend.direction === "flat" ? "flat" : `${f.trend.direction} ${pct(f.trend.pct)}`}, from ${usd(f.trend.from.price)} ${when(f.trend.from.t)} to ${usd(f.trend.to.price)} ${when(f.trend.to.t)}`,
+    `prices from: ${f.source}`,
     `in time order: ${inOrder(f)}`,
     f.closed.length
       ? `market closed (no new prices): ${f.closed.map((c) => `${c.hours} hours from ${when(c.from)} ${c.ongoing ? "until now" : `to ${when(c.to)}`}`).join("; ")}`

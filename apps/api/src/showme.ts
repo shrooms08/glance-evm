@@ -19,6 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropicFetch } from "./anthropicHttp.js";
 import { relevantText, RELEVANT_MAX_CHARS } from "./showmeContext.js";
 
+import type { ChartRange } from "@glance/core/chart";
 import { GLANCE_FACTS, LINES, PERSONA } from "@glance/core/persona";
 import {
   capDrawings,
@@ -77,7 +78,7 @@ export interface ShowMeInput {
   question: string;
   page?: { title?: string; host?: string; selection?: string; text?: string; companies?: string[]; figures?: PageFigure[] };
   /** A Glance chart that's open in the panel right now. */
-  openChart?: { symbol: string; range: "1D" | "1W" | "1M" } | null;
+  openChart?: { symbol: string; range: ChartRange } | null;
   /** Filled by the route: summaries of the chart to draw on (src/showmeChart.ts). */
   charts?: ChartSummary[];
   /** "console": the page is the Glance console, so walkthroughs can point at its real buttons. */
@@ -93,7 +94,11 @@ export interface ShowMeInput {
   /** The question was about a chart or an image on the page, and no screenshot could be taken (no activeTab yet). */
   noScreenshot?: { glanceKey: string } | null;
   /** The chart lens: a chart on the page, and whether the marks go on it (calibrated) or on the Glance lens. */
-  pageChart?: { symbol: string; range: "1D" | "1W" | "1M"; site: string; drawOn: "page" | "lens" } | null;
+  /**
+   * The chart on the page this answer is about: where its marks go (calibrated on the page's chart, or the Glance
+   * overlay), how it was calibrated and why, and whether the overlay was asked for (else it's a fallback, said so).
+   */
+  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean } | null;
 }
 
 export interface ShowMeAnswer {
@@ -103,7 +108,7 @@ export interface ShowMeAnswer {
   actions: ShowAction[];
   source: "claude" | "budget" | "guarded" | "unavailable";
   /** The chart to open (and the range that fits the question), when the reply draws on one. */
-  chart?: { symbol: string; range: "1D" | "1W" | "1M" };
+  chart?: { symbol: string; range: ChartRange };
 }
 
 /** One streamed sentence: what to say, and the actions it carries (at offsets within this sentence). */
@@ -112,7 +117,7 @@ export interface ShowMeSentence {
   spoken: string;
   actions: ShowAction[];
   /** On the sentence that opens a chart: the chart and its range. */
-  chart?: { symbol: string; range: "1D" | "1W" | "1M" };
+  chart?: { symbol: string; range: ChartRange };
 }
 
 export type ShowMeEvent = { type: "sentence"; sentence: ShowMeSentence } | { type: "done"; source: ShowMeAnswer["source"] };
@@ -223,6 +228,22 @@ export function showMeUserText(input: ShowMeInput): string {
  * Grounding for a chart answer, one raw sentence (tags included) at a time: "drop" when it says a number that isn't one
  * of the facts (or spells an amount out), "no-news" when it claims a cause with no cached source to cite.
  */
+/** The marks go on Glance's overlay because the page's chart couldn't be read (not asked for): said first, once. */
+export function overlayNote(input: Pick<ShowMeInput, "pageChart">): string | null {
+  return input.pageChart?.drawOn === "lens" && !input.pageChart.forced ? LINES.cantReadChart : null;
+}
+
+/** Drawn on the page's own chart: whose prices the answer used ("Chainlink's", "Yahoo Finance's"). */
+export function pricesNote(input: Pick<ShowMeInput, "facts">): string {
+  return LINES.pricesDiffer(input.facts?.[0]?.source ?? "Chainlink");
+}
+
+/** The symbols an answer may tag: the catalog's, and the chart this answer is about (any US stock on a page). */
+export function symbolsFor(input: Pick<ShowMeInput, "charts" | "facts">, catalog: ReadonlySet<string>): ReadonlySet<string> {
+  const extra = [...(input.charts ?? []).map((c) => c.symbol), ...(input.facts ?? []).map((f) => f.symbol)];
+  return extra.every((x) => catalog.has(x)) ? catalog : new Set([...catalog, ...extra]);
+}
+
 export function groundRaw(raw: string, input: Pick<ShowMeInput, "facts" | "charts">, symbols: ReadonlySet<string>, alsoAllowed: readonly number[] = []): "keep" | "drop" | "no-news" {
   const facts = input.facts ?? [];
   if (facts.length === 0) return "keep";
@@ -258,7 +279,7 @@ export function wholeSentences(pieces: readonly string[]): string[] {
 }
 
 /** The facts' own sentences (the one that answers the question first), opening the chart: said when grounding leaves no answer. */
-function factsFallback(facts: readonly ChartFacts[], question: string): { spoken: string; actions: ShowAction[]; chart: { symbol: string; range: "1D" | "1W" | "1M" } } | null {
+function factsFallback(facts: readonly ChartFacts[], question: string): { spoken: string; actions: ShowAction[]; chart: { symbol: string; range: ChartRange } } | null {
   const f = facts[0];
   if (!f) return null;
   const spoken = factSentences(f, question).join(" ");
@@ -287,7 +308,7 @@ export function createShowMe(o: {
   if (!o.apiKey && !o.client) return null;
   const log = o.log ?? ((l: string) => console.log(l));
   const client: MessagesClient = o.client ?? new Anthropic({ apiKey: o.apiKey, timeout: 15_000, maxRetries: 0, fetch: anthropicFetch });
-  const symbols = new Set(o.symbols);
+  const catalogSymbols = new Set(o.symbols);
   const system = showMeSystem(o.symbols);
   // A counter, never the text: how many generated sentences grounding has removed since the API started.
   let groundingDrops = 0;
@@ -305,6 +326,7 @@ export function createShowMe(o: {
 
   /** Checks one piece of an answer (a whole reply, or one sentence) with every rule, given what came before it. */
   const checker = (input: ShowMeInput) => {
+    const symbols = symbolsFor(input, catalogSymbols);
     const charts = input.charts ?? [];
     const page = input.page ?? {};
     const pageText = `${page.title ?? ""}\n${page.selection ?? ""}\n${(page.text ?? "").slice(0, SHOWME_MAX_PAGE_CHARS)}`;
@@ -337,8 +359,13 @@ export function createShowMe(o: {
       };
       if (!o.budget.tryAcquire("other")) return say(LINES.outOfThinking, "budget");
       const check = checker(input);
+      const symbols = symbolsFor(input, catalogSymbols);
       const splitter = new SentenceSplitter();
       let i = 0;
+      // "I can't read this chart, so here's mine": first, when the overlay stands in for the page's chart.
+      const lead = overlayNote(input);
+      if (lead) emit({ type: "sentence", sentence: { i: i++, spoken: lead, actions: [] } });
+      const start = i;
       let stopped = false;
       let drops = 0;
       let saidNoNews = false;
@@ -388,7 +415,7 @@ export function createShowMe(o: {
         }
       } catch (err) {
         o.budget.failed(err);
-        if (i === 0) return say(LINES.cantThink, "unavailable");
+        if (i === start) return say(LINES.cantThink, "unavailable", i);
         emit({ type: "done", source: "unavailable" });
         return;
       }
@@ -397,11 +424,11 @@ export function createShowMe(o: {
       logUsage(log, "other/showme", o.model, usage); // purpose, model, tokens: never the page or the question
       dropped(drops);
       // Nothing generated survived grounding: the facts' own sentences instead.
-      const fallback = !stopped && (i === 0 || (saidNoNews && i === 1) || noFigureLeft(drops, keptSpoken)) ? factsFallback(input.facts ?? [], input.question) : null;
+      const fallback = !stopped && (i === start || (saidNoNews && i === start + 1) || noFigureLeft(drops, keptSpoken)) ? factsFallback(input.facts ?? [], input.question) : null;
       if (fallback) emit({ type: "sentence", sentence: { i: i++, ...fallback } });
-      if (i === 0) return say(LINES.cantThink, "unavailable");
-      if (input.pageChart?.drawOn === "page" && !stopped && i > 0) {
-        emit({ type: "sentence", sentence: { i: i++, spoken: LINES.chainlinkDiffers, actions: [] } });
+      if (i === start) return say(LINES.cantThink, "unavailable", i);
+      if (input.pageChart?.drawOn === "page" && !stopped && i > start) {
+        emit({ type: "sentence", sentence: { i: i++, spoken: pricesNote(input), actions: [] } });
       }
       if (input.noScreenshot && (input.facts ?? []).length === 0 && !stopped) {
         emit({ type: "sentence", sentence: { i: i++, spoken: LINES.pressGlanceForChart(input.noScreenshot.glanceKey), actions: [] } });
@@ -410,6 +437,10 @@ export function createShowMe(o: {
     },
     async answer(input) {
       if (!o.budget.tryAcquire("other")) return plain(LINES.outOfThinking, "budget");
+      const symbols = symbolsFor(input, catalogSymbols);
+      // "I can't read this chart, so here's mine": first, when the overlay stands in for the page's chart.
+      const lead = overlayNote(input);
+      const withLead = <T extends { reply: string; spoken: string }>(a: T): T => (lead ? { ...a, reply: `${lead} ${a.reply}`, spoken: `${lead} ${a.spoken}` } : a);
       let response;
       try {
         response = await client.messages.create(request(input));
@@ -445,8 +476,8 @@ export function createShowMe(o: {
         const fallback = kept.length === 0 || (noNews && kept.length === 1) || noFigureLeft(drops, kept) ? factsFallback(facts, input.question) : null;
         const saysNoNews = noNews || kept.some((k) => k.includes(LINES.noNewsForMove));
         if (fallback) {
-          const spoken = [fallback.spoken, saysNoNews ? LINES.noNewsForMove : "", input.pageChart?.drawOn === "page" ? LINES.chainlinkDiffers : ""].filter(Boolean).join(" ");
-          return { reply: formatTagged({ spoken, actions: fallback.actions }), spoken, actions: fallback.actions, source: "claude", chart: fallback.chart };
+          const spoken = [fallback.spoken, saysNoNews ? LINES.noNewsForMove : "", input.pageChart?.drawOn === "page" ? pricesNote(input) : ""].filter(Boolean).join(" ");
+          return withLead({ reply: formatTagged({ spoken, actions: fallback.actions }), spoken, actions: fallback.actions, source: "claude" as const, chart: fallback.chart });
         }
       }
       const page = input.page ?? {};
@@ -464,8 +495,8 @@ export function createShowMe(o: {
       const opened = tagged.actions.find((a): a is Extract<ShowAction, { kind: "CHART" }> => a.kind === "CHART");
       const chart = opened ? { symbol: opened.symbol, range: charts.find((c) => c.symbol === opened.symbol)?.range ?? rangeFor(input.question) } : undefined;
       if (input.noScreenshot && facts.length === 0) tagged = { ...tagged, spoken: `${tagged.spoken} ${LINES.pressGlanceForChart(input.noScreenshot.glanceKey)}` };
-      if (input.pageChart?.drawOn === "page") tagged = { ...tagged, spoken: `${tagged.spoken} ${LINES.chainlinkDiffers}` };
-      return { reply: formatTagged(tagged), spoken: tagged.spoken, actions: tagged.actions, source: "claude", ...(chart ? { chart } : {}) };
+      if (input.pageChart?.drawOn === "page") tagged = { ...tagged, spoken: `${tagged.spoken} ${pricesNote(input)}` };
+      return withLead({ reply: formatTagged(tagged), spoken: tagged.spoken, actions: tagged.actions, source: "claude" as const, ...(chart ? { chart } : {}) });
     },
   };
 }

@@ -437,12 +437,28 @@ export function calibrationError(c: Calibration, truth: { price: ReadonlyArray<r
  * a heading ("Tesla, Inc. (TSLA)"), or a lone catalog ticker near the chart. Only catalog symbols count. `confident`
  * when the URL or a heading says so and nothing disagrees.
  */
-export function detectSymbol(input: { url: string; headings: readonly string[]; nearChart: readonly string[]; question?: string[] }, symbols: readonly string[]): { symbol: string | null; confident: boolean; candidates: string[] } {
+/** A US ticker as a page writes it: "NVDA", "BRK.B". */
+export const US_TICKER = /^[A-Z]{1,5}(?:\.[A-Z])?$/;
+/** "NASDAQ:NVDA", "NYSE-KO": an exchange-prefixed ticker, as TradingView and Google Finance write them. */
+const EXCHANGE_TICKER = /\b(?:NASDAQ|NYSE|NYSEARCA|NYSEAMERICAN|AMEX|ARCA|BATS|CBOE|OTC)[:-]([A-Z]{1,5}(?:\.[A-Z])?)\b/g;
+
+/**
+ * Which stock a page's chart shows: the URL (TradingView /symbols/NASDAQ-NVDA/, Yahoo /quote/NVDA, Google
+ * /quote/NVDA:NASDAQ, CNBC /quotes/NVDA), the title and headings ("NASDAQ:NVDA", "(TSLA)"), the text near the chart,
+ * and the question. Catalog tickers count wherever they appear; with `anyTicker`, any US ticker counts too, but only
+ * from the strong signals (the URL, an exchange-prefixed or bracketed ticker), never a bare capitalised word.
+ */
+export function detectSymbol(
+  input: { url: string; headings: readonly string[]; nearChart: readonly string[]; question?: string[] },
+  symbols: readonly string[],
+  opts: { anyTicker?: boolean } = {},
+): { symbol: string | null; confident: boolean; candidates: string[] } {
   const known = new Set(symbols);
   const votes = new Map<string, number>();
-  const vote = (s: string | undefined, w: number) => {
-    const u = s?.toUpperCase();
-    if (u && known.has(u)) votes.set(u, (votes.get(u) ?? 0) + w);
+  const vote = (s: string | undefined, w: number, strong = false) => {
+    if (!s) return;
+    const u = s.toUpperCase();
+    if (known.has(u) || (strong && opts.anyTicker && US_TICKER.test(s))) votes.set(u, (votes.get(u) ?? 0) + w);
   };
   let path = "";
   try {
@@ -450,11 +466,16 @@ export function detectSymbol(input: { url: string; headings: readonly string[]; 
   } catch {
     path = "";
   }
-  const fromUrl = /\/(?:quote|quotes|symbols|stocks?)\/(?:[A-Z]+[-:])?([A-Za-z.]{1,6})(?:[:/-]|$)/i.exec(path);
-  vote(fromUrl?.[1], 5);
-  for (const h of input.headings) for (const m of h.matchAll(/\(([A-Z]{1,6})\)|\b([A-Z]{2,6})\b/g)) vote(m[1] ?? m[2], m[1] ? 4 : 1);
+  // Google Finance writes the ticker first ("/quote/NVDA:NASDAQ"); the others put any exchange first ("NASDAQ-NVDA").
+  const tickerFirst = /\/quote\/([A-Z]{1,5}(?:\.[A-Z])?):[A-Z]+\b/.exec(path);
+  const fromUrl = tickerFirst ?? /\/(?:quote|quotes|symbols|stocks?)\/(?:[A-Z]+[-:])?([A-Za-z.]{1,6})(?:[:/-]|$)/i.exec(path);
+  vote(fromUrl?.[1], 5, true);
+  for (const h of input.headings) {
+    for (const m of h.matchAll(EXCHANGE_TICKER)) vote(m[1], 4, true);
+    for (const m of h.matchAll(/\(([A-Z]{1,5}(?:\.[A-Z])?)\)|\b([A-Z]{2,6})\b/g)) vote(m[1] ?? m[2], m[1] ? 4 : 1, Boolean(m[1]));
+  }
   for (const t of input.nearChart) for (const m of t.matchAll(/\b([A-Z]{2,6})\b/g)) vote(m[1], 1);
-  for (const s of input.question ?? []) vote(s, 6);
+  for (const s of input.question ?? []) vote(s, 6, true);
   const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
   const top = ranked[0];
   if (!top) return { symbol: null, confident: false, candidates: [] };
@@ -462,22 +483,34 @@ export function detectSymbol(input: { url: string; headings: readonly string[]; 
   return { symbol: top[0], confident: top[1] >= 4 && top[1] >= runnerUp * 2, candidates: ranked.map(([s]) => s) };
 }
 
-/** A range button's words ("1D", "5 days", "1M", "Today") as Glance's range, or "other" (6M, YTD, 1Y...). */
-export function rangeFromButton(text: string): ChartRange | "other" | null {
+/** A range button's words ("1D", "5 days", "6 months", "1 year", "All time") as a chart range. Null for anything else. */
+export function rangeFromButton(text: string): ChartRange | null {
   const t = text.trim().toLowerCase().replace(/\s+/g, " ");
   if (/^(1 ?d|1 day|today|intraday|day)$/.test(t)) return "1D";
   if (/^(5 ?d|5 days|1 ?w|1 week|week|7 ?d)$/.test(t)) return "1W";
   if (/^(1 ?m|1 month|1 mo|month|30 ?d)$/.test(t)) return "1M";
-  if (/^(\d+ ?(m|mo|months?|y|yr|years?)|ytd|max|all|all time|year to date)$/.test(t)) return "other";
+  if (/^(3 ?m|3 months|3 mo)$/.test(t)) return "3M";
+  if (/^(6 ?m|6 months|6 mo)$/.test(t)) return "6M";
+  if (/^(ytd|year to date)$/.test(t)) return "YTD";
+  if (/^(1 ?y|1 year|12 ?m|12 months|1 yr|year)$/.test(t)) return "1Y";
+  if (/^(5 ?y|5 years|5 yr|60 ?m)$/.test(t)) return "5Y";
+  if (/^(10 ?y|10 years|10 yr|120 ?m)$/.test(t)) return "10Y";
+  if (/^(max|all|all time)$/.test(t)) return "ALL";
   return null;
 }
 
-/** The range from the time labels' span, when no button says: under 1.5 days 1D, under 8 1W, under 35 1M. */
-export function rangeFromSpan(seconds: number): ChartRange | "other" {
-  if (seconds <= 1.5 * 86_400) return "1D";
-  if (seconds <= 8 * 86_400) return "1W";
-  if (seconds <= 35 * 86_400) return "1M";
-  return "other";
+/** The range from the time labels' span, when no button says. */
+export function rangeFromSpan(seconds: number): ChartRange {
+  const days = seconds / 86_400;
+  if (days <= 1.5) return "1D";
+  if (days <= 8) return "1W";
+  if (days <= 35) return "1M";
+  if (days <= 100) return "3M";
+  if (days <= 200) return "6M";
+  if (days <= 400) return "1Y";
+  if (days <= 5.5 * 366) return "5Y";
+  if (days <= 11 * 366) return "10Y";
+  return "ALL";
 }
 
 /** The page's source, when it's one we know (for the "Chainlink's prices can differ" line). */

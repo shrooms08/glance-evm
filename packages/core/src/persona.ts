@@ -74,6 +74,13 @@ export const LINES = {
   pressGlanceOnce: (glanceKey = "⌥G") => `Press ${glanceKey} once so I can see this chart.`,
   /** Drawing on someone else's chart: our numbers are Chainlink's, which can differ a little from theirs. */
   chainlinkDiffers: "I'm using Chainlink's prices, which can differ a little from this chart.",
+  /** The same, for whichever source the answer's prices came from ("Yahoo Finance" for a stock outside the catalog). */
+  pricesDiffer: (source: string) => (source === "Chainlink" ? "I'm using Chainlink's prices, which can differ a little from this chart." : `I'm using ${source}'s prices, which can differ a little from this chart.`),
+  /** The page's chart couldn't be read, so Glance's own chart is laid over it (said once, first). */
+  cantReadChart: "I can't read this chart, so here's mine.",
+  /** Explaining works for any US stock; trading only for the vault's approved ones (read from the catalog). */
+  notTradable: (name: string, symbols: readonly string[]) =>
+    `I can explain ${name}, but your vault only trades ${symbols.length > 1 ? `${symbols.slice(0, -1).join(", ")} and ${symbols.at(-1)}` : (symbols[0] ?? "the stocks it approves")}.`,
   /** Show me / teach: the "other" budget ran out for today. */
   outOfThinking: "I'm out of thinking for today, but I can still show prices and charts.",
   /** Show me / teach: the answer tripped the advice guard, so it's replaced by this. */

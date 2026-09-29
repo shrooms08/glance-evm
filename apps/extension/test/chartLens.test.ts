@@ -15,9 +15,11 @@ import type { ChartFacts } from "@glance/core/chart-facts";
 import { calibrate, calibrationError, datedTimes, detectSymbol, fitLine, parsePrice, parseTimeLabel, parseVisionLabels, rangeFromButton, rangeFromSpan, sanityCheck, timeToPx, type AxisLabel, type Box, type Calibration } from "@glance/core/page-chart";
 
 import { chartMarkGeometry, priceLookup } from "../lib/chartMarks";
-import { ChartLens, LENS_LABEL } from "../lib/chartLens";
-import { CALIBRATION_TTL_MS, clearCalibrations, preparePageChart, type LensFlowDeps } from "../lib/chartLensFlow";
-import { pickPageChart, readDomLabels, wantsPageChart } from "../lib/pageChart";
+import { ChartLens, LENS_LABEL, lensLabel } from "../lib/chartLens";
+import { CALIBRATION_TTL_MS, chartPathLine, clearCalibrations, preparePageChart, type LensFlowDeps, type Prepared } from "../lib/chartLensFlow";
+import { asksAboutPriceMove, chooseChartRoute, pageStock, pickPageChart, readDomLabels, selectedRange, wantsPageChart } from "../lib/pageChart";
+import { parseCommand } from "../lib/commands";
+import { LINES } from "@glance/core/persona";
 import { ShowDrawings } from "../lib/showDraw";
 
 const DIR = resolve(import.meta.dirname, "fixtures/charts");
@@ -343,10 +345,22 @@ describe("the flow: page chart, lens, or a question first", () => {
     expect(openLens).toHaveBeenCalled();
   });
 
-  it("unsure (a range Glance doesn't have, or no stock): one short question, nothing fetched", async () => {
+  it("the page's own range decides (6 months: six months of prices, no question)", async () => {
     tradingViewLike({ selected: "6 months" });
     const { d } = deps();
-    expect(await preparePageChart(d)).toEqual({ kind: "ask", question: "Glance can show 1 day, 5 days or 1 month. Which chart: TSLA 1 month?", symbol: "TSLA", range: "1W" });
+    await preparePageChart(d);
+    expect(d.chart).toHaveBeenCalledWith("TSLA", "6M");
+    expect(d.facts).toHaveBeenCalledWith("TSLA", "6M");
+  });
+
+  it("no stock on the page or in the question: one short question, nothing fetched", async () => {
+    tradingViewLike();
+    document.title = "Chart";
+    history.replaceState({}, "", "/chart/");
+    document.querySelector("h1")!.textContent = "A chart";
+    document.querySelector("section > span")!.textContent = "Nasdaq Stock Market";
+    const { d } = deps();
+    expect(await preparePageChart(d)).toEqual({ kind: "ask", question: "Which stock is this chart?", symbol: null, range: "1D" });
     expect(d.chart).not.toHaveBeenCalled();
   });
 });
@@ -446,12 +460,128 @@ describe("which chart, which stock, which range", () => {
   });
 
   it("range words, and the span of the time labels when no button says", () => {
-    expect(["1D", "1 day", "5D", "5 days", "1M", "1 month", "6M", "YTD", "Max"].map(rangeFromButton)).toEqual(["1D", "1D", "1W", "1W", "1M", "1M", "other", "other", "other"]);
-    expect([rangeFromSpan(20 * 3600), rangeFromSpan(5 * 86_400), rangeFromSpan(28 * 86_400), rangeFromSpan(180 * 86_400)]).toEqual(["1D", "1W", "1M", "other"]);
+    expect(["1D", "1 day", "5D", "5 days", "1M", "1 month", "3 months", "6M", "6 months", "YTD", "1 year", "5 years", "10 years", "All time", "Max"].map(rangeFromButton)).toEqual([
+      "1D", "1D", "1W", "1W", "1M", "1M", "3M", "6M", "6M", "YTD", "1Y", "5Y", "10Y", "ALL", "ALL",
+    ]);
+    expect(rangeFromButton("Overview")).toBeNull();
+    expect([20 * 3600, 5 * 86_400, 28 * 86_400, 80 * 86_400, 180 * 86_400, 360 * 86_400, 4 * 365 * 86_400, 20 * 365 * 86_400].map(rangeFromSpan)).toEqual(["1D", "1W", "1M", "3M", "6M", "1Y", "5Y", "ALL"]);
   });
 
   it("which questions are about a chart on the page", () => {
     for (const q of ["explain this chart", "show me the dip on this chart", "what happened here?", "what's this spike?"]) expect(wantsPageChart(q)).toBe(true);
     for (const q of ["how did Tesla do this week?", "what's this article saying?"]) expect(wantsPageChart(q)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Any US stock: TradingView's real layout (checked on the live NVDA and TSLA pages, 29 Sep 2026)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * TradingView's symbol page as it really is: the chart inside a container with the same box (both are chart
+ * candidates), its axis labels drawn on canvas (no DOM text), and range buttons whose selected class is hashed and
+ * whose text carries the range's change ("1 day1.68%").
+ */
+function tradingViewReal(ticker = "NVDA", name = "NVIDIA Corporation", selected = "1 day") {
+  document.title = `${name.split(" ")[0]} Stock Price Chart — NASDAQ:${ticker} — TradingView`;
+  history.replaceState({}, "", `/symbols/NASDAQ-${ticker}/`);
+  const ranges = [["1 day", "LASTSESSION"], ["5 days", "5D"], ["1 month", "1M"], ["6 months", "6M"], ["1 year", "12M"], ["5 years", "60M"], ["All time", "ALL"]];
+  const buttons = ranges
+    .map(([label, id]) => `<button data-qa-id="time-range-button-${id}" class="rangeButtonGreen-zQg8sTYo rangeButton-zQg8sTYo${label === selected ? " selected-zQg8sTYo" : ""}"><span class="content-zQg8sTYo"><span>${label}</span><span>1.68%</span></span></button>`)
+    .join("");
+  document.body.innerHTML = `<main><h1>${name}</h1>
+    <div data-rect="40,538,1360,320"><div class="tv-lightweight-charts" data-rect="40,538,1360,320"><canvas data-rect="40,538,1300,300"></canvas><canvas data-rect="1340,538,60,300"></canvas></div></div>
+    <div class="block-fLCQaGQP">${buttons}</div></main>`;
+}
+
+describe("any US stock on a page", () => {
+  it("the stock from TradingView's URL and title, any US ticker (not only the catalog's); bare capitals never count", () => {
+    const d = (url: string, headings: string[], symbols = ["TSLA", "AMD"]) => detectSymbol({ url, headings, nearChart: [] }, symbols, { anyTicker: true });
+    expect(d("https://www.tradingview.com/symbols/NASDAQ-NVDA/", ["Nvidia Stock Price Chart — NASDAQ:NVDA — TradingView"])).toMatchObject({ symbol: "NVDA", confident: true });
+    expect(d("https://www.tradingview.com/chart/", ["Apple Stock Price Chart — NASDAQ:AAPL — TradingView"])).toMatchObject({ symbol: "AAPL", confident: true });
+    expect(d("https://finance.yahoo.com/quote/AAPL/", ["Apple Inc. (AAPL)"])).toMatchObject({ symbol: "AAPL", confident: true });
+    expect(d("https://www.google.com/finance/quote/NVDA:NASDAQ", [])).toMatchObject({ symbol: "NVDA", confident: true });
+    expect(d("https://www.tradingview.com/symbols/NASDAQ-TSLA/", ["TSLA Stock Price — Tesla Chart — TradingView"])).toMatchObject({ symbol: "TSLA", confident: true });
+    // A news page: capitalised words aren't tickers unless they're the catalog's.
+    expect(d("https://news.example/story", ["CEO says USA sales rose"]).symbol).toBeNull();
+    // Without anyTicker (the old behaviour), only the catalog counted: this is why NVDA's chart asked "Which stock?".
+    expect(detectSymbol({ url: "https://www.tradingview.com/symbols/NASDAQ-NVDA/", headings: [], nearChart: [] }, ["TSLA"]).symbol).toBeNull();
+  });
+
+  it("the page's stock and the name people say: NVIDIA, not NVIDIA Corporation", () => {
+    tradingViewReal();
+    expect(pageStock(document, ["TSLA", "AMD"])).toEqual({ symbol: "NVDA", name: "NVIDIA" });
+  });
+
+  it("TradingView's real layout: one chart (not two), its range read from the hashed 'selected' class, no question", () => {
+    tradingViewReal("NVDA", "NVIDIA Corporation", "1 day");
+    const t = pickPageChart(document, window, ["TSLA", "AMD"], null)!;
+    expect(t).toMatchObject({ symbol: "NVDA", range: "1D", alternatives: 0, unsure: null });
+    tradingViewReal("NVDA", "NVIDIA Corporation", "6 months");
+    expect(selectedRange(document.querySelector(".tv-lightweight-charts")!)).toBe("6M");
+  });
+
+  it("NVDA's chart: its own prices for its own range (the extension asks for NVDA 1D), never a catalog stand-in", async () => {
+    tradingViewReal();
+    const chart = vi.fn(async () => null);
+    const facts = vi.fn(async () => null);
+    const prep = await preparePageChart({ doc: document, win: window, symbols: ["TSLA", "AMD"], named: null, capture: async () => null, vision: async () => null, chart, facts, drawings: () => null, openLens: vi.fn() as never });
+    expect(chart).toHaveBeenCalledWith("NVDA", "1D");
+    expect(facts).toHaveBeenCalledWith("NVDA", "1D");
+    expect(prep).toEqual({ kind: "unavailable", message: "I don't have NVDA's prices for that range right now." });
+  });
+});
+
+describe("which chart a question is about, and the one log line", () => {
+  it("'explain this chart' and a price-move question go to the page's chart when it has one", () => {
+    const page = { hasChart: true, pageSymbol: "NVDA", named: null };
+    expect(chooseChartRoute("Explain this chart", page)).toEqual({ route: "page", reason: "the question is about this chart" });
+    // The reported bug: this never reached the page's chart ("this chart" wasn't in it).
+    expect(wantsPageChart("Show me where it bounced this week")).toBe(false);
+    expect(asksAboutPriceMove("Show me where it bounced this week")).toBe(true);
+    expect(chooseChartRoute("Show me where it bounced this week", page)).toEqual({ route: "page", reason: "a price question, with a chart on the page" });
+    expect(chooseChartRoute("how did it do today?", page).route).toBe("page");
+  });
+
+  it("no chart on the page, another stock named, or not a chart question: not the page's chart", () => {
+    expect(chooseChartRoute("Show me where it bounced this week", { hasChart: false, pageSymbol: null, named: null })).toEqual({ route: "glance", reason: "no chart on this page" });
+    expect(chooseChartRoute("where did AMD bounce this week?", { hasChart: true, pageSymbol: "NVDA", named: "AMD" })).toEqual({ route: "glance", reason: "the question names AMD, the page shows NVDA" });
+    expect(chooseChartRoute("what's this article saying?", { hasChart: true, pageSymbol: "NVDA", named: null }).route).toBe("none");
+  });
+
+  it("one line per chart request: the path (DOM labels, vision, the overlay) and why", () => {
+    const ready = (drawOn: "page" | "lens", method: "dom" | "vision" | null, reason: string) =>
+      ({ kind: "ready", symbol: "NVDA", range: "1D", site: "tradingview", drawOn, method, reason, forced: false, annotate: () => {}, lens: null }) as Prepared;
+    const q = "Explain this chart";
+    expect(chartPathLine(ready("page", "dom", "linear time axis; ok"), q)).toBe('[glance] chart "Explain this chart": page chart via DOM labels (NVDA 1D; linear time axis; ok)');
+    expect(chartPathLine(ready("page", "vision", "piecewise time axis; ok"), q)).toBe('[glance] chart "Explain this chart": page chart via vision (NVDA 1D; piecewise time axis; ok)');
+    expect(chartPathLine(ready("lens", null, "today's chart readings are used up"), q)).toBe('[glance] chart "Explain this chart": Glance overlay (NVDA 1D; today\'s chart readings are used up)');
+    expect(chartPathLine({ kind: "none" }, q)).toBe('[glance] chart "Explain this chart": Glance\'s own chart (no chart on this page)');
+    expect(chartPathLine({ kind: "no-screenshot", symbol: "NVDA", range: "1D" }, q)).toContain("no screenshot yet");
+  });
+
+  it("the overlay says where its prices come from", () => {
+    expect(LENS_LABEL).toBe("Glance lens · Chainlink prices");
+    expect(lensLabel("Yahoo Finance")).toBe("Glance lens · Yahoo Finance prices");
+    expect(LINES.cantReadChart).toBe("I can't read this chart, so here's mine.");
+  });
+});
+
+describe("trading a stock outside the catalog, typed", () => {
+  const companies = [
+    { symbol: "TSLA", aliases: ["Tesla"] },
+    { symbol: "AMD", aliases: ["AMD"] },
+  ];
+  const nvda = { symbol: "NVDA", name: "NVIDIA" };
+
+  it("on NVDA's page, 'buy $10 of Nvidia', 'sell this', or a ticker typed in capitals: refused, with the catalog's list", () => {
+    expect(parseCommand("buy $10 of Nvidia", companies, [], nvda)).toEqual({ kind: "notTradable", symbol: "NVDA", name: "NVIDIA" });
+    expect(parseCommand("sell this", companies, [], nvda)).toEqual({ kind: "notTradable", symbol: "NVDA", name: "NVIDIA" });
+    expect(parseCommand("buy $10 of AAPL", companies)).toEqual({ kind: "notTradable", symbol: "AAPL", name: "AAPL" });
+    expect(LINES.notTradable("NVIDIA", ["TSLA", "AMZN", "PLTR", "NFLX", "AMD", "SPY", "QQQ"])).toBe("I can explain NVIDIA, but your vault only trades TSLA, AMZN, PLTR, NFLX, AMD, SPY and QQQ.");
+  });
+
+  it("a catalog stock still trades on the same page", () => {
+    expect(parseCommand("buy $10 of Tesla", companies, [], nvda)).toEqual({ kind: "buy", symbol: "TSLA", amount: "10" });
   });
 });

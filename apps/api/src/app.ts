@@ -9,7 +9,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { formatEther, getAddress, isAddress } from "viem";
-import { CHART_RANGES } from "@glance/core/chart";
+import { ALL_RANGES } from "@glance/core/chart";
 import { LINES } from "@glance/core/persona";
 
 import type { GuardError } from "./errors.js";
@@ -96,13 +96,26 @@ const showMeBody = z
           .optional(),
       })
       .optional(),
-    openChart: z.object({ symbol, range: z.enum(CHART_RANGES) }).nullable().optional(),
+    openChart: z.object({ symbol, range: z.enum(ALL_RANGES) }).nullable().optional(),
     // A downscaled JPEG, base64: the whole request is 64 KB at most, so the extension keeps this under 36 KB.
     screenshot: z.string().max(MAX_JSON_BODY_BYTES).regex(/^[A-Za-z0-9+/=]+$/).optional(),
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
     // The chart lens: a chart on the page, identified by the extension (its stock and range), and where the answer's
     // marks go: onto the page's own chart (calibrated) or onto the Glance lens laid over it.
-    pageChart: z.object({ symbol, range: z.enum(CHART_RANGES), site: z.enum(["tradingview", "yahoo", "google", "cnbc", "other"]), drawOn: z.enum(["page", "lens"]) }).nullable().optional(),
+    // Any US stock (the page's chart need not be the catalog's), on the page's own range, with how it was calibrated
+    // ("dom" labels or "vision"; null on the overlay), why, and whether the overlay was asked for.
+    pageChart: z
+      .object({
+        symbol,
+        range: z.enum(ALL_RANGES),
+        site: z.enum(["tradingview", "yahoo", "google", "cnbc", "other"]),
+        drawOn: z.enum(["page", "lens"]),
+        method: z.enum(["dom", "vision"]).nullable().optional(),
+        reason: z.string().max(200).optional(),
+        forced: z.boolean().optional(),
+      })
+      .nullable()
+      .optional(),
     // For "since your last buy" (the portfolio event cache; no chain read).
     vault: address.optional(),
     // A question about a chart or image on the page with no screenshot possible: the answer says how to allow one.
@@ -117,7 +130,7 @@ const calibrateBody = z
   })
   .strict();
 const sessionQuery = z.object({ vault: address, session: address });
-const chartQuery = z.object({ range: z.enum(CHART_RANGES).default("1D"), vault: address.optional() });
+const chartQuery = z.object({ range: z.enum(ALL_RANGES).default("1D"), vault: address.optional() });
 
 /** "GET /voice/speak?text=Hello 200" -> "GET /voice/speak?… 200": query strings never reach the log. */
 export function redactQuery(line: string): string {

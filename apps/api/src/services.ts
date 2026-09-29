@@ -23,6 +23,7 @@ import { buildPortfolio, findDeployBlock, PortfolioStore, toTradeEvents, VaultEv
 import {
   buildChart,
   cachedQuoteHistory,
+  marketChartData,
   chainlinkReader,
   mainnetClient,
   quoteCacheFile,
@@ -32,7 +33,7 @@ import {
   type FeedReader,
   type QuoteHistory,
 } from "./chart.js";
-import type { ChartRange } from "@glance/core/chart";
+import { isGlanceChartRange, type ChartData, type ChartRange } from "@glance/core/chart";
 import { LINES } from "@glance/core/persona";
 import { usTicker } from "@glance/core/tickers";
 import { TtlCache } from "./ttlCache.js";
@@ -1337,7 +1338,31 @@ export function chartDeps(ctx: AppContext): ChartDeps {
   return deps;
 }
 
-export async function chartView(ctx: AppContext, symbolParam: string, range: ChartRange, vault?: Address) {
+/** A US ticker as Glance accepts one: "NVDA", "BRK.B". */
+const US_TICKER = /^[A-Z]{1,5}(?:\.[A-Z])?$/;
+
+/**
+ * The market's own candles for any US stock (outside the catalog, or on a range longer than Glance's Chainlink
+ * history): Yahoo Finance's public chart endpoint, cached per ticker and range for five minutes. For explaining a chart
+ * only: nothing trades on these prices.
+ */
+export async function marketChartView(ctx: AppContext, symbolParam: string, range: ChartRange, name?: string): Promise<ChartData> {
+  const symbol = symbolParam.toUpperCase();
+  if (!US_TICKER.test(symbol)) throw new ApiError(400, "INVALID_INPUT", `${symbolParam} isn't a US ticker.`);
+  let h: QuoteHistory;
+  try {
+    h = await chartDeps(ctx).quoteHistory(usTicker(symbol) ?? symbol.replace(".", "-"), range);
+  } catch {
+    throw new ApiError(404, "NO_MARKET_DATA", `I can't find ${symbol}'s prices right now.`);
+  }
+  return marketChartData(symbol, range, h, Math.floor(Date.now() / 1000), name);
+}
+
+export async function chartView(ctx: AppContext, symbolParam: string, range: ChartRange, vault?: Address): Promise<ChartData> {
+  const known = ctx.catalog.bySymbol.get(symbolParam.toUpperCase());
+  // Outside the catalog, or longer than Glance's own ranges: the market's candles.
+  if (!known) return marketChartView(ctx, symbolParam, range);
+  if (!isGlanceChartRange(range)) return marketChartView(ctx, known.symbol, range, known.name);
   const stock = stockBySymbol(ctx, symbolParam);
   const source =
     stock.priceSourceKind === "mainnet-mirror" && stock.mainnetFeed

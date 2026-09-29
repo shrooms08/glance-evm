@@ -81,6 +81,8 @@ const contextSchema = z
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
     lastReply: z.string().max(400).nullable().optional(),
     openCard: z.string().max(8).nullable().optional(),
+    // The stock the page is about (any US ticker, from its URL or title): explained, and refused plainly if traded.
+    pageStock: z.object({ symbol: z.string().regex(/^[A-Z]{1,5}(\.[A-Z])?$/), name: z.string().min(1).max(80) }).nullable().optional(),
   })
   .strict();
 const commandBody = z
@@ -126,6 +128,10 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
   // A trade phrasing the validator refused: answer what was actually said, and never act on it.
   if (it.note?.includes("negation")) return { reply: LINES.wontTrade };
   const advice = it.note?.includes("advice") ? LINES.noAdvicePrefix : "";
+  // A buy or sell of a stock the vault doesn't trade: explaining it works, trading it doesn't. The list is the catalog's.
+  if ((it.intent === "buy" || it.intent === "sell") && it.offCatalog) {
+    return { reply: LINES.notTradable(it.offCatalog.name, ctx.catalog.entries.map((c) => c.symbol)) };
+  }
   switch (it.intent) {
     case "buy":
       return {
@@ -287,6 +293,7 @@ export function registerVoice(
       symbol: it.symbol,
       amount: it.amount,
       ...(it.fraction ? { fraction: it.fraction } : {}),
+      ...(it.offCatalog ? { offCatalog: it.offCatalog } : {}),
       ...(it.symbols ? { symbols: it.symbols, range: it.range } : {}),
       reply,
       facts: replyFacts,

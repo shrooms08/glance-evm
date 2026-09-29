@@ -9,6 +9,8 @@
  *   from the high                           where the latest price stands against the range's high ("down from the peak")
  *   how bumpy                               the standard deviation of the point-to-point % changes, with a plain label
  *   market closed                           stretches with no new price for 6 hours or more (nights, weekends)
+ *   bounces                                 lows the price rose clearly from ("where did it bounce?"), with times and %
+ *   trend                                   a straight line fitted through every price: up, down or flat, and by how much
  *   since your last buy                     the vault's last buy of the stock (from the portfolio event cache)
  *
  * Every number is rounded once, here (prices and dollar changes to cents, percentages to 2 places), and those rounded
@@ -57,6 +59,63 @@ export interface ChartFacts {
   closed: Array<{ from: number; to: number; hours: number; ongoing: boolean }>;
   /** The vault's last buy of this stock (any time), and the change from its price per share to the last price. */
   sinceBuy: { t: number; price: number; amount: number; abs: number; pct: number } | null;
+  /** Each from a swing low (`from`) to the high of the rise after it (`to`): up to 3, in time order. */
+  bounces: Move[];
+  /** A least-squares line through every price, from its value at the first time to its value at the last. */
+  trend: { direction: "up" | "down" | "flat"; from: PricePoint; to: PricePoint; pct: number };
+}
+
+/** A trend flatter than this (in % over the range) is "flat". */
+export const FLAT_TREND_PCT = 0.5;
+
+/**
+ * Bounces: swing lows (the lowest price within a window around them) that the price then rose clearly from: at least
+ * the larger of 0.5% and twice the typical move between prices, up to the top of that rise (where it next pulls back
+ * as much, or falls below the low).
+ * The biggest 3, in time order.
+ */
+export function bounces(points: ReadonlyArray<PricePoint>, typicalMovePct: number): Move[] {
+  const n = points.length;
+  if (n < 5) return [];
+  const k = Math.max(2, Math.round(n / 25));
+  const need = Math.max(0.5, 2 * typicalMovePct);
+  const found: Array<{ i: number; move: Move }> = [];
+  for (let i = 1; i < n - 1; i++) {
+    const p = points[i]!;
+    let isLow = true;
+    for (let j = Math.max(0, i - k); j <= Math.min(n - 1, i + k); j++) if (points[j]!.price < p.price || (j < i && points[j]!.price === p.price)) isLow = false;
+    if (!isLow) continue;
+    // The rise after it: up to its top, until the price pulls back clearly from that top (or goes below this low).
+    let top = p;
+    for (let j = i + 1; j < n && points[j]!.price >= p.price; j++) {
+      const q = points[j]!;
+      if (q.price > top.price) top = q;
+      else if (pctOf(top.price, q.price) <= -need) break;
+    }
+    const m = move(p, top);
+    if (top !== p && m.pct >= need) found.push({ i, move: m });
+  }
+  return found
+    .sort((a, b) => b.move.pct - a.move.pct)
+    .slice(0, 3)
+    .sort((a, b) => a.i - b.i)
+    .map((f) => f.move);
+}
+
+/** The straight line through every price (least squares over time), and which way it points. */
+export function trendLine(points: ReadonlyArray<PricePoint>): ChartFacts["trend"] {
+  const n = points.length;
+  const t0 = points[0]!.t;
+  const xs = points.map((p) => p.t - t0);
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = points.reduce((a, p) => a + p.price, 0) / n;
+  const sxx = xs.reduce((a, x) => a + (x - mx) ** 2, 0);
+  const slope = sxx === 0 ? 0 : xs.reduce((a, x, i) => a + (x - mx) * (points[i]!.price - my), 0) / sxx;
+  const at = (x: number) => my + slope * (x - mx);
+  const from = rp({ t: points[0]!.t, price: at(0) });
+  const to = rp({ t: points.at(-1)!.t, price: at(xs.at(-1)!) });
+  const p = pctSaid(from.price, to.price);
+  return { direction: Math.abs(p) < FLAT_TREND_PCT ? "flat" : p > 0 ? "up" : "down", from, to, pct: p };
 }
 
 /** A stretch this long with no new price reads as the market being closed (the feeds publish on moves, 24/5). */
@@ -184,6 +243,8 @@ export function computeFacts(input: {
     sinceBuy: buy
       ? { t: buy.t, price: round2(buy.price), amount: round2(buy.amount), abs: diff(buy.price, last.price), pct: pctSaid(buy.price, last.price) }
       : null,
+    bounces: bounces(pts, b.stdevPct),
+    trend: trendLine(pts),
   };
 }
 
@@ -196,7 +257,18 @@ export const usd = (n: number) => `$${Math.abs(n).toLocaleString("en-US", { mini
 /** "2.13%" (unsigned: the words say up or down). */
 export const pct = (n: number) => `${Math.abs(n).toFixed(2)}%`;
 const upDown = (n: number) => (n > 0 ? "up" : n < 0 ? "down" : "flat");
-export const RANGE_WORDS: Record<ChartRange, string> = { "1D": "today", "1W": "this week", "1M": "this month" };
+export const RANGE_WORDS: Record<ChartRange, string> = {
+  "1D": "today",
+  "1W": "this week",
+  "1M": "this month",
+  "3M": "over 3 months",
+  "6M": "over 6 months",
+  YTD: "this year",
+  "1Y": "over the past year",
+  "5Y": "over 5 years",
+  "10Y": "over 10 years",
+  ALL: "over its whole history",
+};
 
 /** "Tuesday afternoon", in US market time (ET): times in words, never dates or clock times. */
 export function dayPart(t: number): string {
@@ -215,7 +287,16 @@ export function factSentences(f: ChartFacts, question = ""): string[] {
   const q = question.toLowerCase();
   const first: string[] = [];
   const when = (t: number) => dayPart(t);
-  if (/\b(drop|drops|fall|fell|dip|plunge|slide|slid|worst)\b/.test(q) && f.biggestDrop) {
+  const bounce = [...f.bounces].sort((a, b) => b.pct - a.pct)[0];
+  if (/\b(bounce|bounced|bounces|bouncing|rebound|rebounded|bottom|bottomed)\b/.test(q)) {
+    first.push(
+      bounce
+        ? `The clearest bounce was from ${usd(bounce.from.price)} ${when(bounce.from.t)}, up ${pct(bounce.pct)} to ${usd(bounce.to.price)} ${when(bounce.to.t)}.`
+        : `It didn't bounce clearly from a low ${RANGE_WORDS[f.range]}; the low was ${usd(f.low.price)}.`,
+    );
+  } else if (/\b(trend|trending|direction)\b/.test(q)) {
+    first.push(f.trend.direction === "flat" ? `Overall it moved sideways ${RANGE_WORDS[f.range]}.` : `Overall the trend was ${f.trend.direction}, ${pct(f.trend.pct)} along a straight line through the prices.`);
+  } else if (/\b(drop|drops|fall|fell|dip|plunge|slide|slid|worst)\b/.test(q) && f.biggestDrop) {
     first.push(`The biggest single drop was ${pct(f.biggestDrop.pct)}, from ${usd(f.biggestDrop.from.price)} to ${usd(f.biggestDrop.to.price)}, ${when(f.biggestDrop.to.t)}.`);
   } else if (/\b(rise|rose|jump|jumped|gain|best|surge)\b/.test(q) && f.biggestRise) {
     first.push(`The biggest single rise was ${pct(f.biggestRise.pct)}, from ${usd(f.biggestRise.from.price)} to ${usd(f.biggestRise.to.price)}, ${when(f.biggestRise.to.t)}.`);
@@ -255,7 +336,7 @@ export function factNumbers(f: ChartFacts | readonly ChartFacts[]): FactNumbers 
   const out: FactNumbers = { percent: [], money: [], count: [] };
   for (const x of all) {
     const moves = [x.biggestDrop, x.biggestRise, x.maxDrawdown].filter((m): m is Move => m !== null);
-    out.percent.push(x.change.pct, x.fromHigh.pct, ...moves.map((m) => m.pct), x.bumpiness.stdevPct, ...(x.sinceBuy ? [x.sinceBuy.pct] : []));
+    out.percent.push(x.change.pct, x.fromHigh.pct, ...moves.map((m) => m.pct), x.bumpiness.stdevPct, ...(x.sinceBuy ? [x.sinceBuy.pct] : []), ...(x.bounces ?? []).map((m) => m.pct), ...(x.trend ? [x.trend.pct] : []));
     out.money.push(
       x.first.price,
       x.last.price,
@@ -265,6 +346,8 @@ export function factNumbers(f: ChartFacts | readonly ChartFacts[]): FactNumbers 
       x.low.price,
       ...moves.flatMap((m) => [m.from.price, m.to.price, m.abs]),
       ...(x.sinceBuy ? [x.sinceBuy.price, x.sinceBuy.amount, x.sinceBuy.abs] : []),
+      ...(x.bounces ?? []).flatMap((m) => [m.from.price, m.to.price, m.abs]),
+      ...(x.trend ? [x.trend.from.price, x.trend.to.price] : []),
     );
     out.count.push(...x.closed.map((c) => c.hours));
   }
@@ -274,7 +357,7 @@ export function factNumbers(f: ChartFacts | readonly ChartFacts[]): FactNumbers 
 /** The times the facts name (drawings snap to these). */
 export function factTimes(f: ChartFacts): number[] {
   const moves = [f.biggestDrop, f.biggestRise, f.maxDrawdown].filter((m): m is Move => m !== null);
-  const times = [f.first.t, f.last.t, f.high.t, f.low.t, ...moves.flatMap((m) => [m.from.t, m.to.t]), ...f.closed.flatMap((c) => [c.from, c.to])];
+  const times = [f.first.t, f.last.t, f.high.t, f.low.t, ...moves.flatMap((m) => [m.from.t, m.to.t]), ...(f.bounces ?? []).flatMap((m) => [m.from.t, m.to.t]), ...f.closed.flatMap((c) => [c.from, c.to])];
   if (f.sinceBuy && f.sinceBuy.t >= f.first.t && f.sinceBuy.t <= f.last.t) times.push(f.sinceBuy.t);
   return [...new Set(times.filter((t) => t >= f.first.t && t <= Math.max(f.last.t, f.asOf)))].sort((a, b) => a - b);
 }
@@ -282,7 +365,18 @@ export function factTimes(f: ChartFacts): number[] {
 /** The prices the facts name (levels snap to these). */
 export function factPrices(f: ChartFacts): number[] {
   const moves = [f.biggestDrop, f.biggestRise, f.maxDrawdown].filter((m): m is Move => m !== null);
-  return [...new Set([f.first.price, f.last.price, f.high.price, f.low.price, ...moves.flatMap((m) => [m.from.price, m.to.price]), ...(f.sinceBuy ? [f.sinceBuy.price] : [])])];
+  return [
+    ...new Set([
+      f.first.price,
+      f.last.price,
+      f.high.price,
+      f.low.price,
+      ...moves.flatMap((m) => [m.from.price, m.to.price]),
+      ...(f.bounces ?? []).flatMap((m) => [m.from.price, m.to.price]),
+      ...(f.trend ? [f.trend.from.price, f.trend.to.price] : []),
+      ...(f.sinceBuy ? [f.sinceBuy.price] : []),
+    ]),
+  ];
 }
 
 /** Numbers written in digits: "$1,234.50", "2.13%", "-4", "0.31". */

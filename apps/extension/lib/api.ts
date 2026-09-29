@@ -58,7 +58,7 @@ export interface ShowMeRequest {
   lastGuard?: { code: string; message: string } | null;
   vault?: string;
   noScreenshot?: { glanceKey: string };
-  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens" };
+  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean };
 }
 
 export interface ShowMeReply {

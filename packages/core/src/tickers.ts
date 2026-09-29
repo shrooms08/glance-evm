@@ -16,3 +16,12 @@ export const US_TICKERS: Readonly<Record<string, string>> = {
 export function usTicker(symbol: string): string | null {
   return US_TICKERS[symbol.toUpperCase()] ?? null;
 }
+
+/** "NVIDIA Corporation" -> "NVIDIA", "Tesla, Inc." -> "Tesla": the name as people say it. */
+export function shortName(name: string): string {
+  return name
+    .replace(/\s*\((?:[A-Z.]{1,6})\)\s*$/, "")
+    .replace(/,?\s+(?:Corporation|Corp\.?|Incorporated|Inc\.?|Holdings?|Company|Co\.|plc|PLC|Ltd\.?|Limited|Group|N\.V\.|S\.A\.|Class [A-C])\s*$/g, "")
+    .replace(/,?\s+(?:Corporation|Corp\.?|Inc\.?)\s*$/, "")
+    .trim();
+}

@@ -134,7 +134,11 @@ describe("Show me about a chart on the page", () => {
   it("drawn on the page's own chart: the Chainlink line comes last; on the lens (Chainlink's own chart), it doesn't", async () => {
     const reply = `The dip was to $375.98 [CHART_POINT:TSLA:${B + 7_200}].`;
     expect((await showMe(reply).answer(input("page"))).spoken).toBe(`The dip was to $375.98. ${LINES.chainlinkDiffers}`);
-    expect((await showMe(reply).answer(input("lens"))).spoken).toBe("The dip was to $375.98.");
+    // The lens standing in for a chart Glance couldn't read says so first; the lens asked for doesn't.
+    expect((await showMe(reply).answer(input("lens"))).spoken).toBe(`${LINES.cantReadChart} The dip was to $375.98.`);
+    expect(LINES.cantReadChart).toBe("I can't read this chart, so here's mine.");
+    const asked = input("lens");
+    expect((await showMe(reply).answer({ ...asked, pageChart: { ...asked.pageChart!, forced: true } })).spoken).toBe("The dip was to $375.98.");
   });
 
   it("grounding is unchanged: an invented number is still taken out, and the marks use the facts' times", async () => {

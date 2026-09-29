@@ -46,6 +46,8 @@ export interface VoiceContext {
   lastReply?: string | null;
   /** The company card currently open, if any. */
   openCard?: string | null;
+  /** The stock the page is about (any US ticker), as the extension read it from the URL or title. */
+  pageStock?: { symbol: string; name: string } | null;
 }
 
 export interface Intent {
@@ -55,6 +57,8 @@ export interface Intent {
   amount: string | null;
   /** A sell of part of the holding: "1" ("sell all my Palantir"), "0.5" ("sell half my Tesla"). Only ever one said. */
   fraction?: SellFraction;
+  /** A buy or sell of a stock outside the catalog (the page's NVIDIA, say): refused in plain words, never traded. */
+  offCatalog?: { symbol: string; name: string };
   /** "compare": the 2 or 3 catalog stocks named, in order, and the range asked about ("today" 1D, "this month" 1M). */
   symbols?: string[];
   range?: "1D" | "1W" | "1M";
@@ -149,7 +153,23 @@ function withoutNumberedNames(transcript: string, catalog: readonly CatalogEntry
   return out;
 }
 
-export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]): Intent {
+/**
+ * The page's own stock, when a trade command means it and names no catalog stock: its name or ticker is said, or
+ * "it" / "this" stands for it ("buy $10 of it", "sell this"). Null otherwise.
+ */
+export function pageStockMeant(transcript: string, page: VoiceContext["pageStock"]): { symbol: string; name: string } | null {
+  if (!page) return null;
+  const t = ` ${normalise(transcript).replace(/\?/g, " ")} `;
+  const name = normalise(page.name);
+  const said =
+    (name.length >= 2 && t.includes(` ${name} `)) ||
+    t.includes(` ${page.symbol.toLowerCase()} `) ||
+    t.includes(` ${page.symbol.toLowerCase().split("").join(" ")} `) ||
+    / (it|this|this one|this stock|that|that one|that stock) /.test(t);
+  return said ? { symbol: page.symbol, name: page.name } : null;
+}
+
+export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[], context: VoiceContext = {}): Intent {
   const t = normalise(transcript).replace(/\?/g, " ").trim();
   const companies = findCompanies(transcript, catalog);
   const symbol = companies.length === 1 ? companies[0]! : null;
@@ -175,6 +195,11 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   if (isChartQuestion(t)) return { ...base, intent: "ask" };
 
   const verb = leadingVerb(t);
+  // A trade of the page's stock when it isn't one the vault trades ("buy $10 of Nvidia" on NVDA's chart).
+  if (verb && !symbol && companies.length === 0 && !/\bbaskets?\b/.test(t)) {
+    const off = pageStockMeant(transcript, context.pageStock);
+    if (off && !catalog.some((c) => c.symbol === off.symbol)) return { ...base, intent: verb, offCatalog: off };
+  }
   if (verb === "sell") {
     // "sell all my Palantir", "sell half my Tesla": part of the holding, never also a dollar amount.
     const fraction = saidFraction(transcript);
@@ -298,13 +323,19 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
   if (out.intent === "ask") out.amount = null;
   // "sell my tech basket": a basket names no single company, so the reply asks for the stock by name.
   const basketSell = out.intent === "sell" && !out.symbol && /\bbaskets?\b/i.test(transcript);
-  if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol && !basketSell) {
+  // A trade of a stock outside the catalog stays a trade request (to be refused in plain words), never a trade.
+  if (out.offCatalog && (out.intent === "buy" || out.intent === "sell") && !out.symbol) {
+    notes.push(`${out.offCatalog.symbol} is not in the catalog`);
+    out.amount = null;
+    delete out.fraction;
+  } else if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol && !basketSell) {
     notes.push(`${out.intent} without a catalog company`);
     out.intent = "unknown";
     out.amount = null;
     delete out.fraction;
   }
   if (out.intent !== "sell") delete out.fraction;
+  if (out.intent !== "buy" && out.intent !== "sell") delete out.offCatalog;
   if (out.intent !== "buy" && out.intent !== "sell" && out.intent !== "basket-buy") out.amount = null;
   if (out.intent === "spend-so-far" || out.intent === "explain" || out.intent === "unknown") {
     if (out.intent !== "unknown") out.symbol = null;
@@ -452,7 +483,7 @@ export async function understand(
   catalog: readonly CatalogEntry[],
   model: IntentModel | null,
 ): Promise<Intent> {
-  const rules = validateIntent(rulesIntent(transcript, catalog), transcript, catalog);
+  const rules = validateIntent(rulesIntent(transcript, catalog, context), transcript, catalog);
   if (RULES_DECIDE.has(rules.intent)) return rules;
   let raw: Intent | null = null;
   if (model) {

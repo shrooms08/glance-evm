@@ -11,7 +11,8 @@ import { compareRows, compareSentence, computeFacts, MAX_COMPARE, rebase, REBASE
 import { toDecimalString } from "@glance/core/format";
 
 import type { AppContext } from "./context.js";
-import { ApiError, chartDeps, chartView, stockBySymbol } from "./services.js";
+import { ApiError, chartDeps, chartView } from "./services.js";
+import { shortName } from "@glance/core/tickers";
 
 export interface FactsView {
   range: ChartRange;
@@ -38,13 +39,16 @@ export function lastBuyFrom(
   return { t: last.timestamp, price: Number(toDecimalString(perShare, d)), amount: Number(toDecimalString(last.usdgIn!, d)) };
 }
 
-/** Facts for one stock's chart data (already fetched). */
+/**
+ * Facts for one stock's chart data (already fetched). Any US stock: a catalog stock also gets "since your last buy",
+ * a stock outside it is named as its source names it ("NVIDIA").
+ */
 export function factsFor(ctx: AppContext, data: ChartData, vault?: Address): ChartFacts | null {
-  const stock = stockBySymbol(ctx, data.symbol);
-  const lastBuy = vault ? lastBuyFrom(chartDeps(ctx).trades(vault), stock.token, stock.tokenDecimals) : null;
+  const stock = ctx.catalog.bySymbol.get(data.symbol) ?? null;
+  const lastBuy = vault && stock ? lastBuyFrom(chartDeps(ctx).trades(vault), stock.token, stock.tokenDecimals) : null;
   return computeFacts({
     symbol: data.symbol,
-    name: stock.name,
+    name: stock?.name ?? shortName(data.name ?? data.symbol),
     range: data.range,
     source: data.source.label,
     asOf: data.asOf,
@@ -54,7 +58,7 @@ export function factsFor(ctx: AppContext, data: ChartData, vault?: Address): Cha
 }
 
 export async function factsView(ctx: AppContext, symbols: readonly string[], range: ChartRange, vault?: Address): Promise<FactsView> {
-  const unique = [...new Set(symbols.map((s) => stockBySymbol(ctx, s).symbol))];
+  const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
   if (unique.length === 0 || unique.length > MAX_COMPARE) throw new ApiError(400, "INVALID_INPUT", `Ask about 1 to ${MAX_COMPARE} stocks.`);
   const charts = await Promise.all(unique.map((s) => chartView(ctx, s, range, vault)));
   const facts: ChartFacts[] = [];

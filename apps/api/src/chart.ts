@@ -262,6 +262,8 @@ export function chainlinkReader(client: PublicClient, feed: Address): FeedReader
 export interface QuoteHistory {
   points: Array<{ t: number; price: number }>;
   detail: string;
+  /** The company's name, as the source gives it ("NVIDIA Corporation"). */
+  name?: string;
 }
 
 const YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart";
@@ -269,6 +271,13 @@ const YAHOO_PARAMS: Record<ChartRange, { range: string; interval: string; label:
   "1D": { range: "1d", interval: "5m", label: "5-minute" },
   "1W": { range: "5d", interval: "30m", label: "30-minute" },
   "1M": { range: "1mo", interval: "1h", label: "hourly" },
+  "3M": { range: "3mo", interval: "1d", label: "daily" },
+  "6M": { range: "6mo", interval: "1d", label: "daily" },
+  YTD: { range: "ytd", interval: "1d", label: "daily" },
+  "1Y": { range: "1y", interval: "1d", label: "daily" },
+  "5Y": { range: "5y", interval: "1wk", label: "weekly" },
+  "10Y": { range: "10y", interval: "1mo", label: "monthly" },
+  ALL: { range: "max", interval: "1mo", label: "monthly" },
 };
 
 /** The public quote's own history (Yahoo Finance's chart endpoint, the same source the keeper quotes from). */
@@ -279,13 +288,38 @@ export async function yahooHistory(ticker: string, range: ChartRange, doFetch: t
     signal: AbortSignal.timeout(6_000),
   });
   if (!res.ok) throw new Error(`Yahoo answered ${res.status}`);
-  const body = (await res.json()) as { chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ close?: Array<number | null> }> } }> } };
+  const body = (await res.json()) as {
+    chart?: { result?: Array<{ meta?: { shortName?: string; longName?: string }; timestamp?: number[]; indicators?: { quote?: Array<{ close?: Array<number | null> }> } }> };
+  };
   const r = body.chart?.result?.[0];
   const ts = r?.timestamp ?? [];
   const close = r?.indicators?.quote?.[0]?.close ?? [];
   const points = ts.flatMap((t, i) => (typeof close[i] === "number" && close[i]! > 0 ? [{ t, price: close[i]! }] : []));
   if (points.length === 0) throw new Error("Yahoo: no history");
-  return { points, detail: `Yahoo Finance ${ticker}, ${p.label} closes` };
+  const name = r?.meta?.longName || r?.meta?.shortName;
+  return { points, detail: `Yahoo Finance ${ticker}, ${p.label} closes`, ...(name ? { name } : {}) };
+}
+
+/** The label a chart's source goes by when its prices are the market's own candles (any US stock, any range). */
+export const MARKET_SOURCE = "Yahoo Finance";
+
+/**
+ * A chart of the market's own prices: for a stock outside the catalog, or a range longer than Glance's Chainlink
+ * history (a page's "6 months"). Candles from Yahoo Finance's public chart endpoint, cached per ticker and range.
+ */
+export function marketChartData(symbol: string, range: ChartRange, h: QuoteHistory, asOf: number, name?: string): ChartData {
+  const points = h.points.map((p) => ({ t: p.t, price: p.price, formatted: formatUsd(BigInt(Math.round(p.price * 100)), 2) }));
+  return {
+    symbol,
+    name: name ?? h.name ?? symbol,
+    range,
+    points,
+    source: { label: MARKET_SOURCE, detail: h.detail, note: "Market prices, for explaining the chart. Glance trades only on Chainlink prices." },
+    lastUpdated: points.at(-1)?.t ?? null,
+    asOf,
+    marketState: null,
+    markers: [],
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

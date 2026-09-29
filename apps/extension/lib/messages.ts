@@ -31,6 +31,8 @@ export type PageMessage =
 export interface PageMatchesReply {
   host: string;
   companies: Array<{ symbol: string; name: string; mentions: number }>;
+  /** The stock the page is about (any US ticker, from its URL or title), if it says clearly. */
+  pageStock?: { symbol: string; name: string } | null;
 }
 
 /** Show me: a JPEG of the visible tab (a data URL), for a question about a chart or an image. Never stored. */

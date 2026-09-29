@@ -24,6 +24,8 @@ export type Command =
   | { kind: "sell"; symbol: string; amount?: string; fraction?: "1" | "0.5" }
   /** A basket named in a sell: not sold as one. */
   | { kind: "sellBasket"; basket: string }
+  /** A buy or sell of a stock outside the catalog (the page's NVIDIA, or a ticker typed in capitals): refused plainly. */
+  | { kind: "notTradable"; symbol: string; name: string }
   | { kind: "price"; symbol: string }
   | { kind: "spent" }
   | { kind: "portfolio" }
@@ -140,7 +142,23 @@ function basketLegs(text: string, table: ReturnType<typeof aliasTable>): { symbo
   return { symbols, weights: split ? parseSplit(split[1]!, symbols.length) : null, unmatched };
 }
 
-export function parseCommand(input: string, companies: readonly CompanyAliases[], baskets: readonly string[] = []): Command {
+/**
+ * A buy or sell that names no catalog stock but means one outside it: the page's own stock (by name, ticker, or "it" /
+ * "this"), or a ticker typed in capitals ("buy $10 of NVDA"). Null otherwise.
+ */
+function offCatalogTrade(heard: string, t: string, companies: readonly CompanyAliases[], page: { symbol: string; name: string } | null): { symbol: string; name: string } | null {
+  if (!/^(?:buy|get|purchase|grab|sell|dump|unload|get rid of)\b/.test(t)) return null;
+  const known = new Set(companies.map((c) => c.symbol));
+  const words = ` ${t} `;
+  if (page && !known.has(page.symbol)) {
+    const name = normalise(page.name);
+    if ((name.length >= 2 && words.includes(` ${name} `)) || words.includes(` ${page.symbol.toLowerCase()} `) || / (it|this|this one|this stock|that) /.test(words)) return page;
+  }
+  const typed = [...heard.matchAll(/\b([A-Z]{2,5})\b/g)].map((m) => m[1]!).find((x) => !known.has(x) && !["USD", "USDG", "ETF"].includes(x));
+  return typed ? { symbol: typed, name: page?.symbol === typed ? page.name : typed } : null;
+}
+
+export function parseCommand(input: string, companies: readonly CompanyAliases[], baskets: readonly string[] = [], page: { symbol: string; name: string } | null = null): Command {
   const heard = input.trim();
   const t = normalise(heard).replace(/^(ok |okay |hey |please |glance )+/, "").replace(/ please$/, "");
   const table = aliasTable(companies);
@@ -226,6 +244,9 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
 
   const sell = parseSell(t, table);
   if (sell) return sell;
+  // A trade of a stock the vault doesn't hold on its list: explaining works, trading doesn't.
+  const off = offCatalogTrade(heard, t, companies, page);
+  if (off) return { kind: "notTradable", ...off };
 
   m =
     /^(?:what's|whats|what is|how's|how is|where's|where is)\s+(.+?)\s+(?:at|trading at|trading|doing|going for)$/.exec(t) ??

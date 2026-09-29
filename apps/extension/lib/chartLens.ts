@@ -1,7 +1,7 @@
 /**
  * The Glance lens: when a page's chart can't be calibrated reliably (or the user asks for it), Glance's own chart for
- * the same stock and range is laid exactly over the page's chart box, slightly see-through, labelled "Glance lens ·
- * Chainlink prices", with a close button, and Show me draws on it. It follows the page chart through scroll and
+ * the same stock and range is laid exactly over the page's chart box, slightly see-through, labelled with its prices'
+ * source ("Glance lens · Chainlink prices", or Yahoo Finance's for a stock outside the catalog), with a close button, and Show me draws on it. It follows the page chart through scroll and
  * resize, and never touches the page's DOM (it lives in Glance's shadow root).
  */
 import type { ChartData } from "@glance/core/chart";
@@ -11,6 +11,8 @@ import type { ChartAnnotation } from "@glance/core/showme";
 import type { Mount } from "./chartLoader";
 
 export const LENS_LABEL = "Glance lens · Chainlink prices";
+/** The lens's label, naming where its prices come from. */
+export const lensLabel = (source: string) => `Glance lens · ${source} prices`;
 
 export class ChartLens {
   readonly root: HTMLDivElement;
@@ -32,12 +34,13 @@ export class ChartLens {
     this.root = doc.createElement("div");
     this.root.className = "g-lens";
     this.root.setAttribute("role", "region");
-    this.root.setAttribute("aria-label", `${data.symbol} ${LENS_LABEL}`);
+    const text = lensLabel(data.source.label);
+    this.root.setAttribute("aria-label", `${data.symbol} ${text}`);
     const head = doc.createElement("div");
     head.className = "g-lens-head";
     const label = doc.createElement("span");
     label.className = "g-lens-label";
-    label.textContent = LENS_LABEL;
+    label.textContent = text;
     const close = doc.createElement("button");
     close.className = "g-btn g-btn-ghost g-icon-btn";
     close.setAttribute("aria-label", "Close the Glance lens");

@@ -33,7 +33,11 @@ function SidePanel() {
   const g = useGlance();
   const pageRef = useRef<PageMatchesReply>({ host: "", companies: [] });
   const assistant = useAssistant({
-    context: () => ({ host: pageRef.current.host, companies: pageRef.current.companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) }),
+    context: () => ({
+      host: pageRef.current.host,
+      companies: pageRef.current.companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })),
+      pageStock: pageRef.current.pageStock ?? null,
+    }),
     // Show me is about the page: the active tab reads it, draws on it and speaks. A browser page (no content script)
     // gets the answer here, without drawings.
     onAsk: (question) => void askOnPage(question),

@@ -12,7 +12,9 @@
  *
  * Nothing from the page is sent anywhere except the crop, for a vision calibration, and only when the user asked.
  */
-import { CHART_RANGES, type ChartRange } from "@glance/core/chart";
+import { ALL_RANGES, type ChartRange } from "@glance/core/chart";
+import { isChartQuestion } from "@glance/core/showme";
+import { shortName } from "@glance/core/tickers";
 import { chartSite, cropFor, detectSymbol, rangeFromButton, rangeFromSpan, datedTimes, type AxisLabel, type Box } from "@glance/core/page-chart";
 
 /** A question about a chart on the page: "explain this chart", "show me the dip on this chart", "what happened here?". */
@@ -22,6 +24,35 @@ export function wantsPageChart(question: string): boolean {
     /\b(this|that|the) (chart|graph|plot)\b|\bon (this|the) (chart|graph)\b/.test(q) ||
     /\bwhat happened here\b|\bthis (dip|drop|spike|peak|jump|move|rally|selloff|sell-off)\b|\bhere on the chart\b/.test(q)
   );
+}
+
+/**
+ * A question about how the price moved ("show me where it bounced this week", "where's the low?", "how did it do
+ * today?"): with a chart on the page, it's about that chart.
+ */
+export function asksAboutPriceMove(question: string): boolean {
+  const q = question.toLowerCase();
+  return (
+    isChartQuestion(q) ||
+    /\b(bounce[ds]?|bouncing|rebound(ed|s)?|dip(ped|s)?|drop(ped|s)?|spike[ds]?|peak(ed|s)?|bottom(ed|s)?|support|resistance|break ?out|trend(ing|s)?|high|low|highs|lows|rall(y|ied|ies)|sell-?off|mov(e|ed|es)|jump(ed|s)?|fell|fall|rose|rise|climb(ed|s)?|slid|crash(ed)?|surge[ds]?|plunge[ds]?|swings?)\b/.test(q)
+  );
+}
+
+/**
+ * Where a question about a chart is answered: on the page's chart, or on Glance's own ("none": not about a chart).
+ *   - "explain this chart" with a chart on the page: the page's chart;
+ *   - a price-move question ("where did it bounce this week?") with a chart on the page: the page's chart, unless the
+ *     question names another stock than the page's (then Glance's chart of that stock);
+ *   - no chart on the page: Glance's own.
+ */
+export function chooseChartRoute(question: string, page: { hasChart: boolean; pageSymbol: string | null; named: string | null }): { route: "page" | "glance" | "none"; reason: string } {
+  const explicit = wantsPageChart(question);
+  const move = asksAboutPriceMove(question);
+  if (!explicit && !move) return { route: "none", reason: "not a chart question" };
+  if (!page.hasChart) return { route: "glance", reason: "no chart on this page" };
+  if (explicit) return { route: "page", reason: "the question is about this chart" };
+  if (page.named && page.pageSymbol && page.named !== page.pageSymbol) return { route: "glance", reason: `the question names ${page.named}, the page shows ${page.pageSymbol}` };
+  return { route: "page", reason: "a price question, with a chart on the page" };
 }
 
 /** Known chart containers, by site. */
@@ -114,14 +145,23 @@ export function readDomLabels(el: Element, win: Window = window): AxisLabel[] {
   return out;
 }
 
-/** The selected range button near the chart ("1D", "5 days"...), as Glance's range, or null when none is marked. */
-export function selectedRange(el: Element): ChartRange | "other" | null {
-  const scope = el.closest("section, article, main, [role=main]") ?? el.ownerDocument.body;
-  for (const b of scope.querySelectorAll("button, [role=tab], [role=radio], a, li")) {
-    const on = b.getAttribute("aria-selected") === "true" || b.getAttribute("aria-pressed") === "true" || b.getAttribute("aria-checked") === "true" || /(^|\s|-)(selected|active|isActive|is-active)(\s|$)/i.test(b.getAttribute("class") ?? "");
-    if (!on) continue;
-    const r = rangeFromButton(b.textContent ?? "");
-    if (r) return r;
+/**
+ * The selected range button near the chart ("1D", "5 days", "6 months"...), or null when none is marked. Sites mark it
+ * with aria state or a class; TradingView's classes are hashed ("selected-zQg8sTYo"), so a suffix is allowed.
+ */
+export function selectedRange(el: Element): ChartRange | null {
+  // The nearest selected range button: from the chart's own section outwards (TradingView's buttons sit beside the
+  // chart's section, not inside it), up to the whole page.
+  const scopes: Element[] = [];
+  for (let p: Element | null = el.closest("section, article, main, [role=main]") ?? el.parentElement; p; p = p.parentElement) scopes.push(p);
+  for (const scope of scopes) {
+    for (const b of scope.querySelectorAll("button, [role=tab], [role=radio], a, li")) {
+      const on = b.getAttribute("aria-selected") === "true" || b.getAttribute("aria-pressed") === "true" || b.getAttribute("aria-checked") === "true" || /(^|\s|-)(selected|active|isActive|is-active)(-[A-Za-z0-9_]+)?(\s|$)/i.test(b.getAttribute("class") ?? "");
+      if (!on) continue;
+      // TradingView's buttons also show the range's change ("1 day1.68%"): the words are the range.
+      const r = rangeFromButton((b.textContent ?? "").replace(/[+\-\u2212]?\d+(?:[.,]\d+)?\s*%/g, ""));
+      if (r) return r;
+    }
   }
   return null;
 }
@@ -130,7 +170,7 @@ export interface PageChartTarget {
   el: Element;
   box: Box;
   symbol: string | null;
-  range: ChartRange | "other" | null;
+  range: ChartRange | null;
   site: ReturnType<typeof chartSite>;
   /** What to ask first when unsure: "Which chart: TSLA 5 days?" */
   unsure: string | null;
@@ -138,23 +178,58 @@ export interface PageChartTarget {
   alternatives: number;
 }
 
-const RANGE_WORDS: Record<ChartRange, string> = { "1D": "1 day", "1W": "5 days", "1M": "1 month" };
+const RANGE_WORDS: Record<ChartRange, string> = {
+  "1D": "1 day",
+  "1W": "5 days",
+  "1M": "1 month",
+  "3M": "3 months",
+  "6M": "6 months",
+  YTD: "year to date",
+  "1Y": "1 year",
+  "5Y": "5 years",
+  "10Y": "10 years",
+  ALL: "all time",
+};
 
 /**
  * Which chart, which stock, which range. `named` is the stock the question names (from the page's underlines or the
  * catalog), which wins over anything the page says. Unsure (no symbol, a range Glance doesn't have, two charts
  * alike): a short question to ask instead of guessing.
  */
+/** How much of the smaller of two boxes the other covers (1: one sits inside the other). */
+function overlap(a: Box, b: Box): number {
+  const w = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const h = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  return (w * h) / Math.max(1, Math.min(a.width * a.height, b.width * b.height));
+}
+
+/**
+ * The stock this page is about, if it says clearly (its URL, or an exchange-prefixed or bracketed ticker in its title
+ * or headings), with the name the page gives it (the main heading, when that isn't just the ticker). Any US ticker,
+ * not only Glance's: a chart can be explained for any stock (only the catalog's can be traded).
+ */
+export function pageStock(doc: Document, symbols: readonly string[]): { symbol: string; name: string } | null {
+  const headings = [...doc.querySelectorAll("h1, h2, [role=heading]")].slice(0, 8).map((h) => h.textContent ?? "");
+  const d = detectSymbol({ url: doc.location?.href ?? "", headings: [doc.title, ...headings], nearChart: [] }, symbols, { anyTicker: true });
+  if (!d.symbol || !d.confident) return null;
+  const h1 = (doc.querySelector("h1")?.textContent ?? "").replace(/\s+/g, " ").trim();
+  const name = h1 && h1.length <= 60 && /[a-z]/i.test(h1) && h1.toUpperCase() !== d.symbol ? shortName(h1) : d.symbol;
+  return { symbol: d.symbol, name: name || d.symbol };
+}
+
 export function pickPageChart(doc: Document, win: Window, symbols: readonly string[], named: string | null, aliases: Record<string, string[]> = {}): PageChartTarget | null {
   const near = named ? [named, ...(aliases[named] ?? [])] : [];
   const candidates = findChartCandidates(doc, win, near);
   const top = candidates[0];
   if (!top) return null;
-  const alike = candidates.filter((c) => c.score >= top.score * 0.8).length - 1;
+  // Other charts close in score. A box inside the top one (TradingView's chart inside its own container) is the same
+  // chart, not a second one.
+  const alike = candidates.filter((c) => c !== top && c.score >= top.score * 0.8 && overlap(c.box, top.box) < 0.8).length;
   const headings = [...doc.querySelectorAll("h1, h2, h3, [role=heading], title")].slice(0, 12).map((h) => h.textContent ?? "");
   const around = (top.el.closest("section, article, [role=region]")?.textContent ?? "").slice(0, 1_500).split(/\s+/);
-  // What the page itself says (the question's company is weighed separately: it may not be this chart's).
-  const detected = detectSymbol({ url: doc.location?.href ?? "", headings: [doc.title, ...headings], nearChart: around }, symbols);
+  // What the page itself says (the question's company is weighed separately: it may not be this chart's). Any US
+  // ticker the page names clearly counts, not only Glance's seven.
+  const detected = detectSymbol({ url: doc.location?.href ?? "", headings: [doc.title, ...headings], nearChart: around }, symbols, { anyTicker: true });
   let range = selectedRange(top.el);
   if (range === null) {
     // No button says: the span of the time labels.
@@ -166,14 +241,13 @@ export function pickPageChart(doc: Document, win: Window, symbols: readonly stri
   const clash = named !== null && detected.confident && detected.symbol !== null && detected.symbol !== named;
   const symbol = named && !clash ? named : detected.symbol;
   let unsure: string | null = null;
-  if (clash) unsure = `This chart looks like ${detected.symbol}. Which chart: ${detected.symbol} ${RANGE_WORDS[isGlanceRange(range) ? range : "1W"]}?`;
+  if (clash) unsure = `This chart looks like ${detected.symbol}. Which chart: ${detected.symbol} ${RANGE_WORDS[range ?? "1W"]}?`;
   else if (!symbol) unsure = "Which stock is this chart?";
-  else if (range === "other") unsure = `Glance can show 1 day, 5 days or 1 month. Which chart: ${symbol} 1 month?`;
   else if ((!detected.confident && !named) || alike > 0 || range === null) unsure = `Which chart: ${symbol} ${RANGE_WORDS[range ?? "1W"]}?`;
   return { el: top.el, box: top.box, symbol, range, site: chartSite(doc.location?.hostname ?? ""), unsure, alternatives: alike };
 }
 
-export const isGlanceRange = (r: unknown): r is ChartRange => (CHART_RANGES as readonly unknown[]).includes(r);
+export const isChartRange = (r: unknown): r is ChartRange => (ALL_RANGES as readonly unknown[]).includes(r);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Reading the page's line, to check a calibration

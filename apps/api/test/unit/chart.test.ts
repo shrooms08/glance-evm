@@ -236,7 +236,7 @@ describe("GET /chart", () => {
     const ok = await app.request("/chart/TSLA?range=1W");
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as { points: unknown[] }).points.length).toBeGreaterThan(0);
-    expect((await app.request("/chart/TSLA?range=5Y")).status).toBe(400);
+    expect((await app.request("/chart/TSLA?range=2W")).status).toBe(400);
     const limited = await app.request("/chart/TSLA?range=1D");
     expect(limited.status).toBe(429);
   });

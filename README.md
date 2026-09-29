@@ -22,7 +22,8 @@ is enforced by that vault's contract, not by Glance.
   answers out loud, in one voice, starting as soon as its first sentence is ready.
 - **Shows.** Ask about the page and Glance points at what it's talking about as it speaks. Ask about a chart on another
   site ("explain this chart", "show me the dip") and it draws on that chart, calibrated to its axes, or lays its own
-  chart over it when the axes can't be read reliably.
+  chart over it when the axes can't be read reliably. This works for any US stock's chart (NVIDIA, Apple...), from
+  Yahoo Finance's market prices; trading stays limited to your vault's approved stocks.
 - **Buys and sells.** "Buy ten dollars of Palantir" opens a confirm card with the market price and the price the vault
   will trade at. One tap sends it through your vault, which checks every limit on chain. Selling works the same way,
   by voice or typed: "sell ten dollars of Tesla", "sell half my Tesla", "sell all my Palantir". The card shows the USDG

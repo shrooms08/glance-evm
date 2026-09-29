@@ -6,9 +6,30 @@
  */
 import { color, themes, type ThemeName } from "@glance/design";
 
+/** Glance's own charts (the range buttons): Chainlink history for the catalog. */
 export const CHART_RANGES = ["1D", "1W", "1M"] as const;
-export type ChartRange = (typeof CHART_RANGES)[number];
-export const RANGE_SECONDS: Record<ChartRange, number> = { "1D": 86_400, "1W": 7 * 86_400, "1M": 30 * 86_400 };
+/**
+ * Longer ranges, only when a chart on the page shows one (TradingView's 6 months, 1 year...): market candles from a
+ * public source, never Chainlink rounds.
+ */
+export const PAGE_ONLY_RANGES = ["3M", "6M", "YTD", "1Y", "5Y", "10Y", "ALL"] as const;
+export const ALL_RANGES = [...CHART_RANGES, ...PAGE_ONLY_RANGES] as const;
+export type ChartRange = (typeof ALL_RANGES)[number];
+const DAY = 86_400;
+/** How far back each range reaches (YTD and ALL are the most they can be; the source's own history decides). */
+export const RANGE_SECONDS: Record<ChartRange, number> = {
+  "1D": DAY,
+  "1W": 7 * DAY,
+  "1M": 30 * DAY,
+  "3M": 92 * DAY,
+  "6M": 183 * DAY,
+  YTD: 366 * DAY,
+  "1Y": 366 * DAY,
+  "5Y": 5 * 366 * DAY,
+  "10Y": 10 * 366 * DAY,
+  ALL: 100 * 366 * DAY,
+};
+export const isGlanceChartRange = (r: ChartRange): r is (typeof CHART_RANGES)[number] => (CHART_RANGES as readonly string[]).includes(r);
 
 export const CHART_NOTE = "Updates when Chainlink publishes a new price, not on every trade.";
 export const NO_CHART_DATA = "No chart data yet.";
@@ -28,6 +49,8 @@ export type ChartMarker =
 
 export interface ChartData {
   symbol: string;
+  /** The company's name, when the source gives one (a stock outside the catalog: "NVIDIA Corporation"). */
+  name?: string;
   range: ChartRange;
   points: ChartPoint[];
   source: { label: string; detail: string; note?: string };

@@ -18,7 +18,7 @@ import type { ChartAnnotation } from "@glance/core/showme";
 
 import { chartMarkGeometry, priceLookup } from "./chartMarks";
 import type { ChartLens } from "./chartLens";
-import { cropScreenshot, isGlanceRange, pickPageChart, pixelLineReader, readDomLabels, svgLineReader, type PageChartTarget } from "./pageChart";
+import { cropScreenshot, pickPageChart, pixelLineReader, readDomLabels, svgLineReader, type PageChartTarget } from "./pageChart";
 import type { ShowDrawings } from "./showDraw";
 
 export interface LensFlowDeps {
@@ -51,6 +51,8 @@ export type PageChartSession = {
   drawOn: "page" | "lens";
   method: Calibration["method"] | null;
   reason: string;
+  /** The user asked for the lens (not a fallback): no "I can't read this chart" line. */
+  forced: boolean;
   annotate(a: ChartAnnotation): void;
   lens: ChartLens | null;
 };
@@ -76,19 +78,19 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   const log = deps.log ?? (() => {});
   const target = pickPageChart(deps.doc, deps.win, deps.symbols, deps.named, deps.aliases);
   if (!target) return { kind: "none" };
-  const range: ChartRange = opts.confirmed?.range ?? (isGlanceRange(target.range) ? target.range : "1W");
+  // The page's own timeframe decides the window (TradingView's "6 months" is 6 months of candles).
+  const range: ChartRange = opts.confirmed?.range ?? target.range ?? "1W";
   const symbol = opts.confirmed?.symbol ?? target.symbol;
   if (!opts.confirmed && (target.unsure || !symbol)) return { kind: "ask", question: target.unsure ?? "Which stock is this chart?", symbol, range };
   if (!symbol) return { kind: "none" };
 
   const [data, facts] = await Promise.all([deps.chart(symbol, range), deps.facts(symbol, range)]);
   if (!data || !facts) return { kind: "unavailable", message: `I don't have ${symbol}'s prices for that range right now.` };
-  const lens = (reason: string): PageChartSession => {
+  const lens = (reason: string, forced = false): PageChartSession => {
     const l = deps.openLens(target.el, data);
-    log(`[glance] chart lens: Glance's chart over the page's (${reason})`);
-    return { kind: "ready", symbol, range, site: target.site, drawOn: "lens", method: null, reason, annotate: (a) => l.annotate(a), lens: l };
+    return { kind: "ready", symbol, range, site: target.site, drawOn: "lens", method: null, reason, forced, annotate: (a) => l.annotate(a), lens: l };
   };
-  if (opts.forceLens) return lens("asked for the lens");
+  if (opts.forceLens) return lens("asked for the lens", true);
 
   const nowMs = deps.now?.() ?? Date.now();
   const asOf = Math.floor(nowMs / 1000);
@@ -104,7 +106,7 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   else if (kept && nowMs - kept.at < CALIBRATION_TTL_MS) {
     // b) this chart was read in the last 10 minutes: no new screenshot or vision call
     ({ cal, lineAt, box: calibratedAt } = kept);
-    log(`[glance] chart lens: calibration reused (${Math.round((nowMs - kept.at) / 1000)}s old)`);
+    log(`[glance] chart: calibration reused (${Math.round((nowMs - kept.at) / 1000)}s old)`);
   } else {
     // b) a screenshot, read by the vision model (only the labels; the scale is fitted here)
     const shot = await deps.capture();
@@ -132,7 +134,6 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
     [facts.first, facts.last, facts.high, facts.low, ...[facts.biggestDrop, facts.biggestRise, facts.maxDrawdown].flatMap((m) => (m ? [m.from, m.to] : []))],
   );
   const anchor = { at: calibratedAt, now: () => (target.el.isConnected ? rectOf(target.el) : null) };
-  log(`[glance] chart lens: drawing on the page's chart (${cal.method}, ${cal.time.kind} time axis; ${check.reason})`);
   return {
     kind: "ready",
     symbol,
@@ -140,10 +141,33 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
     site: target.site,
     drawOn: "page",
     method: cal.method,
-    reason: check.reason,
+    reason: `${cal.time.kind} time axis; ${check.reason}`,
+    forced: false,
     annotate: (a) => void deps.drawings()?.drawChart(a.kind, chartMarkGeometry(a, cal!, anchor, priceAt), target.el),
     lens: null,
   };
+}
+
+/**
+ * The one log line for a chart request: which path was chosen (the page's chart, calibrated from its DOM labels or by
+ * vision; Glance's overlay; Glance's own chart) and why.
+ */
+export function chartPathLine(p: Prepared, question: string): string {
+  const q = JSON.stringify(question.slice(0, 60));
+  switch (p.kind) {
+    case "ready":
+      return p.drawOn === "page"
+        ? `[glance] chart ${q}: page chart via ${p.method === "dom" ? "DOM labels" : "vision"} (${p.symbol} ${p.range}; ${p.reason})`
+        : `[glance] chart ${q}: Glance overlay (${p.symbol} ${p.range}; ${p.reason})`;
+    case "ask":
+      return `[glance] chart ${q}: asked first (${p.question})`;
+    case "no-screenshot":
+      return `[glance] chart ${q}: no screenshot yet (${p.symbol} ${p.range}; the page's labels aren't text and the glance key hasn't been pressed)`;
+    case "unavailable":
+      return `[glance] chart ${q}: no prices (${p.message})`;
+    case "none":
+      return `[glance] chart ${q}: Glance's own chart (no chart on this page)`;
+  }
 }
 
 const rectOf = (el: Element) => {

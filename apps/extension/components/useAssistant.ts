@@ -158,6 +158,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
         text,
         g.catalog.map((s) => ({ symbol: s.symbol, aliases: s.aliases })),
         baskets.map((b) => b.name),
+        contextRef.current?.().pageStock ?? null,
       );
       setHeard(text);
       void tick("ask"); // "Getting started": asked Glance something
@@ -174,6 +175,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
         }
         case "sellBasket":
           return say(LINES.basketSell);
+        case "notTradable":
+          return say(LINES.notTradable(cmd.name, g.catalog.map((s) => s.symbol)), "Your vault's approved stocks");
         case "price": {
           setCard({ kind: "company", symbol: cmd.symbol, key: ++seq.current });
           g.setOrb({ state: "thinking", line: `Checking ${cmd.symbol}`, meta: "" });
@@ -274,8 +277,9 @@ export function useAssistant(opts: AssistantOptions = {}) {
       const meta = `Heard “${said}”`;
       switch (it.intent) {
         case "buy":
-          // The same confirm card as typing: preflight, review, and nothing moves without the tap.
-          setCard({ kind: "company", symbol: it.symbol!, autoAmount: it.amount ?? undefined, key: ++seq.current });
+          // The same confirm card as typing: preflight, review, and nothing moves without the tap. A stock outside
+          // the catalog opens nothing: the reply (already speaking) says the vault doesn't trade it.
+          if (it.symbol) setCard({ kind: "company", symbol: it.symbol, autoAmount: it.amount ?? undefined, key: ++seq.current });
           break;
         case "sell":
           // The reply (already speaking) named the sell; the card quotes it and waits for the tap. A basket names no

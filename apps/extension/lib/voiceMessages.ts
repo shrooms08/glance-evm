@@ -79,6 +79,8 @@ export interface VoiceCommandContext {
   lastGuard?: { code: string; message: string } | null;
   lastReply?: string | null;
   openCard?: string | null;
+  /** The stock the page is about (any US ticker): explained if asked, refused plainly if traded outside the catalog. */
+  pageStock?: { symbol: string; name: string } | null;
 }
 
 export type VoiceRequest =

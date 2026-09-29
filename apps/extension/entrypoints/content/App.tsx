@@ -42,9 +42,9 @@ import { listFigures, readPage } from "../../lib/pageRead";
 import { chartAnnotations } from "../../lib/chartAnnotations";
 import { CHART_DRAWINGS_MS } from "../../lib/chartAnnotations";
 import { ChartLens } from "../../lib/chartLens";
-import { preparePageChart, type PageChartSession } from "../../lib/chartLensFlow";
+import { chartPathLine, preparePageChart, type PageChartSession } from "../../lib/chartLensFlow";
 import { companiesInText } from "../../lib/commands";
-import { wantsPageChart } from "../../lib/pageChart";
+import { chooseChartRoute, findChartCandidates, pageStock } from "../../lib/pageChart";
 import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
 import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
@@ -140,7 +140,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const companiesRef = useRef<PageCompany[]>([]);
   const host = location.hostname.replace(/^www\./, "");
   // What the voice API may use to understand a command: this page and the companies found on it.
-  voiceContext.current = () => ({ host, companies: companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })) });
+  voiceContext.current = () => ({
+    host,
+    companies: companies.map((c) => ({ symbol: c.symbol, mentions: c.mentions })),
+    pageStock: pageStock(document, g.catalog.map((s) => s.symbol)),
+  });
 
   useEffect(() => underliner.onChange(setMentions), [underliner]);
 
@@ -261,7 +265,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         annotate: (a) =>
           session ? session.annotate(a) : docked ? void send({ kind: "chart:annotate", annotation: a }).catch(() => {}) : chartAnnotations.annotate(a),
         openChart: () => (session ? { symbol: session.symbol, range: session.range } : chartAnnotations.showing),
-        pageChart: () => (session ? { symbol: session.symbol, range: session.range, site: session.site, drawOn: session.drawOn } : null),
+        pageChart: () =>
+          session ? { symbol: session.symbol, range: session.range, site: session.site, drawOn: session.drawOn, method: session.method, reason: session.reason, forced: session.forced } : null,
         portfolio: () => {
           if (docked) void requestCard({ kind: "portfolio" });
           else assistant.setCard({ kind: "portfolio", key: Date.now() });
@@ -295,11 +300,18 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           return false;
         }
       })();
-      if (onConsole || (!wantsPageChart(question) && !lens.confirmed)) return startShowMe(question, onConsole, null);
+      const named = companiesInText(question, g.catalog)[0] ?? null;
+      if (!onConsole && !lens.confirmed) {
+        // Which chart the question is about: the page's (any US stock), or Glance's own. One log line either way.
+        const symbols = g.catalog.map((s) => s.symbol);
+        const route = chooseChartRoute(question, { hasChart: findChartCandidates(document, window).length > 0, pageSymbol: pageStock(document, symbols)?.symbol ?? null, named });
+        if (route.route === "glance") console.info(`[glance] chart ${JSON.stringify(question.slice(0, 60))}: Glance's own chart (${route.reason})`);
+        if (route.route !== "page") return startShowMe(question, onConsole, null);
+      }
+      if (onConsole) return startShowMe(question, onConsole, null);
       void (async () => {
         g.setOrb({ state: "thinking", line: "Looking at this chart…", meta: "Chart lens" });
         const aliases = Object.fromEntries(g.catalog.map((s) => [s.symbol, [s.name, ...s.aliases]]));
-        const named = companiesInText(question, g.catalog)[0] ?? null;
         const prep = await preparePageChart(
           {
             doc: document,
@@ -321,10 +333,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               lensRef.current = l;
               return l;
             },
-            log: (l) => void (import.meta.env.DEV && console.info(l)),
+            log: (l) => console.info(l),
           },
           lens,
         );
+        console.info(chartPathLine(prep, question));
         const key = g.shortcuts?.glance || keyLabel(g.glanceKey);
         const offer = (line: string, options: Array<{ label: string; run(): void }>) => {
           g.setOrb({ state: "idle", line, meta: "Chart lens" });
@@ -402,7 +415,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         setDocked(msg.open);
       }
       if ((msg.kind === "page:matches" || msg.kind === "page:scan") && gatedRef.current !== false) return Promise.resolve({ host, companies: [] });
-      if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog) });
+      if (msg.kind === "page:matches") return Promise.resolve({ host, companies: companiesFrom(underliner.current(), g.catalog), pageStock: pageStock(document, g.catalog.map((s) => s.symbol)) });
       if (msg.kind === "page:scan") return underliner.glance().then(() => ({ host, companies: companiesFrom(underliner.current(), g.catalog) }));
       if (msg.kind === "page:reveal") underliner.reveal(msg.symbol);
       // Docked: a question asked in the side panel, answered here (this page is what it's about).
