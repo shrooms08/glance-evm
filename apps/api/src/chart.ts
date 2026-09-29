@@ -260,7 +260,8 @@ export function chainlinkReader(client: PublicClient, feed: Address): FeedReader
 }
 
 export interface QuoteHistory {
-  points: Array<{ t: number; price: number }>;
+  /** Each candle's close (`price`), with its open, high and low when the source gives them (candle formations). */
+  points: Array<{ t: number; price: number; open?: number; high?: number; low?: number }>;
   detail: string;
   /** The company's name, as the source gives it ("NVIDIA Corporation"). */
   name?: string;
@@ -305,12 +306,28 @@ export async function yahooHistory(ticker: string, range: ChartRange, doFetch: t
   });
   if (!res.ok) throw new Error(`Yahoo answered ${res.status}`);
   const body = (await res.json()) as {
-    chart?: { result?: Array<{ meta?: { shortName?: string; longName?: string }; timestamp?: number[]; indicators?: { quote?: Array<{ close?: Array<number | null> }> } }> };
+    chart?: {
+      result?: Array<{
+        meta?: { shortName?: string; longName?: string };
+        timestamp?: number[];
+        indicators?: { quote?: Array<{ close?: Array<number | null>; open?: Array<number | null>; high?: Array<number | null>; low?: Array<number | null> }> };
+      }>;
+    };
   };
   const r = body.chart?.result?.[0];
   const ts = r?.timestamp ?? [];
-  const close = r?.indicators?.quote?.[0]?.close ?? [];
-  const points = ts.flatMap((t, i) => (typeof close[i] === "number" && close[i]! > 0 ? [{ t, price: close[i]! }] : []));
+  const quote = r?.indicators?.quote?.[0];
+  const close = quote?.close ?? [];
+  const num = (a: Array<number | null> | undefined, i: number) => (typeof a?.[i] === "number" && a[i]! > 0 ? a[i]! : null);
+  const points = ts.flatMap((t, i) => {
+    const price = num(close, i);
+    if (price === null) return [];
+    // The candle whole when the source gives it (open, high and low), for candle formations; the close alone otherwise.
+    const open = num(quote?.open, i);
+    const high = num(quote?.high, i);
+    const low = num(quote?.low, i);
+    return [open !== null && high !== null && low !== null && high >= Math.max(open, price, low) && low <= Math.min(open, price) ? { t, price, open, high, low } : { t, price }];
+  });
   if (points.length === 0) throw new Error("Yahoo: no history");
   const name = r?.meta?.longName || r?.meta?.shortName;
   return { points, detail: `Yahoo Finance ${ticker}, ${p.label} closes${opts.prepost ? " (with pre- and after-market)" : ""}`, ...(name ? { name } : {}) };
@@ -324,7 +341,12 @@ export const MARKET_SOURCE = "Yahoo Finance";
  * history (a page's "6 months"). Candles from Yahoo Finance's public chart endpoint, cached per ticker and range.
  */
 export function marketChartData(symbol: string, range: ChartRange, h: QuoteHistory, asOf: number, name?: string): ChartData {
-  const points = h.points.map((p) => ({ t: p.t, price: p.price, formatted: formatUsd(BigInt(Math.round(p.price * 100)), 2) }));
+  const points = h.points.map((p) => ({
+    t: p.t,
+    price: p.price,
+    formatted: formatUsd(BigInt(Math.round(p.price * 100)), 2),
+    ...(p.open !== undefined && p.high !== undefined && p.low !== undefined ? { open: p.open, high: p.high, low: p.low } : {}),
+  }));
   return {
     symbol,
     name: name ?? h.name ?? symbol,

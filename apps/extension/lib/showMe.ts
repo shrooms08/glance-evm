@@ -96,6 +96,23 @@ export interface ShowMeDeps {
    */
   askStream?(body: ShowMeRequest, onSentence: (s: StreamSentence) => void): Promise<{ ok: true; source: string } | { ok: false; message: string }>;
   speakParts?(h: PartsHandlers): { push(text: string): number | null; end(): void; result: Promise<"ended" | "cut" | "unavailable" | "resting" | "off"> };
+  /**
+   * One more sentence, written in code, said after the streamed answer (a page chart's most recent strong candle
+   * formation), with what it draws when its part starts.
+   */
+  afterword?(): { text: string; draw(): void } | null;
+}
+
+/** What each spoken part drives: its drawings, started, advanced, finished or cancelled with its audio. */
+type PartDrawings = Pick<ShowScheduler, "start" | "progress" | "finish" | "cancel">;
+
+/** The drawings of a sentence written in code: all at once, when its part starts (or at the end, with no voice). */
+function drawOnce(draw: () => void): PartDrawings {
+  let done = false;
+  const go = () => {
+    if (!done) (done = true), draw();
+  };
+  return { start: go, progress: () => {}, finish: go, cancel: () => void (done = true) };
 }
 
 export interface ShowMeRun {
@@ -211,8 +228,8 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
    * Streamed: each sentence has its own scheduler, started when its part starts playing and driven by that part's
    * progress, so its tags fire relative to its own audio. A cut stops the drawings where the words got to.
    */
-  const perPart: ShowScheduler[] = [];
-  const everyScheduler: ShowScheduler[] = [];
+  const perPart: PartDrawings[] = [];
+  const everyScheduler: PartDrawings[] = [];
   async function streamed() {
     d.say("Let me look…", "thinking");
     const page = d.readPage();
@@ -241,6 +258,17 @@ export function runShowMe(question: string, d: ShowMeDeps): ShowMeRun {
       if (part === null) sched.finish(); // no words (tags only), or spoken replies off: act now
       else perPart[part] = sched;
     });
+    // A sentence of our own after the answer (never in place of one).
+    const after = res.ok && full && !cancelled ? d.afterword?.() : null;
+    if (after) {
+      const sched = drawOnce(after.draw);
+      everyScheduler.push(sched);
+      full = `${full} ${after.text}`;
+      d.say(full, "speaking");
+      const part = voice.push(after.text);
+      if (part === null) sched.finish();
+      else perPart[part] = sched;
+    }
     voice.end();
     if (cancelled) return;
     if (!res.ok && !full) {

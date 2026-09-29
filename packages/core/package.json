@@ -24,7 +24,8 @@
     "./chart-facts": "./src/chartFacts.ts",
     "./page-chart": "./src/pageChart.ts",
     "./keyterms": "./src/keyterms.ts",
-    "./freshness": "./src/freshness.ts"
+    "./freshness": "./src/freshness.ts",
+    "./candles": "./src/candles.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

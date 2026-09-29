@@ -1,0 +1,49 @@
+[
+  {
+    "site": "tradingview",
+    "symbol": "TSLA",
+    "range": "5 days",
+    "screenshot": "docs/qa/candles-tradingview-tsla.png",
+    "series": "line",
+    "found": [
+      "Doji",
+      "Spinning top",
+      "Inside bar"
+    ],
+    "marks": 3,
+    "voice": {
+      "outcome": "ended",
+      "breaks": 0
+    },
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1W series=line found=[\"Doji\",\"Spinning top\",\"Inside bar\"] marks=3"
+  },
+  {
+    "site": "tradingview",
+    "symbol": "NVDA",
+    "range": "1 month",
+    "screenshot": "docs/qa/candles-tradingview-nvda.png",
+    "series": "line",
+    "found": [
+      "Bearish marubozu",
+      "Inside bar",
+      "Spinning top"
+    ],
+    "marks": 3,
+    "voice": {
+      "outcome": "ended",
+      "breaks": 0
+    },
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=NVDA range=1M series=line found=[\"Bearish marubozu\",\"Inside bar\",\"Spinning top\"] marks=3"
+  },
+  {
+    "site": "tradingview chart",
+    "symbol": "TSLA",
+    "range": "(the page's default)",
+    "screenshot": "docs/qa/candles-tradingview-chart-tsla.png",
+    "series": null,
+    "found": [],
+    "marks": 0,
+    "voice": null,
+    "log": "[glance] chart \"Any candle patterns here?\": asked first (Which chart: TSLA 5 days?) marks=0 ownChart=no"
+  }
+]

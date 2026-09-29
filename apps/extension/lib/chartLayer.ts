@@ -7,6 +7,8 @@
  *   CHART_TREND   a line between two prices, with an arrow at the end (the direction)
  *   CHART_POINT   a circle on a price (a bounce, the high, the low) with a small label
  *   CHART_RANGE   a shaded box: that stretch of time, from its low to its high (a range, a consolidation)
+ *   PATTERN       a candle formation: a shaded box across its bars from their low to their high, with its name
+ *                 (lime bullish, soft red bearish, gray neutral)
  *
  * Every time and price is one of Glance's computed facts; the model only chose which to mention. Marks appear one by
  * one: as their sentence reaches them, and never closer than 400ms apart. Glance lime with a thin dark outline, so
@@ -17,12 +19,18 @@ import { during } from "./workLabel";
 import { color } from "@glance/design";
 import { priceToPx, timeToPx, type Box, type Calibration } from "@glance/core/page-chart";
 import type { ChartAnnotation } from "@glance/core/showme";
+import type { PatternMark } from "./candleAnswer";
 
 const SVG = "http://www.w3.org/2000/svg";
 /** Marks never appear closer together than this. */
 export const MARK_GAP_MS = 400;
 const OUTLINE = color.canvas;
 const MARK = color.lime;
+/** A candle formation's box: lime when bullish, the soft red when bearish, gray when neutral. */
+export const PATTERN_COLOR = { bullish: color.lime, bearish: color.down, neutral: color.mute } as const;
+
+/** Anything the layer draws: a chart tag, or a candle formation's box. */
+export type LayerMark = ChartAnnotation | PatternMark;
 
 /** A mark's shapes, in the chart box's coordinates (0,0 is the chart's top-left when it was calibrated). */
 export type MarkShape =
@@ -38,7 +46,7 @@ const usd = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits
  * they were at calibration), minus the box's corner. Null when it would fall outside the plot (never guessed).
  */
 export function markShapes(
-  a: ChartAnnotation,
+  a: LayerMark,
   c: Calibration,
   at: Box,
   priceAt: (t: number) => number | null,
@@ -86,6 +94,31 @@ export function markShapes(
         { kind: "polygon", points: [[x2, y2], head(0.45), head(-0.45)] },
       ];
     }
+    case "PATTERN": {
+      // Half way to the candles either side, so the box covers the bars themselves.
+      const x1 = X(a.t1);
+      const x2 = X(a.t2);
+      const half = (from: number, to: number | null, other: number | null, sign: number) => (to !== null ? Math.abs(X(to) - from) / 2 : other !== null ? Math.abs(X(other) - from) / 2 : 4) * sign;
+      const xa = Math.max(plot.x0, x1 + half(x1, a.before, a.after, -1));
+      const xb = Math.min(plot.x1, x2 + half(x2, a.after, a.before, 1));
+      const ya = Math.max(plot.y0, Y(a.high));
+      const yb = Math.min(plot.y1, Y(a.low));
+      if (xb - xa < 1 || !inX(x1) || !inX(x2) || yb <= ya) return null;
+      const pad = 3;
+      const above = ya - pad - plot.y0 > 18;
+      return [
+        {
+          kind: "polygon",
+          points: [
+            [xa, ya - pad],
+            [xb, ya - pad],
+            [xb, yb + pad],
+            [xa, yb + pad],
+          ],
+        },
+        { kind: "text", x: (xa + xb) / 2, y: above ? ya - pad - 6 : yb + pad + 15, text: a.label, anchor: "middle" },
+      ];
+    }
     case "CHART_RANGE": {
       const prices = pricesBetween(a.t1, a.t2);
       const xa = Math.max(plot.x0, X(a.t1));
@@ -127,7 +160,7 @@ export class ChartLayer {
   private readonly win: Window;
   private readonly observer: ResizeObserver | null;
   private readonly timer: number;
-  private queue: ChartAnnotation[] = [];
+  private queue: LayerMark[] = [];
   private lastDrawn = -Infinity;
   private drain: number | null = null;
   private closed = false;
@@ -183,7 +216,7 @@ export class ChartLayer {
   }
 
   /** Draws one computed mark, as soon as the last one is at least MARK_GAP_MS old. */
-  add(a: ChartAnnotation) {
+  add(a: LayerMark) {
     if (this.closed) return;
     this.queue.push(a);
     this.pump();
@@ -202,22 +235,38 @@ export class ChartLayer {
     }, wait);
   }
 
-  private draw(a: ChartAnnotation) {
+  private draw(a: LayerMark) {
     during("mark drawing", () => this.drawNow(a));
   }
 
-  private drawNow(a: ChartAnnotation) {
+  private drawNow(a: LayerMark) {
     const shapes = markShapes(a, this.cal, this.at, this.priceAt, this.pricesBetween);
     if (!shapes) return;
     const g = this.svg.ownerDocument.createElementNS(SVG, "g");
     g.setAttribute("data-mark", a.kind.toLowerCase());
-    for (const s of shapes) this.shape(s, a.kind, g);
+    if (a.kind === "PATTERN") g.setAttribute("data-direction", a.direction);
+    const stroke = a.kind === "PATTERN" ? PATTERN_COLOR[a.direction] : MARK;
+    // Formations side by side: each name moved up (or down) until it clears the names already drawn.
+    const placed = a.kind === "PATTERN" ? shapes.map((s) => (s.kind === "text" ? { ...s, y: this.clearLabel(s) } : s)) : shapes;
+    for (const s of placed) this.shape(s, a.kind, g, stroke);
     this.svg.append(g);
     this.drawn++;
   }
 
-  /** One shape: a dark outline under a lime stroke (text: a dark halo), so it reads on any chart. */
-  private shape(s: MarkShape, kind: string, parent: Element = this.svg) {
+  /** Where the formation names already are (box coordinates), so the next one doesn't sit on them. */
+  private labels: Array<{ x0: number; x1: number; y: number }> = [];
+
+  private clearLabel(t: Extract<MarkShape, { kind: "text" }>): number {
+    const half = (t.text.length * 6.6) / 2 + 2;
+    const hits = (y: number) => this.labels.some((l) => t.x + half > l.x0 && t.x - half < l.x1 && Math.abs(l.y - y) < 14);
+    let y = t.y;
+    for (let k = 1; k <= 4 && hits(y); k++) y = t.y - 14 * k;
+    this.labels.push({ x0: t.x - half, x1: t.x + half, y });
+    return y;
+  }
+
+  /** One shape: a dark outline under a lime (or the formation's) stroke (text: a dark halo), so it reads on any chart. */
+  private shape(s: MarkShape, kind: string, parent: Element = this.svg, stroke: string = MARK) {
     const doc = this.svg.ownerDocument;
     const el = (name: string, attrs: Record<string, string | number>) => {
       const e = doc.createElementNS(SVG, name);
@@ -230,10 +279,11 @@ export class ChartLayer {
       el("circle", { cx: s.kind === "circle" ? s.cx : 0, cy: s.kind === "circle" ? s.cy : 0, r: 2, fill: MARK, stroke: OUTLINE, "stroke-width": 0.8, "data-dot": "1" });
       return;
     }
-    const fillZone = kind === "CHART_RANGE";
+    const fillZone = kind === "CHART_RANGE" || kind === "PATTERN";
+    const opacity = kind === "PATTERN" ? 0.16 : fillZone ? 0.08 : 1;
     const both = (name: string, attrs: Record<string, string | number>, width: number) => {
-      el(name, { ...attrs, fill: fillZone && name === "polygon" ? MARK : name === "polygon" ? MARK : "none", "fill-opacity": fillZone ? 0.08 : 1, stroke: OUTLINE, "stroke-width": width + 2, "stroke-opacity": 0.55 });
-      el(name, { ...attrs, fill: fillZone && name === "polygon" ? MARK : name === "polygon" ? MARK : "none", "fill-opacity": fillZone ? 0.08 : 1, stroke: MARK, "stroke-width": width });
+      el(name, { ...attrs, fill: name === "polygon" ? stroke : "none", "fill-opacity": opacity, stroke: OUTLINE, "stroke-width": width + 2, "stroke-opacity": 0.55 });
+      el(name, { ...attrs, fill: name === "polygon" ? stroke : "none", "fill-opacity": opacity, stroke, "stroke-width": width });
     };
     switch (s.kind) {
       case "line":
@@ -246,7 +296,7 @@ export class ChartLayer {
         both("polygon", { points: s.points.map((p) => p.join(",")).join(" "), "stroke-linejoin": "round" }, 1.5);
         break;
       case "text": {
-        const t = el("text", { x: s.x, y: s.y, "text-anchor": s.anchor, fill: MARK, stroke: OUTLINE, "stroke-width": 3, "paint-order": "stroke", "font-size": 12, "font-weight": 600 });
+        const t = el("text", { x: s.x, y: s.y, "text-anchor": s.anchor, fill: stroke, stroke: OUTLINE, "stroke-width": 3, "paint-order": "stroke", "font-size": 12, "font-weight": 600 });
         t.textContent = s.text;
         break;
       }
@@ -263,6 +313,7 @@ export class ChartLayer {
   clear() {
     this.queue = [];
     for (const g of [...this.svg.querySelectorAll("g[data-mark]")]) g.remove();
+    this.labels = [];
     this.drawn = 0;
   }
 

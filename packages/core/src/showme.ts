@@ -21,6 +21,7 @@
  * trade. At most MAX_DRAWINGS drawings a reply. Quotes are at most MAX_QUOTE characters (a longer one is cut at a word boundary). Any other bracketed text is
  * dropped from what's spoken.
  */
+import { candleIntent } from "./candles.ts";
 
 export const MAX_QUOTE = 80;
 /** Drawings (marks on the page or on a chart) per reply; any beyond it are dropped. */
@@ -350,6 +351,8 @@ export function isAsk(text: string): boolean {
   const t = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ").trim();
   return (
     isChartQuestion(t) ||
+    // Candle formations: "any candle patterns here?", "what's that last candle?", "what's a hammer?".
+    candleIntent(t) !== null ||
     // About the shape of a chart: where it bounced, its support, whether this is an entry (the answer never advises).
     /\b(support|resistance|good entry|an entry|entry point|bounce[ds]?|bouncing|rebound(ed)?|consolidat(ion|ing|ed))\b/.test(t) ||
     /\b(this|the|that) (article|page|story|post|piece|chart|graph|image|picture|table|paragraph|section|headline|report)\b/.test(t) ||

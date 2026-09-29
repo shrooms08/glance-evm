@@ -50,7 +50,9 @@ import { companiesInText } from "../../lib/commands";
 import { chooseChartRoute, findChartCandidates, pageStock, selectedRange } from "../../lib/pageChart";
 import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
-import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
+import { CUT_NOTE, downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
+import { candleAnswer, explainerAnswer, explainsChart, NO_CHART_FOR_CANDLES, strongPatternSentence, type CandleSentence } from "../../lib/candleAnswer";
+import { candleIntent } from "@glance/core/candles";
 import { hush, speak, speakParts, warmVoice } from "../../lib/voiceClient";
 import { askStream } from "../../lib/showStreamClient";
 import { capturePage, type PageContext } from "../../lib/journal";
@@ -158,6 +160,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const layerRef = useRef<HTMLDivElement>(null);
   const drawings = useRef<ShowDrawings | null>(null);
   const showRun = useRef<ShowMeRun | null>(null);
+  /** "Switch the chart to candles to see it clearly." is said once a page. */
+  const lineNoteSaid = useRef(false);
   const [flyRange, setFlyRange] = useState<Range | null>(null);
   const [flyPos, setFlyPos] = useState<OrbPosition | null>(null);
   const [orbFlying, setOrbFlying] = useState(false);
@@ -274,6 +278,15 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         },
         askStream,
         speakParts: (h) => speakParts(g.voiceReplies, h),
+        // "Explain this chart" on the page's own chart: one more sentence, on its most recent strong candle formation.
+        afterword:
+          session && explainsChart(question)
+            ? () => {
+                const s = strongPatternSentence({ points: session.data.points, series: session.series, prepost: Boolean(session.candles.prepost) });
+                if (s) console.info(`[glance] candles ${JSON.stringify(question.slice(0, 60))}: strong pattern ${s.mark?.label ?? "?"}`);
+                return s ? { text: s.text, draw: () => s.mark && session.markPattern(s.mark) } : null;
+              }
+            : undefined,
         surface: onConsole ? "console" : "page",
         capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null),
         downscale: downscaleJpeg,
@@ -327,6 +340,50 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     [g, docked, assistant, showChart, showOwnChart],
   );
 
+  /**
+   * An answer written in code (candle questions: lib/candleAnswer.ts), spoken sentence by sentence with each one's mark
+   * drawn on the page's chart as its sentence starts. Cancelled like a Show me answer (the next question, Escape).
+   */
+  const answerInCode = useCallback(
+    (question: string, sentences: CandleSentence[], session: PageChartSession | null) => {
+      const text = sentences.map((s) => s.text).join(" ");
+      const meta = session ? "Chart lens" : "";
+      const marks = sentences.map((s) => s.mark ?? null);
+      const drawn = new Set<number>();
+      const draw = (i: number) => {
+        const m = marks[i];
+        if (!m || !session || drawn.has(i)) return;
+        drawn.add(i);
+        session.markPattern(m);
+      };
+      g.setOrb({ state: "speaking", line: text, meta });
+      let cancelled = false;
+      const voice = speakParts(g.voiceReplies, { onPart: (i) => !cancelled && draw(i) });
+      sentences.forEach((s, i) => {
+        if (voice.push(s.text) === null) draw(i); // no voice: its mark at once
+      });
+      voice.end();
+      const finished = voice.result.then((outcome) => {
+        if (cancelled) return;
+        // No voice (off, resting, unavailable): every mark, with the text on screen. A cut keeps what was said.
+        if (outcome !== "ended" && outcome !== "cut") marks.forEach((_, i) => draw(i));
+        g.setOrb({ state: "idle", line: text, meta: outcome === "cut" ? CUT_NOTE : meta });
+        if (session) {
+          const found = sentences.flatMap((s) => (s.mark ? [s.mark.label] : []));
+          setTimeout(() => console.info(`[glance] candles ${JSON.stringify(question.slice(0, 60))}: site=${session.site} symbol=${session.symbol} range=${session.range} series=${session.series ?? "unknown"} found=${JSON.stringify(found)} marks=${session.layer.drawn}`), 1_500);
+        }
+      });
+      showRun.current = {
+        finished,
+        cancel() {
+          cancelled = true;
+          hush();
+        },
+      };
+    },
+    [g],
+  );
+
   const ask = useCallback(
     (question: string, lens: { confirmed?: { symbol: string; range: ChartRange } } = {}) => {
       showRun.current?.cancel();
@@ -341,6 +398,10 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         }
       })();
       const named = companiesInText(question, g.catalog)[0] ?? null;
+      // Candle questions: answered in code (the detector and the explainer), never by the model.
+      const candle = candleIntent(question);
+      if (candle?.kind === "explain") return answerInCode(question, explainerAnswer(candle.id), null);
+      if (candle && !onConsole && findChartCandidates(document, window).length === 0) return answerInCode(question, [{ text: NO_CHART_FOR_CANDLES }], null);
       // "Show me your chart": Glance's own, only on this explicit request (docked, never over the page's chart).
       if (!onConsole && wantsOwnChart(question)) {
         const own = named ?? pageStock(document, g.catalog.map((s) => s.symbol))?.symbol ?? companiesRef.current[0]?.symbol ?? null;
@@ -349,7 +410,9 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
       if (!onConsole && !lens.confirmed) {
         // Which chart the question is about: the page's (any US stock), or Glance's own. One log line either way.
         const symbols = g.catalog.map((s) => s.symbol);
-        const route = chooseChartRoute(question, { hasChart: findChartCandidates(document, window).length > 0, pageSymbol: pageStock(document, symbols)?.symbol ?? null, named });
+        const route = candle
+          ? { route: "page" as const, reason: "a candle question about this chart" }
+          : chooseChartRoute(question, { hasChart: findChartCandidates(document, window).length > 0, pageSymbol: pageStock(document, symbols)?.symbol ?? null, named });
         if (route.route === "glance") console.info(`[glance] chart ${JSON.stringify(question.slice(0, 60))}: Glance's own chart (${route.reason})`);
         if (route.route !== "page") return startShowMe(question, onConsole, null);
       }
@@ -415,11 +478,16 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
             return void speak(LINES.cantLineUp, g.voiceReplies);
           }
           case "ready":
+            if (candle) {
+              const sentences = candleAnswer(candle, { points: prep.data.points, series: prep.series, prepost: Boolean(prep.candles.prepost) }, lineNoteSaid.current);
+              if (prep.series === "line") lineNoteSaid.current = true;
+              return answerInCode(question, sentences, prep);
+            }
             return startShowMe(question, false, prep);
         }
       })();
     },
-    [g, assistant, startShowMe, showOwnChart],
+    [g, assistant, startShowMe, showOwnChart, answerInCode],
   );
   askRef.current = ask;
   /** A spoken or typed "yes" / "no" to rule 3's question. True when there was one to answer. */

@@ -19,6 +19,8 @@ import type { ChartData, ChartRange } from "@glance/core/chart";
 import type { ChartFacts } from "@glance/core/chart-facts";
 import { calibrate, parseVisionLabels, priceToPx, sanityCheck, type AxisLabel, type Box, type Calibration } from "@glance/core/page-chart";
 import type { ChartAnnotation } from "@glance/core/showme";
+import type { PatternMark } from "./candleAnswer";
+import type { LayerMark } from "./chartLayer";
 
 import { betterFit, fitTraceBy, MAX_RANGE_ERROR, traceSeries, type TraceFit } from "./canvasTrace";
 import { priceLookup } from "./chartMarks";
@@ -26,7 +28,7 @@ import { cropScreenshot, pickPageChart, pixelLineReader, readChartPixels, readDo
 
 /** What the layer needs (lib/chartLayer.ts's ChartLayer; tests pass a fake). */
 export interface MarkLayer {
-  add(a: ChartAnnotation): void;
+  add(a: LayerMark): void;
   close(): void;
   readonly drawn: number;
   readonly isOpen: boolean;
@@ -80,6 +82,12 @@ export type PageChartSession = {
   r2: number | null;
   forced: false;
   annotate(a: ChartAnnotation): void;
+  /** A candle formation's box (lib/candleAnswer.ts), paced like the other marks. */
+  markPattern(m: PatternMark): void;
+  /** The market candles the page's chart matched (with each candle's open, high and low when known). */
+  data: ChartData;
+  /** What the page draws, when the canvas trace could tell: candles, or a line (or area). */
+  series: "candles" | "line" | null;
   /** How many marks the answer asked for (they appear at most every 400ms, so fewer may be drawn yet). */
   readonly annotated: number;
   /** The chart's computed facts: the default marks when an answer mentions none. */
@@ -159,6 +167,7 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   let r2: number | null = null;
   let why = "";
   let dots: Array<{ x: number; y: number }> | null = null;
+  let series: PageChartSession["series"] = null;
 
   // A. The chart's own canvas, traced and fitted.
   // In slices, handing the page back between them (reading, tracing, each fit), so no long task holds the page.
@@ -169,6 +178,7 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
     const trace = during("canvas trace", () => traceSeries(px.pixels, px.dpr));
     if (!trace) reasons.push("canvas: no series found in the chart's pixels");
     else {
+      series = trace.kind === "candles" ? "candles" : "line";
       const points = trace.points.map((p) => ({ x: px.pane.x + p.x / px.dpr, y: px.pane.y + p.y / px.dpr }));
       // The page may draw at its own step, and with or without the pre- and after-market: fit each candle set we
       // have, keep the best one that passes.
@@ -275,6 +285,10 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
       annotated++;
       layer.add(a);
     },
+    // Not counted as the answer's own marks: an explanation still gets its default marks beside a formation's box.
+    markPattern: (m) => layer.add(m),
+    data,
+    series,
     get annotated() {
       return annotated;
     },

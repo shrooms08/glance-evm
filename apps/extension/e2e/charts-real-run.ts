@@ -37,7 +37,7 @@ try {
     if (up) break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  // Which checks: "charts" (default), "voice" (the spoken-answer reproduction), or both ("all").
+  // Which checks: "charts" (default), "voice" (the spoken-answer reproduction), "candles", or every one ("all").
   const which = process.argv[2] ?? "charts";
   const files = which === "all" ? [] : [`e2e/${which}.real.ts`];
   run("pnpm", ["exec", "playwright", "test", "--config", "playwright.real.config.ts", ...files], extension, { E2E_REAL_API: `http://localhost:${PORT}` });
@@ -49,5 +49,11 @@ try {
   const order = ["tradingview:HOG", "tradingview:TSLA", "tradingview:NVDA", "yahoo:TSLA"];
   rows.sort((a, b) => order.indexOf(`${a.site}:${a.symbol}`) - order.indexOf(`${b.site}:${b.symbol}`));
   if (rows.length) writeFileSync(resolve(qa, "chart-annotate.json"), `${JSON.stringify(rows, null, 2)}\n`);
-  for (const f of readdirSync(qa)) if (f.startsWith(".chart-annotate-") || f.startsWith(".voice-")) rmSync(resolve(qa, f));
+  // The candle cases' rows, into docs/qa/candles.json (in the cases' order).
+  const candleRows = ["tradingview-tsla", "tradingview-nvda", "tradingview-chart-tsla"].flatMap((k) => {
+    const f = resolve(qa, `.candles-${k}.json`);
+    return readdirSync(qa).includes(`.candles-${k}.json`) ? [JSON.parse(readFileSync(f, "utf8"))] : [];
+  });
+  if (candleRows.length) writeFileSync(resolve(qa, "candles.json"), `${JSON.stringify(candleRows, null, 2)}\n`);
+  for (const f of readdirSync(qa)) if (f.startsWith(".chart-annotate-") || f.startsWith(".voice-") || f.startsWith(".candles-")) rmSync(resolve(qa, f));
 }

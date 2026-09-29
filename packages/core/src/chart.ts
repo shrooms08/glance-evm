@@ -38,9 +38,13 @@ export const MARKET_CLOSED_LABEL = "Market closed";
 export interface ChartPoint {
   /** Unix seconds. */
   t: number;
-  /** For drawing only; `formatted` is the exact value. */
+  /** For drawing only; `formatted` is the exact value. The close, for a candle. */
   price: number;
   formatted: string;
+  /** A market candle's open, high and low, when the source gives them (candle formations, @glance/core/candles). */
+  open?: number;
+  high?: number;
+  low?: number;
 }
 
 export type ChartMarker =
