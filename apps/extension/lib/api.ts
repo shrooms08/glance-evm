@@ -58,7 +58,7 @@ export interface ShowMeRequest {
   lastGuard?: { code: string; message: string } | null;
   vault?: string;
   noScreenshot?: { glanceKey: string };
-  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean };
+  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "canvas" | "dom" | "vision" | null; reason?: string; forced?: boolean; candles?: { fine?: boolean; prepost?: boolean } };
 }
 
 export interface ShowMeReply {
@@ -103,12 +103,19 @@ export const api = {
   /** Show me, teach and guide: only when the user asks. The page text is sent once and never kept. */
   showme: (body: ShowMeRequest) => call<ShowMeReply>("POST", "/showme", body),
   chart: (symbol: string, range: ChartRange, vault?: string) => call<ChartData>("GET", `/chart/${encodeURIComponent(symbol)}?${q({ range, vault })}`),
+  /** The market's own candles for a symbol and range (Yahoo Finance), even for a catalog stock: to fit a page's chart. */
+  marketCandles: (symbol: string, range: ChartRange, opts: { fine?: boolean; prepost?: boolean } = {}) =>
+    call<ChartData>("GET", `/chart/${encodeURIComponent(symbol)}?${q({ range, market: "1", fine: opts.fine ? "1" : undefined, prepost: opts.prepost ? "1" : undefined })}`),
   /** The chart lens: a page chart's axis labels, read from a crop of a screenshot (only the labels, never a price). */
   calibrateChart: (img: { base64: string; width: number; height: number }) =>
     call<{ labels: unknown; model: string }>("POST", "/chart/calibrate", { image: img.base64, width: img.width, height: img.height }),
   /** The chart's computed breakdown, or a comparison ("TSLA,AMD"): numbers from code, never from a model. */
-  chartFacts: (symbols: readonly string[], range: ChartRange, vault?: string) =>
-    call<ChartFactsView>("GET", `/chart/${symbols.map(encodeURIComponent).join(",")}/facts?${q({ range, vault })}`),
+  /** `market`: from the market's own candles (a page's chart), at a `fine` step or with the `prepost` market. */
+  chartFacts: (symbols: readonly string[], range: ChartRange, vault?: string, candles?: { market?: boolean; fine?: boolean; prepost?: boolean }) =>
+    call<ChartFactsView>(
+      "GET",
+      `/chart/${symbols.map(encodeURIComponent).join(",")}/facts?${q({ range, vault, market: candles?.market ? "1" : undefined, fine: candles?.fine ? "1" : undefined, prepost: candles?.prepost ? "1" : undefined })}`,
+    ),
   /** A buy names USDG; a sell names shares, or `usd` (dollars worth) or `fraction` ("1" all, "0.5" half). */
   quote: (p: { vault: string; symbol: string; side: Side; amount?: string; usd?: string; fraction?: "1" | "0.5"; slippageBps?: number }) =>
     call<Quote>("GET", `/quote?${q(p)}`),

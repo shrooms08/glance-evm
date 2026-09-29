@@ -24,7 +24,7 @@ import { safely, send } from "../../lib/lifecycle";
 import type { AssistantMessage } from "../../lib/messages-assistant";
 import type { VoiceCommandContext } from "../../lib/voiceMessages";
 import type { Message, PageMatchesReply } from "../../lib/messages";
-import { defaultMode, devTools, orbPosition, type OrbPosition } from "../../lib/settings";
+import { calibrationDots, defaultMode, devTools, orbPosition, type OrbPosition } from "../../lib/settings";
 import { SoundCue, type Sfx } from "../../lib/sfx";
 import { orb as orbTokens } from "../../lib/tokens";
 import type { Mention, Underliner } from "../../lib/underline";
@@ -41,10 +41,12 @@ import { pageMount } from "../../lib/chartLoader";
 import { listFigures, readPage } from "../../lib/pageRead";
 import { chartAnnotations } from "../../lib/chartAnnotations";
 import { CHART_DRAWINGS_MS } from "../../lib/chartAnnotations";
-import { ChartLens } from "../../lib/chartLens";
-import { chartPathLine, preparePageChart, type PageChartSession } from "../../lib/chartLensFlow";
+import { ChartLayer } from "../../lib/chartLayer";
+import { placeOwnChart, wantsOwnChart } from "../../lib/ownChart";
+import type { Box } from "@glance/core/page-chart";
+import { chartPathLine, defaultMarks, preparePageChart, type PageChartSession } from "../../lib/chartLensFlow";
 import { companiesInText } from "../../lib/commands";
-import { chooseChartRoute, findChartCandidates, pageStock } from "../../lib/pageChart";
+import { chooseChartRoute, findChartCandidates, pageStock, selectedRange } from "../../lib/pageChart";
 import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
 import { downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
@@ -89,8 +91,10 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   // it's already open. Questions ("what's this article saying?") go to Show me, on this page.
   const showChartRef = useRef<(symbol: string) => void>(() => {});
   const askRef = useRef<(question: string) => void>(() => {});
+  const answerOwnChartOffer = useRef<(yes: boolean) => boolean>(() => false);
   const assistant = useAssistant({
     context: () => voiceContext.current(),
+    onYesNo: (yes) => answerOwnChartOffer.current(yes),
     onChart: (symbol) => showChartRef.current(symbol),
     onAsk: (question) => askRef.current(question),
     onTestDrawing: () => void testDrawingRef.current(),
@@ -220,9 +224,35 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   };
   showChartRef.current = showChart;
 
-  // ---- The chart lens: a chart on someone else's page ------------------------------------------------------------
-  const lensRef = useRef<ChartLens | null>(null);
-  useEffect(() => () => lensRef.current?.close(), []);
+  // ---- A chart on someone else's page: Glance's marks on it (never Glance's own chart over it) ------------------------
+  const chartLayerRef = useRef<ChartLayer | null>(null);
+  useEffect(() => () => chartLayerRef.current?.close(), []);
+  /** Rule 3's question is open ("Want me to pull up my own?"): a yes shows Glance's own chart. */
+  const ownChartOffer = useRef<{ symbol: string; range: ChartRange } | null>(null);
+  /** Glance's own chart, docked beside the panel and never over a page chart (only when asked for). */
+  const [ownChart, setOwnChart] = useState<{ symbol: string; range?: ChartRange; box: Box } | null>(null);
+  const showOwnChart = useCallback(
+    (symbol: string, range: ChartRange | undefined, why: string) => {
+      ownChartOffer.current = null;
+      const pageCharts = findChartCandidates(document, window).map((c) => c.box);
+      if (docked || pageCharts.length === 0) {
+        // In the side panel, or on a page with no chart of its own: Glance's usual chart card.
+        console.info(`[glance] chart own: ${symbol} shown (${why}; ${docked ? "in the side panel" : "no chart on this page"})`);
+        return showChart(symbol, range);
+      }
+      const panelEl = layerRef.current?.querySelector(".g-panel.is-shown");
+      const pr = panelEl?.getBoundingClientRect();
+      const panel = pr && pr.width > 0 ? { x: pr.left, y: pr.top, width: pr.width, height: pr.height } : null;
+      const box = placeOwnChart(panel, { width: window.innerWidth, height: window.innerHeight }, pageCharts);
+      if (!box) {
+        console.info(`[glance] chart own: ${symbol} not shown (${why}; no room beside the panel clear of the page's chart)`);
+        return g.setOrb({ state: "idle", line: LINES.noRoomForChart, meta: "" });
+      }
+      console.info(`[glance] chart own: ${symbol} shown beside the panel (${why})`);
+      setOwnChart({ symbol, range, box });
+    },
+    [docked, showChart, g],
+  );
 
   /**
    * Show me, given the page chart it's about (or none): the reply's chart tags go onto that chart (calibrated) or onto
@@ -260,13 +290,16 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           return drawings.current?.drawFigure(el) ?? false;
         },
         point: setFlyRange,
-        chart: session ? () => {} : showChart,
+        // A chart the answer opens is Glance's own: docked beside the panel, never over the page's chart.
+        chart: session ? () => {} : (symbol: string, range?: ChartRange) => showOwnChart(symbol, range, "the answer opened it"),
         // On a page chart: through its calibration, or on the lens. Docked, Glance's chart is in the side panel.
         annotate: (a) =>
           session ? session.annotate(a) : docked ? void send({ kind: "chart:annotate", annotation: a }).catch(() => {}) : chartAnnotations.annotate(a),
         openChart: () => (session ? { symbol: session.symbol, range: session.range } : chartAnnotations.showing),
         pageChart: () =>
-          session ? { symbol: session.symbol, range: session.range, site: session.site, drawOn: session.drawOn, method: session.method, reason: session.reason, forced: session.forced } : null,
+          session
+            ? { symbol: session.symbol, range: session.range, site: session.site, drawOn: session.drawOn, method: session.method, reason: session.reason, forced: session.forced, candles: session.candles }
+            : null,
         portfolio: () => {
           if (docked) void requestCard({ kind: "portfolio" });
           else assistant.setCard({ kind: "portfolio", key: Date.now() });
@@ -278,21 +311,27 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           if (cancelled) {
             drawings.current?.clear();
             chartAnnotations.clear();
-            session?.lens?.clearAnnotations();
+            session?.layer.close();
           } else {
             drawings.current?.fadeLater(session ? CHART_DRAWINGS_MS : undefined);
             chartAnnotations.clearLater();
-            if (session?.lens) setTimeout(() => session.lens?.clearAnnotations(), CHART_DRAWINGS_MS);
           }
+          // An explanation of the page's chart always marks it: the computed defaults when the answer mentioned none.
+          if (session && !cancelled && session.annotated === 0) for (const a of defaultMarks(session.facts, session.symbol)) session.annotate(a);
+          // One log line per chart request, once its marks are drawn (they come in at most every 400ms).
+          if (session) setTimeout(() => console.info(chartPathLine(session, question, { marks: session.layer.drawn })), 3_000);
         },
       });
     },
-    [g, docked, assistant, showChart],
+    [g, docked, assistant, showChart, showOwnChart],
   );
 
   const ask = useCallback(
-    (question: string, lens: { confirmed?: { symbol: string; range: ChartRange }; forceLens?: boolean } = {}) => {
+    (question: string, lens: { confirmed?: { symbol: string; range: ChartRange } } = {}) => {
       showRun.current?.cancel();
+      // The next chart question: the last one's marks go.
+      chartLayerRef.current?.close();
+      ownChartOffer.current = null;
       const onConsole = (() => {
         try {
           return Boolean(g.consoleUrl) && new URL(g.consoleUrl).origin === location.origin;
@@ -301,6 +340,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         }
       })();
       const named = companiesInText(question, g.catalog)[0] ?? null;
+      // "Show me your chart": Glance's own, only on this explicit request (docked, never over the page's chart).
+      if (!onConsole && wantsOwnChart(question)) {
+        const own = named ?? pageStock(document, g.catalog.map((s) => s.symbol))?.symbol ?? companiesRef.current[0]?.symbol ?? null;
+        if (own) return showOwnChart(own, undefined, "asked for Glance's chart");
+      }
       if (!onConsole && !lens.confirmed) {
         // Which chart the question is about: the page's (any US stock), or Glance's own. One log line either way.
         const symbols = g.catalog.map((s) => s.symbol);
@@ -322,23 +366,27 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
             capture: () => send<string | null>({ kind: "capture:tab" }).then((u) => u ?? null, () => null),
             vision: (img) =>
               api.calibrateChart(img).then((r) => (r.ok ? r.data : r.code === "VISION_DAILY_LIMIT" ? { limit: "today's chart readings are used up" } : null)),
-            chart: (symbol, range) => api.chart(symbol, range).then((r) => (r.ok && r.data.points.length > 1 ? r.data : null)),
-            facts: (symbol, range) => api.chartFacts([symbol], range).then((r) => (r.ok ? (r.data.facts[0] ?? null) : null)),
-            drawings: () => drawings.current,
-            openLens: (el, data) => {
-              lensRef.current?.close();
-              const l = new ChartLens(layerRef.current!, el, data, pageMount, () => {
-                if (lensRef.current === l) lensRef.current = null;
+            facts: (symbol, range, candles) => api.chartFacts([symbol], range, undefined, { market: true, ...candles }).then((r) => (r.ok ? (r.data.facts[0] ?? null) : null)),
+            marketCandles: (symbol, range, opts) => api.marketCandles(symbol, range, opts).then((r) => (r.ok && r.data.points.length > 1 ? r.data : null)),
+            openLayer: (el, cal, at, priceAt, pricesBetween, dots, range) => {
+              chartLayerRef.current?.close();
+              const l = new ChartLayer(layerRef.current!, el, cal, at, priceAt, pricesBetween, {
+                dots,
+                range,
+                rangeNow: () => selectedRange(el),
+                onClose: () => {
+                  if (chartLayerRef.current === l) chartLayerRef.current = null;
+                },
               });
-              lensRef.current = l;
+              chartLayerRef.current = l;
               return l;
             },
+            showDots: () => safely(() => calibrationDots.getValue(), Promise.resolve(false)),
             log: (l) => console.info(l),
           },
           lens,
         );
-        console.info(chartPathLine(prep, question));
-        const key = g.shortcuts?.glance || keyLabel(g.glanceKey);
+        if (prep.kind !== "ready") console.info(chartPathLine(prep, question));
         const offer = (line: string, options: Array<{ label: string; run(): void }>) => {
           g.setOrb({ state: "idle", line, meta: "Chart lens" });
           assistant.setCard({ kind: "choice", key: Date.now(), question: line, options });
@@ -356,18 +404,32 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               : companiesRef.current.slice(0, 3).map((c) => ({ label: c.symbol, run: () => ask(question, { confirmed: { symbol: c.symbol, range: prep.range } }) }));
             return offer(prep.question, [...choices, { label: "No", run: () => g.setOrb({ state: "idle", line: "Okay. Tell me the stock and range, like “explain Tesla's 5 day chart”.", meta: "" }) }]);
           }
-          case "no-screenshot":
-            return offer(`${LINES.pressGlanceOnce(key)} Or I can lay Glance's own chart over it.`, [
-              { label: "Use the Glance lens", run: () => ask(question, { confirmed: { symbol: prep.symbol, range: prep.range }, forceLens: true }) },
+          case "cant-calibrate": {
+            // Rule 3: nothing drawn on the page; Glance's own chart only if the user says yes.
+            ownChartOffer.current = { symbol: prep.symbol, range: prep.range };
+            offer(LINES.cantLineUp, [
+              { label: "Yes, pull up yours", run: () => showOwnChart(prep.symbol, prep.range, "yes to rule 3") },
+              { label: "No", run: () => ((ownChartOffer.current = null), g.setOrb({ state: "idle", line: "Okay.", meta: "" })) },
             ]);
+            return void speak(LINES.cantLineUp, g.voiceReplies);
+          }
           case "ready":
             return startShowMe(question, false, prep);
         }
       })();
     },
-    [g, assistant, startShowMe],
+    [g, assistant, startShowMe, showOwnChart],
   );
   askRef.current = ask;
+  /** A spoken or typed "yes" / "no" to rule 3's question. True when there was one to answer. */
+  answerOwnChartOffer.current = (yes: boolean) => {
+    const offer = ownChartOffer.current;
+    if (!offer) return false;
+    ownChartOffer.current = null;
+    if (yes) showOwnChart(offer.symbol, offer.range, "yes to rule 3");
+    else g.setOrb({ state: "idle", line: "Okay.", meta: "" });
+    return true;
+  };
   // Developer check: every shape on the selection (dev builds, or developer tools on in settings). Typing in the panel
   // can take the page's selection away, so the last one on the page is remembered.
   testDrawingRef.current = async () => {
@@ -526,10 +588,17 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           run.cancel();
           return;
         }
+        // The marks on the page's chart stay until Escape; then Glance's own chart; then the panel.
+        if (chartLayerRef.current?.isOpen) {
+          chartLayerRef.current.close();
+          return;
+        }
+        if (ownChart) {
+          setOwnChart(null);
+          return;
+        }
         drawings.current?.clear();
         chartAnnotations.clear();
-        // The chart lens goes too (its marks went with the reply).
-        lensRef.current?.close();
         closePanel();
       },
     },
@@ -771,6 +840,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
 
   return (
     <div className="g-layer" ref={layerRef}>
+      {ownChart && (
+        <div className="g-own-chart" style={{ left: ownChart.box.x, top: ownChart.box.y, width: ownChart.box.width, height: ownChart.box.height }} data-glance-own-chart="1">
+          <StockChart key={`${ownChart.symbol}:${ownChart.range ?? ""}`} symbol={ownChart.symbol} initialRange={ownChart.range} onClose={() => setOwnChart(null)} mount={pageMount} />
+        </div>
+      )}
       {dockAnim && (
         <DockTransition
           key={dockAnim}

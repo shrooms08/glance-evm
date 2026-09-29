@@ -12,9 +12,10 @@ import { LINES } from "@glance/core/persona";
 
 import { createApp } from "../../src/app.js";
 import { cachedQuoteHistory, MARKET_SOURCE, yahooHistory, type QuoteHistory } from "../../src/chart.js";
+import { toGeometry } from "../../src/chartVision.js";
 import { loadConfig } from "../../src/config.js";
 import { createContext, type AppContext } from "../../src/context.js";
-import { createShowMe, pricesNote, symbolsFor, type ShowMeInput } from "../../src/showme.js";
+import { createShowMe, noDashes, pricesNote, symbolsFor, type ShowMeInput } from "../../src/showme.js";
 import { chartContextFor, chartPathLog, summarize } from "../../src/showmeChart.js";
 import { TtlCache } from "../../src/ttlCache.js";
 import { LlmBudget } from "../../src/llmBudget.js";
@@ -56,6 +57,14 @@ describe("candles for any US ticker (Yahoo Finance's public chart endpoint)", ()
     await yahooHistory("NVDA", "1D", fetchFn);
     await yahooHistory("NVDA", "5Y", fetchFn);
     expect(urls.slice(1)).toEqual(["https://query1.finance.yahoo.com/v8/finance/chart/NVDA?range=1d&interval=5m", "https://query1.finance.yahoo.com/v8/finance/chart/NVDA?range=5y&interval=1wk"]);
+  });
+
+  it("finer candles for fitting a page's chart: 1 day at 1 minute, 5 days at 15, 1 month at 30; longer ranges unchanged", async () => {
+    const { fetchFn, urls } = fakeYahoo();
+    for (const r of ["1D", "1W", "1M", "6M"] as const) await yahooHistory("NVDA", r, fetchFn, { fine: true });
+    // A page showing the pre-market (Yahoo's 1 day chart before the open): those candles too.
+    await yahooHistory("NVDA", "1D", fetchFn, { fine: true, prepost: true });
+    expect(urls.map((u) => new URL(u).search)).toEqual(["?range=1d&interval=1m", "?range=5d&interval=15m", "?range=1mo&interval=30m", "?range=6mo&interval=1d", "?range=1d&interval=1m&includePrePost=true"]);
   });
 
   it("cached per ticker and range: the same chart twice is one fetch; another range is another", async () => {
@@ -120,6 +129,44 @@ describe("the facts for a stock outside the catalog, computed in code", () => {
     const flat = computeFacts({ symbol: "X", name: "X", range: "1D", source: "Yahoo Finance", asOf: T, points: [100, 100.1, 99.9, 100, 100.05].map((price, i) => ({ t: T + i * 60, price })) })!;
     expect(flat.trend.direction).toBe("flat");
     expect(flat.bounces).toEqual([]);
+  });
+});
+
+describe("support, resistance and a consolidation zone, computed from the candles", () => {
+  it("support where it turned up three times, resistance where it turned down, and the zone it held in", () => {
+    // Down to 170, up to 181, back to 171, up to 181, back to 172, then a narrow stretch 176 to 178, then a climb.
+    const prices = [180, 176, 172, 170, 174, 178, 181, 177, 173, 171, 175, 179, 181, 176, 172, 176, 177, 178, 176, 177, 178, 177, 176, 177, 185, 190];
+    const f = computeFacts({ symbol: "NVDA", name: "NVIDIA", range: "1M", source: "Yahoo Finance", asOf: T, points: prices.map((price, i) => ({ t: T + i * 3600, price })) })!;
+    expect(f.levels.support).toMatchObject({ touches: 3 });
+    expect(f.levels.support.price).toBeCloseTo(171, 0);
+    // Turning highs within a tenth of the range (here $2) are one level: 178 to 181, five touches.
+    expect(f.levels.resistance).toMatchObject({ price: 179.6, touches: 5 });
+    // The longest stretch within a third of the range: the back half, before the climb.
+    expect(f.zone).toMatchObject({ low: 172, high: 178, t1: T + 13 * 3600, t2: T + 23 * 3600 });
+  });
+
+  it("no repeat turn: the range's own low and high, touched once", () => {
+    const f = computeFacts({ symbol: "X", name: "X", range: "1D", source: "Yahoo Finance", asOf: T, points: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((price, i) => ({ t: T + i * 60, price: 100 + price })) })!;
+    expect(f.levels.support).toEqual({ price: 101, touches: 1, times: [T] });
+    expect(f.levels.resistance).toEqual({ price: 110, touches: 1, times: [T + 540] });
+  });
+});
+
+describe("nothing Glance says has an em or en dash", () => {
+  it("the model's dashes become commas", () => {
+    expect(noDashes("It's now at $24.67, down $0.52 from where it opened—a 2.06% drop.")).toBe("It's now at $24.67, down $0.52 from where it opened, a 2.06% drop.");
+    expect(noDashes("A bumpy day – up, then down —.")).toBe("A bumpy day, up, then down.");
+  });
+});
+
+describe("vision reads geometry only", () => {
+  it("the plot box and ticks, checked: numbers only where numbers belong, labels at most 16 characters", () => {
+    expect(toGeometry({ plot: { x: 1, y: 2, width: 300, height: 100 }, price: [{ price: 24.8, y: 40 }, { price: "x", y: 1 }], time: [{ time: "10:00", x: 20 }, { time: "a label much too long to be a tick", x: 5 }] })).toEqual({
+      plot: { x: 1, y: 2, width: 300, height: 100 },
+      price: [{ price: 24.8, y: 40 }],
+      time: [{ time: "10:00", x: 20 }],
+    });
+    expect(toGeometry(null)).toEqual({ plot: null, price: [], time: [] });
   });
 });
 

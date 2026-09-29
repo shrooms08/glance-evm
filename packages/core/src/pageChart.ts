@@ -48,7 +48,8 @@ export interface TimeMap {
 }
 
 export interface Calibration {
-  method: "dom" | "vision";
+  /** How the scale was found: the page's own canvas traced and fitted, its DOM labels, or the vision model's ticks. */
+  method: "canvas" | "dom" | "vision";
   price: LineFit;
   time: TimeMap;
   /** The plotting area (chart box minus the axis labels), in the chart box's coordinates. */
@@ -330,11 +331,12 @@ function timeRow(labels: readonly AxisLabel[], box: Box, price: readonly AxisLab
 
 /** What the model is asked for: only the tick labels it can read, where they are, as JSON. */
 export const VISION_INSTRUCTIONS = [
-  "This image is a crop of a stock price chart. Return ONLY the axis tick labels you can read clearly:",
-  "the numbers on the price axis (usually right or left) and the times or dates on the time axis (the bottom).",
-  "For each: axis (\"price\" or \"time\"), text exactly as printed, and x and y: the center of the label's text,",
-  "in pixels from the image's top-left corner. Skip price badges in colored boxes (the current or previous price),",
-  "legends, titles, and anything that isn't a tick label. At least 2 per axis if they exist. No other output.",
+  "This image is a crop of a stock price chart. Read ONLY its geometry, never the data:",
+  "plot: the plotting area's box (where the price line or candles are drawn, without the axis labels), in pixels;",
+  "price: at least 2 price-axis tick labels as {price, y}: the number printed, and the y of the label's center;",
+  "time: at least 2 time-axis tick labels as {time, x}: the text printed (\"10:00\", \"Sep 23\"), and the x of its center.",
+  "Pixels from the image's top-left corner. Skip price badges in colored boxes (the current or previous price), legends",
+  "and titles. Don't estimate any price, time or point on the line itself. No other output.",
 ].join("\n");
 
 /**

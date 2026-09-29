@@ -78,6 +78,10 @@ export const LINES = {
   pricesDiffer: (source: string) => (source === "Chainlink" ? "I'm using Chainlink's prices, which can differ a little from this chart." : `I'm using ${source}'s prices, which can differ a little from this chart.`),
   /** The page's chart couldn't be read, so Glance's own chart is laid over it (said once, first). */
   cantReadChart: "I can't read this chart, so here's mine.",
+  /** Rule 3: no calibration lined up, so nothing was drawn on the page's chart. Glance's own only on a yes. */
+  cantLineUp: "I can't line up marks on this chart. Want me to pull up my own?",
+  /** Glance's own chart was asked for, but there's no room beside the panel that stays clear of the page's chart. */
+  noRoomForChart: "There's no room for my chart beside this one. Open the side panel and ask again.",
   /** Explaining works for any US stock; trading only for the vault's approved ones (read from the catalog). */
   notTradable: (name: string, symbols: readonly string[]) =>
     `I can explain ${name}, but your vault only trades ${symbols.length > 1 ? `${symbols.slice(0, -1).join(", ")} and ${symbols.at(-1)}` : (symbols[0] ?? "the stocks it approves")}.`,

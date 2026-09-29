@@ -89,7 +89,7 @@ export interface ShowMeDeps {
   /** The glance key's label (⌥G): said when a chart on the page can't be seen (no screenshot without it). */
   glanceKey?: () => string;
   /** The chart lens: the chart on the page this answer is about, and where its marks go. */
-  pageChart?: () => { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean } | null;
+  pageChart?: () => { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "canvas" | "dom" | "vision" | null; reason?: string; forced?: boolean; candles?: { fine?: boolean; prepost?: boolean } } | null;
   /**
    * Streamed answers (preferred when given): each sentence arrives as soon as Claude has written it, and is spoken as
    * one part of the reply while the next is still being written.

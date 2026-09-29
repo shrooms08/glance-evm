@@ -39,8 +39,8 @@ export function containsAdvice(text: string): boolean {
  * or label describes what happened, never what will. A label with one is dropped; a reply with one is replaced.
  */
 export const CHART_ADVICE_PATTERNS: readonly RegExp[] = [
-  /\bsupports?\b/i,
-  /\bresistance\b/i,
+  // "Support" and "resistance" are allowed: they name prices the chart turned at (computed from the candles, in the
+  // past tense). A forecast about them ("will hold", "a breakout") still isn't.
   /\bbreak ?outs?\b/i,
   /\bbreak(s|ing)? (out|through)\b/i,
   /\btargets?\b/i,

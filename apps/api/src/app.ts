@@ -100,8 +100,8 @@ const showMeBody = z
     // A downscaled JPEG, base64: the whole request is 64 KB at most, so the extension keeps this under 36 KB.
     screenshot: z.string().max(MAX_JSON_BODY_BYTES).regex(/^[A-Za-z0-9+/=]+$/).optional(),
     lastGuard: z.object({ code: z.string().max(64), message: z.string().max(400) }).nullable().optional(),
-    // The chart lens: a chart on the page, identified by the extension (its stock and range), and where the answer's
-    // marks go: onto the page's own chart (calibrated) or onto the Glance lens laid over it.
+    // A chart on the page, identified by the extension (its stock and range), whose own chart the answer's marks go on
+    // ("lens" is kept for older extensions, which laid Glance's chart over it).
     // Any US stock (the page's chart need not be the catalog's), on the page's own range, with how it was calibrated
     // ("dom" labels or "vision"; null on the overlay), why, and whether the overlay was asked for.
     pageChart: z
@@ -110,9 +110,11 @@ const showMeBody = z
         range: z.enum(ALL_RANGES),
         site: z.enum(["tradingview", "yahoo", "google", "cnbc", "other"]),
         drawOn: z.enum(["page", "lens"]),
-        method: z.enum(["dom", "vision"]).nullable().optional(),
+        method: z.enum(["canvas", "dom", "vision"]).nullable().optional(),
         reason: z.string().max(200).optional(),
         forced: z.boolean().optional(),
+        // The market candles the page's chart matched: the answer's facts come from the same.
+        candles: z.object({ fine: z.boolean().optional(), prepost: z.boolean().optional() }).strict().optional(),
       })
       .nullable()
       .optional(),
@@ -130,7 +132,11 @@ const calibrateBody = z
   })
   .strict();
 const sessionQuery = z.object({ vault: address, session: address });
-const chartQuery = z.object({ range: z.enum(ALL_RANGES).default("1D"), vault: address.optional() });
+/**
+ * market=1: the market's own candles even for a catalog stock (to fit a page's chart, which draws market prices);
+ * fine=1: at a finer step (a page's 1 day chart may draw every minute); prepost=1: with pre- and after-market.
+ */
+const chartQuery = z.object({ range: z.enum(ALL_RANGES).default("1D"), vault: address.optional(), market: z.enum(["1"]).optional(), fine: z.enum(["1"]).optional(), prepost: z.enum(["1"]).optional() });
 
 /** "GET /voice/speak?text=Hello 200" -> "GET /voice/speak?… 200": query strings never reach the log. */
 export function redactQuery(line: string): string {
@@ -375,28 +381,28 @@ export function createServerApp(ctx: AppContext) {
     });
   });
 
-  // The chart lens: a page chart's axis labels read from a screenshot crop (only the labels; the scale is fitted by the
+  // A page chart's geometry read from a screenshot crop (the plot box and axis ticks only; the scale is fitted by the
   // extension, and every number and mark comes from our own facts). Budget "other"; the image is never kept.
   app.post("/chart/calibrate", bodyLimit({ maxSize: VISION_MAX_IMAGE_CHARS + 4_096, onError: (c) => c.json({ error: { code: "TOO_LARGE", message: "That chart image is too large." } }, 413) }), async (c) => {
     const body = parse(calibrateBody, await jsonBody(c));
     if (!ctx.chartVision) throw new ApiError(503, "VISION_UNAVAILABLE", "Reading charts from a screenshot isn't set up on this server.");
     const r = await ctx.chartVision.readLabels({ base64: body.image, width: body.width, height: body.height });
-    // Today's vision calls used up (CHART_VISION_DAILY_LIMIT): the extension lays Glance's lens over the chart instead.
-    if (!r.ok && r.reason === "daily-limit") throw new ApiError(429, "VISION_DAILY_LIMIT", "I've read enough page charts for today, so I'll lay Glance's chart over this one.");
+    // Today's vision calls used up (CHART_VISION_DAILY_LIMIT): the extension draws nothing and asks (rule 3).
+    if (!r.ok && r.reason === "daily-limit") throw new ApiError(429, "VISION_DAILY_LIMIT", "I've read enough page charts for today.");
     if (!r.ok) throw new ApiError(r.reason === "budget" ? 429 : 503, r.reason === "budget" ? "BUDGET" : "VISION_UNAVAILABLE", r.reason === "budget" ? LINES.outOfThinking : LINES.cantThink);
     return send(c, { labels: r.labels, model: r.model });
   });
 
   // The chart's breakdown, computed (src/chartFacts.ts): one stock, or up to three compared ("TSLA,AMD").
   app.get("/chart/:symbols/facts", async (c) => {
-    const { range, vault } = parse(chartQuery, c.req.query());
+    const { range, vault, market, fine, prepost } = parse(chartQuery, c.req.query());
     const symbols = c.req.param("symbols").split(",").map((s) => parse(symbol, s.trim()));
-    return send(c, await factsView(ctx, symbols, range, vault ? getAddress(vault) : undefined));
+    return send(c, await factsView(ctx, symbols, range, vault ? getAddress(vault) : undefined, { market: market === "1", fine: fine === "1", prepost: prepost === "1" }));
   });
 
   app.get("/chart/:symbol", async (c) => {
-    const { range, vault } = parse(chartQuery, c.req.query());
-    return send(c, await chartView(ctx, parse(symbol, c.req.param("symbol")), range, vault ? getAddress(vault) : undefined));
+    const { range, vault, market, fine, prepost } = parse(chartQuery, c.req.query());
+    return send(c, await chartView(ctx, parse(symbol, c.req.param("symbol")), range, vault ? getAddress(vault) : undefined, { market: market === "1", fine: fine === "1", prepost: prepost === "1" }));
   });
 
   app.get("/why/:symbol", async (c) => send(c, await whyView(ctx, parse(symbol, c.req.param("symbol")))));

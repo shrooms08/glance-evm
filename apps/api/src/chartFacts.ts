@@ -57,10 +57,10 @@ export function factsFor(ctx: AppContext, data: ChartData, vault?: Address): Cha
   });
 }
 
-export async function factsView(ctx: AppContext, symbols: readonly string[], range: ChartRange, vault?: Address): Promise<FactsView> {
+export async function factsView(ctx: AppContext, symbols: readonly string[], range: ChartRange, vault?: Address, candles: { market?: boolean; fine?: boolean; prepost?: boolean } = {}): Promise<FactsView> {
   const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
   if (unique.length === 0 || unique.length > MAX_COMPARE) throw new ApiError(400, "INVALID_INPUT", `Ask about 1 to ${MAX_COMPARE} stocks.`);
-  const charts = await Promise.all(unique.map((s) => chartView(ctx, s, range, vault)));
+  const charts = await Promise.all(unique.map((s) => chartView(ctx, s, range, vault, candles)));
   const facts: ChartFacts[] = [];
   for (const data of charts) {
     const f = factsFor(ctx, data, vault);

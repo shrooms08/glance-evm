@@ -31,6 +31,7 @@ import {
   roundStoreFile,
   type ChartDeps,
   type FeedReader,
+  type CandleOptions,
   type QuoteHistory,
 } from "./chart.js";
 import { isGlanceChartRange, type ChartData, type ChartRange } from "@glance/core/chart";
@@ -1346,23 +1347,24 @@ const US_TICKER = /^[A-Z]{1,5}(?:\.[A-Z])?$/;
  * history): Yahoo Finance's public chart endpoint, cached per ticker and range for five minutes. For explaining a chart
  * only: nothing trades on these prices.
  */
-export async function marketChartView(ctx: AppContext, symbolParam: string, range: ChartRange, name?: string): Promise<ChartData> {
+export async function marketChartView(ctx: AppContext, symbolParam: string, range: ChartRange, name?: string, candles: CandleOptions = {}): Promise<ChartData> {
   const symbol = symbolParam.toUpperCase();
   if (!US_TICKER.test(symbol)) throw new ApiError(400, "INVALID_INPUT", `${symbolParam} isn't a US ticker.`);
   let h: QuoteHistory;
   try {
-    h = await chartDeps(ctx).quoteHistory(usTicker(symbol) ?? symbol.replace(".", "-"), range);
+    h = await chartDeps(ctx).quoteHistory(usTicker(symbol) ?? symbol.replace(".", "-"), range, candles);
   } catch {
     throw new ApiError(404, "NO_MARKET_DATA", `I can't find ${symbol}'s prices right now.`);
   }
   return marketChartData(symbol, range, h, Math.floor(Date.now() / 1000), name);
 }
 
-export async function chartView(ctx: AppContext, symbolParam: string, range: ChartRange, vault?: Address): Promise<ChartData> {
+export async function chartView(ctx: AppContext, symbolParam: string, range: ChartRange, vault?: Address, opts: { market?: boolean } & CandleOptions = {}): Promise<ChartData> {
   const known = ctx.catalog.bySymbol.get(symbolParam.toUpperCase());
-  // Outside the catalog, or longer than Glance's own ranges: the market's candles.
-  if (!known) return marketChartView(ctx, symbolParam, range);
-  if (!isGlanceChartRange(range)) return marketChartView(ctx, known.symbol, range, known.name);
+  // Outside the catalog, or longer than Glance's own ranges: the market's candles (finer, when fitting a page's chart).
+  if (!known) return marketChartView(ctx, symbolParam, range, undefined, opts);
+  // Asked for the market's own candles (fitting a page's chart, which draws the market's prices, not Chainlink's).
+  if (!isGlanceChartRange(range) || opts.market) return marketChartView(ctx, known.symbol, range, known.name, opts);
   const stock = stockBySymbol(ctx, symbolParam);
   const source =
     stock.priceSourceKind === "mainnet-mirror" && stock.mainnetFeed

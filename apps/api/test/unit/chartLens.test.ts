@@ -30,18 +30,16 @@ const T0 = Date.parse("2026-09-25T08:00:00Z");
 const budget = (other = 70) => new LlmBudget({ total: 250, perPurpose: { resolver: 40, intent: 80, why: 60, other } }, null, () => {}, () => T0);
 const IMAGE = "A".repeat(2_000);
 
-function visionClient(labels: unknown) {
-  const create = vi.fn(async () => ({ content: [{ type: "tool_use", name: "record_axis_labels", input: { labels } }], usage: { input_tokens: 900, output_tokens: 120 }, stop_reason: "tool_use" }));
+function visionClient(geometry: unknown) {
+  const create = vi.fn(async () => ({ content: [{ type: "tool_use", name: "record_chart_geometry", input: geometry }], usage: { input_tokens: 900, output_tokens: 120 }, stop_reason: "tool_use" }));
   return { client: { messages: { create } } as unknown as MessagesClient, create };
 }
 
 describe("POST /chart/calibrate", () => {
-  const labels = [
-    { axis: "price", text: "382.00", x: 952, y: 44 },
-    { axis: "time", text: "10:00", x: 37, y: 254 },
-  ];
+  // What the model reads: the plot box, price ticks {price, y} and time ticks {time, x}. Never a point on the line.
+  const labels = { plot: { x: 12, y: 10, width: 930, height: 230 }, price: [{ price: 382, y: 44 }, { price: 376, y: 200 }], time: [{ time: "10:00", x: 37 }, { time: "14:00", x: 600 }] };
 
-  it("returns only the labels the model read, asked for through a fixed tool, and logs no image", async () => {
+  it("returns only the chart's geometry (plot box and axis ticks), asked for through a fixed tool, and logs no image", async () => {
     const ctx = createContext(loadConfig(env), () => {});
     const { client, create } = visionClient(labels);
     const lines: string[] = [];
@@ -50,8 +48,8 @@ describe("POST /chart/calibrate", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ labels, model: "claude-sonnet-4-5" });
     const params = (create.mock.calls[0] as unknown as [{ tool_choice: unknown; messages: Array<{ content: Array<{ type: string; text?: string }> }> }])[0];
-    expect(params.tool_choice).toEqual({ type: "tool", name: "record_axis_labels" });
-    expect(params.messages[0]!.content.find((c) => c.type === "text")!.text).toMatch(/Return ONLY the axis tick labels/);
+    expect(params.tool_choice).toEqual({ type: "tool", name: "record_chart_geometry" });
+    expect(params.messages[0]!.content.find((c) => c.type === "text")!.text).toMatch(/Read ONLY its geometry, never the data/);
     expect(lines).toEqual(["[llm] other/chart-vision claude-sonnet-4-5 in=900 out=120"]);
   });
 

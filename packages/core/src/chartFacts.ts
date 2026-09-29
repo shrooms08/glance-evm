@@ -11,6 +11,9 @@
  *   market closed                           stretches with no new price for 6 hours or more (nights, weekends)
  *   bounces                                 lows the price rose clearly from ("where did it bounce?"), with times and %
  *   trend                                   a straight line fitted through every price: up, down or flat, and by how much
+ *   support, resistance                     prices the chart turned at more than once (lows for support, highs for
+ *                                           resistance), with how many times; the range's low and high when none repeat
+ *   zone                                    the longest stretch the price stayed in a narrow band (a consolidation box)
  *   since your last buy                     the vault's last buy of the stock (from the portfolio event cache)
  *
  * Every number is rounded once, here (prices and dollar changes to cents, percentages to 2 places), and those rounded
@@ -63,6 +66,81 @@ export interface ChartFacts {
   bounces: Move[];
   /** A least-squares line through every price, from its value at the first time to its value at the last. */
   trend: { direction: "up" | "down" | "flat"; from: PricePoint; to: PricePoint; pct: number };
+  /** Where the price turned: lows it turned up from (support), highs it turned down from (resistance). */
+  levels: { support: Level; resistance: Level };
+  /** The longest stretch in a narrow band (at most a third of the range's high to low), when it's a fifth of the range. */
+  zone: { t1: number; t2: number; low: number; high: number } | null;
+}
+
+/** A price the chart turned at `touches` times (1: just the range's low or high), with when. */
+export interface Level {
+  price: number;
+  touches: number;
+  times: number[];
+}
+
+/** Turning points: prices lower (or higher) than every price within `k` points each side. */
+function turns(points: ReadonlyArray<PricePoint>, kind: "low" | "high"): PricePoint[] {
+  const n = points.length;
+  const k = Math.max(2, Math.round(n / 30));
+  const out: PricePoint[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = points[i]!;
+    let ok = true;
+    for (let j = Math.max(0, i - k); j <= Math.min(n - 1, i + k) && ok; j++) {
+      if (j === i) continue;
+      const q = points[j]!.price;
+      if (kind === "low" ? q < p.price || (q === p.price && j < i) : q > p.price || (q === p.price && j < i)) ok = false;
+    }
+    if (ok) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Support and resistance, computed: turning lows (highs) within a band of the larger of 0.4% and a tenth of the range
+ * are one level; the level touched most (then the lowest for support, the highest for resistance) is kept. With no
+ * level touched twice, the range's own low (high), touched once.
+ */
+export function levels(points: ReadonlyArray<PricePoint>, low: PricePoint, high: PricePoint): { support: Level; resistance: Level } {
+  const band = Math.max(low.price * 0.004, (high.price - low.price) * 0.1);
+  const cluster = (ps: PricePoint[], prefer: (a: number, b: number) => boolean, fallback: PricePoint): Level => {
+    let best: Level | null = null;
+    for (const p of ps) {
+      const near = ps.filter((q) => Math.abs(q.price - p.price) <= band);
+      if (near.length < 2) continue;
+      const price = round2(near.reduce((s, q) => s + q.price, 0) / near.length);
+      const level = { price, touches: near.length, times: near.map((q) => q.t) };
+      if (!best || level.touches > best.touches || (level.touches === best.touches && prefer(level.price, best.price))) best = level;
+    }
+    return best ?? { price: round2(fallback.price), touches: 1, times: [fallback.t] };
+  };
+  return { support: cluster(turns(points, "low"), (a, b) => a < b, low), resistance: cluster(turns(points, "high"), (a, b) => a > b, high) };
+}
+
+/** The longest run of consecutive prices inside a band of a third of the range's high to low; null under a fifth of it. */
+export function consolidation(points: ReadonlyArray<PricePoint>, low: number, high: number): ChartFacts["zone"] {
+  const n = points.length;
+  const band = (high - low) / 3;
+  if (n < 10 || band <= 0) return null;
+  let best: { i: number; j: number } | null = null;
+  let i = 0;
+  let lo = points[0]!.price;
+  let hi = lo;
+  for (let j = 0; j < n; j++) {
+    const p = points[j]!.price;
+    lo = Math.min(lo, p);
+    hi = Math.max(hi, p);
+    while (hi - lo > band && i < j) {
+      i++;
+      lo = Math.min(...points.slice(i, j + 1).map((q) => q.price));
+      hi = Math.max(...points.slice(i, j + 1).map((q) => q.price));
+    }
+    if (!best || j - i > best.j - best.i) best = { i, j };
+  }
+  if (!best || best.j - best.i + 1 < n / 5) return null;
+  const run = points.slice(best.i, best.j + 1).map((q) => q.price);
+  return { t1: points[best.i]!.t, t2: points[best.j]!.t, low: round2(Math.min(...run)), high: round2(Math.max(...run)) };
 }
 
 /** A trend flatter than this (in % over the range) is "flat". */
@@ -245,6 +323,8 @@ export function computeFacts(input: {
       : null,
     bounces: bounces(pts, b.stdevPct),
     trend: trendLine(pts),
+    levels: levels(pts, low, high),
+    zone: consolidation(pts, low.price, high.price),
   };
 }
 
@@ -293,6 +373,12 @@ export function factSentences(f: ChartFacts, question = ""): string[] {
       bounce
         ? `The clearest bounce was from ${usd(bounce.from.price)} ${when(bounce.from.t)}, up ${pct(bounce.pct)} to ${usd(bounce.to.price)} ${when(bounce.to.t)}.`
         : `It didn't bounce clearly from a low ${RANGE_WORDS[f.range]}; the low was ${usd(f.low.price)}.`,
+    );
+  } else if (/\b(support|resistance|floor|ceiling|entry)\b/.test(q)) {
+    const s = f.levels.support;
+    const r = f.levels.resistance;
+    first.push(
+      `It turned up near ${usd(s.price)}${s.touches > 1 ? ` ${s.touches} times` : ""} and turned down near ${usd(r.price)}${r.touches > 1 ? ` ${r.touches} times` : ""} ${RANGE_WORDS[f.range]}.`,
     );
   } else if (/\b(trend|trending|direction)\b/.test(q)) {
     first.push(f.trend.direction === "flat" ? `Overall it moved sideways ${RANGE_WORDS[f.range]}.` : `Overall the trend was ${f.trend.direction}, ${pct(f.trend.pct)} along a straight line through the prices.`);
@@ -348,8 +434,10 @@ export function factNumbers(f: ChartFacts | readonly ChartFacts[]): FactNumbers 
       ...(x.sinceBuy ? [x.sinceBuy.price, x.sinceBuy.amount, x.sinceBuy.abs] : []),
       ...(x.bounces ?? []).flatMap((m) => [m.from.price, m.to.price, m.abs]),
       ...(x.trend ? [x.trend.from.price, x.trend.to.price] : []),
+      ...(x.levels ? [x.levels.support.price, x.levels.resistance.price] : []),
+      ...(x.zone ? [x.zone.low, x.zone.high] : []),
     );
-    out.count.push(...x.closed.map((c) => c.hours));
+    out.count.push(...x.closed.map((c) => c.hours), ...(x.levels ? [x.levels.support.touches, x.levels.resistance.touches] : []));
   }
   return { percent: out.percent.map(Math.abs), money: out.money.map(Math.abs), count: out.count };
 }
@@ -357,7 +445,7 @@ export function factNumbers(f: ChartFacts | readonly ChartFacts[]): FactNumbers 
 /** The times the facts name (drawings snap to these). */
 export function factTimes(f: ChartFacts): number[] {
   const moves = [f.biggestDrop, f.biggestRise, f.maxDrawdown].filter((m): m is Move => m !== null);
-  const times = [f.first.t, f.last.t, f.high.t, f.low.t, ...moves.flatMap((m) => [m.from.t, m.to.t]), ...(f.bounces ?? []).flatMap((m) => [m.from.t, m.to.t]), ...f.closed.flatMap((c) => [c.from, c.to])];
+  const times = [f.first.t, f.last.t, f.high.t, f.low.t, ...moves.flatMap((m) => [m.from.t, m.to.t]), ...(f.bounces ?? []).flatMap((m) => [m.from.t, m.to.t]), ...(f.zone ? [f.zone.t1, f.zone.t2] : []), ...(f.levels ? [...f.levels.support.times, ...f.levels.resistance.times] : []), ...f.closed.flatMap((c) => [c.from, c.to])];
   if (f.sinceBuy && f.sinceBuy.t >= f.first.t && f.sinceBuy.t <= f.last.t) times.push(f.sinceBuy.t);
   return [...new Set(times.filter((t) => t >= f.first.t && t <= Math.max(f.last.t, f.asOf)))].sort((a, b) => a - b);
 }
@@ -374,6 +462,8 @@ export function factPrices(f: ChartFacts): number[] {
       ...moves.flatMap((m) => [m.from.price, m.to.price]),
       ...(f.bounces ?? []).flatMap((m) => [m.from.price, m.to.price]),
       ...(f.trend ? [f.trend.from.price, f.trend.to.price] : []),
+      ...(f.levels ? [f.levels.support.price, f.levels.resistance.price] : []),
+      ...(f.zone ? [f.zone.low, f.zone.high] : []),
       ...(f.sinceBuy ? [f.sinceBuy.price] : []),
     ]),
   ];

@@ -98,7 +98,7 @@ export interface ShowMeInput {
    * The chart on the page this answer is about: where its marks go (calibrated on the page's chart, or the Glance
    * overlay), how it was calibrated and why, and whether the overlay was asked for (else it's a fallback, said so).
    */
-  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean } | null;
+  pageChart?: { symbol: string; range: ChartRange; site: string; drawOn: "page" | "lens"; method?: "canvas" | "dom" | "vision" | null; reason?: string; forced?: boolean; candles?: { fine?: boolean; prepost?: boolean } } | null;
 }
 
 export interface ShowMeAnswer {
@@ -156,8 +156,9 @@ export function showMeSystem(symbols: readonly string[]): string {
     `  [CHART_LEVEL:SYMBOL:price:"label"]    a dashed line at that price with a short factual label (max ${MAX_CHART_LABEL} characters)`,
     `  [CHART_RANGE:SYMBOL:t1:t2]            shade the time between t1 and t2`,
     `  [CHART_TREND:SYMBOL:t1:t2]            a straight line joining the prices at t1 and t2`,
-    "Chart times and prices must come from the <chart> block. Chart labels say what happened (\"Week low $362.20\"),",
-    "never what will: no support, resistance, breakout, target, or \"will hold\". To explain a move, use only the",
+    "Chart times and prices must come from the <chart> block. Chart labels say what happened (\"Week low $362.20\",",
+    "\"Support $24.56, 2 touches\"): support and resistance only at the prices <chart_facts> gives, as where it turned,",
+    "never what will: no breakout, target, or \"will hold\". To explain a move, use only the",
     "<why_it_moved_sources> and name the source (\"Reuters reported...\"); if none are cached, say exactly",
     `"${LINES.noNewsForMove}" and never give a reason (no "because", "due to", "after ... reported").`,
     "Tags are silent: they're removed before your words are spoken. Every sentence must read naturally with the tags",
@@ -228,6 +229,11 @@ export function showMeUserText(input: ShowMeInput): string {
  * Grounding for a chart answer, one raw sentence (tags included) at a time: "drop" when it says a number that isn't one
  * of the facts (or spells an amount out), "no-news" when it claims a cause with no cached source to cite.
  */
+/** No em or en dashes (U+2014, U+2013) in anything Glance says: each becomes a comma ("a 2.06% drop, the biggest"). */
+export function noDashes(text: string): string {
+  return text.replace(/\s*[\u2014\u2013]\s*/g, ", ").replace(/,\s*([.,!?])/g, "$1");
+}
+
 /** The marks go on Glance's overlay because the page's chart couldn't be read (not asked for): said first, once. */
 export function overlayNote(input: Pick<ShowMeInput, "pageChart">): string | null {
   return input.pageChart?.drawOn === "lens" && !input.pageChart.forced ? LINES.cantReadChart : null;
@@ -336,6 +342,7 @@ export function createShowMe(o: {
     const onChartReply = () => charts.length > 0;
     return (raw: string): { tagged: Tagged; guarded: boolean; chart?: ShowMeSentence["chart"] } => {
       let tagged = keepQuotesOnPage(parseTagged(raw, { symbols }), pageText);
+      tagged = { ...tagged, spoken: noDashes(tagged.spoken) };
       tagged = { ...tagged, actions: tagged.actions.filter((a) => a.kind !== "BOX_FIGURE" || a.figure <= figures) };
       tagged = snapChartTags(validateChartTags(tagged, charts, containsChartAdvice), input.facts ?? []);
       tagged = openChartsFirst(pairMarks(tagged), opened);
@@ -485,6 +492,7 @@ export function createShowMe(o: {
       // Only quotes really on the page, figures that exist, chart tags that fit the chart; every POINT gets a visible
       // mark (the orb alone is easy to miss); a chart opens before it's drawn on; at most MAX_DRAWINGS drawings.
       let tagged = keepQuotesOnPage(parseTagged(raw, { symbols }), `${page.title ?? ""}\n${page.selection ?? ""}\n${(page.text ?? "").slice(0, SHOWME_MAX_PAGE_CHARS)}`);
+      tagged = { ...tagged, spoken: noDashes(tagged.spoken) };
       const figures = page.figures?.length ?? 0;
       tagged = { ...tagged, actions: tagged.actions.filter((a) => a.kind !== "BOX_FIGURE" || a.figure <= figures) };
       tagged = snapChartTags(validateChartTags(tagged, charts, containsChartAdvice), facts);

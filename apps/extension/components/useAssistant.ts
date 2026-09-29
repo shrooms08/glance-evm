@@ -91,6 +91,11 @@ export interface AssistantOptions {
   onAsk?(question: string): void;
   /** Developer check ("glance test drawing"): draws every Show me shape on the selection. */
   onTestDrawing?(): void;
+  /**
+   * A yes or no, when Glance has asked something other than a trade confirm ("Want me to pull up my own?"). True when
+   * it answered that question (a spoken yes can do that: it moves no money). Else a yes stays a trade confirm.
+   */
+  onYesNo?(yes: boolean): boolean;
 }
 
 export function useAssistant(opts: AssistantOptions = {}) {
@@ -101,6 +106,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
   onAsk.current = opts.onAsk;
   const onTestDrawing = useRef(opts.onTestDrawing);
   onTestDrawing.current = opts.onTestDrawing;
+  const onYesNo = useRef(opts.onYesNo);
+  onYesNo.current = opts.onYesNo;
   const g = useGlance();
   const [card, setCard] = useState<AssistantCard>(null);
   const [heard, setHeard] = useState("");
@@ -260,6 +267,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
           return say("Test drawing works on a web page, with developer tools on in settings.");
         case "confirm":
         case "cancel":
+          // First, a question that isn't a trade ("Want me to pull up my own?").
+          if (onYesNo.current?.(cmd.kind === "confirm")) return;
           // Only a tap (or a typed "yes") confirms: a misheard word must never move money.
           if (source === "voice") return say(LINES.tapToConfirm);
           setDecision((d) => ({ n: d.n + 1, confirm: cmd.kind === "confirm" }));
@@ -275,6 +284,10 @@ export function useAssistant(opts: AssistantOptions = {}) {
   const applyIntent = useCallback(
     (it: VoiceIntent, said: string) => {
       const meta = `Heard “${said}”`;
+      // A spoken yes or no to a question that isn't a trade ("Want me to pull up my own?").
+      if (/^(yes|yeah|yep|sure|ok|okay|please|please do|do it|go ahead|pull it up|no|nope|no thanks|not now)[.!]?$/i.test(said.trim())) {
+        if (onYesNo.current?.(!/^(no|nope|no thanks|not now)/i.test(said.trim()))) return;
+      }
       switch (it.intent) {
         case "buy":
           // The same confirm card as typing: preflight, review, and nothing moves without the tap. A stock outside

@@ -280,10 +280,26 @@ const YAHOO_PARAMS: Record<ChartRange, { range: string; interval: string; label:
   ALL: { range: "max", interval: "1mo", label: "monthly" },
 };
 
+/**
+ * Finer candles for fitting a page's chart, which may draw every minute (Yahoo's own 1 day chart does): 5-minute
+ * closes smooth away the day's extremes the page shows. Only the short ranges have a finer step.
+ */
+const YAHOO_FINE: Partial<Record<ChartRange, { range: string; interval: string; label: string }>> = {
+  "1D": { range: "1d", interval: "1m", label: "1-minute" },
+  "1W": { range: "5d", interval: "15m", label: "15-minute" },
+  "1M": { range: "1mo", interval: "30m", label: "30-minute" },
+};
+
 /** The public quote's own history (Yahoo Finance's chart endpoint, the same source the keeper quotes from). */
-export async function yahooHistory(ticker: string, range: ChartRange, doFetch: typeof fetch = fetch): Promise<QuoteHistory> {
-  const p = YAHOO_PARAMS[range];
-  const res = await doFetch(`${YAHOO}/${encodeURIComponent(ticker)}?range=${p.range}&interval=${p.interval}`, {
+/** Which candles: `fine` a finer step (short ranges), `prepost` the pre- and after-market too (a page showing them). */
+export interface CandleOptions {
+  fine?: boolean;
+  prepost?: boolean;
+}
+
+export async function yahooHistory(ticker: string, range: ChartRange, doFetch: typeof fetch = fetch, opts: CandleOptions = {}): Promise<QuoteHistory> {
+  const p = (opts.fine ? YAHOO_FINE[range] : undefined) ?? YAHOO_PARAMS[range];
+  const res = await doFetch(`${YAHOO}/${encodeURIComponent(ticker)}?range=${p.range}&interval=${p.interval}${opts.prepost ? "&includePrePost=true" : ""}`, {
     headers: { "user-agent": "Mozilla/5.0 (Glance price chart)", accept: "application/json" },
     signal: AbortSignal.timeout(6_000),
   });
@@ -297,7 +313,7 @@ export async function yahooHistory(ticker: string, range: ChartRange, doFetch: t
   const points = ts.flatMap((t, i) => (typeof close[i] === "number" && close[i]! > 0 ? [{ t, price: close[i]! }] : []));
   if (points.length === 0) throw new Error("Yahoo: no history");
   const name = r?.meta?.longName || r?.meta?.shortName;
-  return { points, detail: `Yahoo Finance ${ticker}, ${p.label} closes`, ...(name ? { name } : {}) };
+  return { points, detail: `Yahoo Finance ${ticker}, ${p.label} closes${opts.prepost ? " (with pre- and after-market)" : ""}`, ...(name ? { name } : {}) };
 }
 
 /** The label a chart's source goes by when its prices are the market's own candles (any US stock, any range). */
@@ -330,7 +346,7 @@ export interface ChartDeps {
   /** A reader per mainnet feed. */
   reader(feed: Address): FeedReader;
   store: RoundStore;
-  quoteHistory(ticker: string, range: ChartRange): Promise<QuoteHistory>;
+  quoteHistory(ticker: string, range: ChartRange, opts?: CandleOptions): Promise<QuoteHistory>;
   /** The prices our keeper wrote to the testnet stand-in feed, when there's no other history. */
   keeperHistory(symbol: string, since: number): Promise<Array<{ t: number; answer: bigint; decimals: number }>>;
   /** The vault's freshness thresholds for the stock (to classify the market as the vault would), or null. */
@@ -481,11 +497,11 @@ export function quoteCacheFile(ctx: Pick<AppContext, "cacheDir">): string | null
 
 /** Yahoo history, cached 5 minutes (it's an intraday series; the chart doesn't need it fresher). */
 export function cachedQuoteHistory(cache: TtlCache<QuoteHistory>, doFetch?: typeof fetch) {
-  return async (ticker: string, range: ChartRange) => {
-    const key = `${ticker}:${range}`;
+  return async (ticker: string, range: ChartRange, opts: CandleOptions = {}) => {
+    const key = `${ticker}:${range}${opts.fine ? ":fine" : ""}${opts.prepost ? ":prepost" : ""}`;
     const hit = cache.get(key);
     if (hit) return hit.value;
-    const h = await yahooHistory(ticker, range, doFetch);
+    const h = await yahooHistory(ticker, range, doFetch, opts);
     cache.set(key, h);
     return h;
   };

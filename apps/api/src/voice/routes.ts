@@ -286,6 +286,11 @@ export function registerVoice(
   app.post("/voice/command", async (c) => {
     const started = performance.now();
     const body = parse(commandBody, await jsonBody(c));
+    // A bare yes or no answers a question Glance asked on the page ("Want me to pull up my own?"): the extension acts
+    // on it, and nothing is said here (never a guess at what it meant).
+    if (/^(yes|yeah|yep|sure|ok|okay|please|please do|do it|go ahead|pull it up|no|nope|no thanks|not now)[.!]?$/i.test(body.transcript.trim())) {
+      return send(c, { intent: "unknown", symbol: null, amount: null, reply: "", source: "rules", note: "yes or no", ms: Math.round(performance.now() - started) });
+    }
     const it = await understand(body.transcript, body.context, ctx.catalog.entries, ctx.intentModel);
     const { reply, facts: replyFacts } = await replyFor(ctx, it, body.context, body.vault);
     return send(c, {

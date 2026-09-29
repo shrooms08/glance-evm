@@ -7,6 +7,7 @@
  * shows. jsdom has no layout, so boxes come from data-rect attributes. No network.
  */
 import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,8 +16,10 @@ import type { ChartFacts } from "@glance/core/chart-facts";
 import { calibrate, calibrationError, datedTimes, detectSymbol, fitLine, parsePrice, parseTimeLabel, parseVisionLabels, rangeFromButton, rangeFromSpan, sanityCheck, timeToPx, type AxisLabel, type Box, type Calibration } from "@glance/core/page-chart";
 
 import { chartMarkGeometry, priceLookup } from "../lib/chartMarks";
-import { ChartLens, LENS_LABEL, lensLabel } from "../lib/chartLens";
-import { CALIBRATION_TTL_MS, chartPathLine, clearCalibrations, preparePageChart, type LensFlowDeps, type Prepared } from "../lib/chartLensFlow";
+import { ChartLayer, MARK_GAP_MS, markShapes } from "../lib/chartLayer";
+import { fitTrace, traceSeries, type Pixels } from "../lib/canvasTrace";
+import { intersects, placeOwnChart, wantsOwnChart } from "../lib/ownChart";
+import { CALIBRATION_TTL_MS, chartPathLine, clearCalibrations, defaultMarks, preparePageChart, validateScale, visionLabels, type LensFlowDeps, type MarkLayer, type Prepared } from "../lib/chartLensFlow";
 import { asksAboutPriceMove, chooseChartRoute, pageStock, pickPageChart, readDomLabels, selectedRange, wantsPageChart } from "../lib/pageChart";
 import { parseCommand } from "../lib/commands";
 import { LINES } from "@glance/core/persona";
@@ -251,12 +254,74 @@ describe("the sanity check (real captures, real Chainlink prices, the page's lin
   });
 });
 
-describe("the flow: page chart, lens, or a question first", () => {
+/**
+ * A chart's pane as pixels, drawn from prices the way a line chart draws them: white, gray gridlines, the series as a
+ * 2 CSS px line in `rgb`, and a dotted last-price line in the same color across the pane (to be ignored).
+ */
+function drawLine(prices: readonly number[], width: number, height: number, dpr = 1, rgb: [number, number, number] = [242, 54, 69]): Pixels {
+  const W = Math.round(width * dpr);
+  const H = Math.round(height * dpr);
+  const data = new Uint8ClampedArray(W * H * 4).fill(255);
+  const put = (x: number, y: number, c: [number, number, number]) => {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const k = (y * W + x) * 4;
+    [data[k], data[k + 1], data[k + 2], data[k + 3]] = [c[0], c[1], c[2], 255];
+  };
+  for (let y = 0; y < H; y += Math.round(40 * dpr)) for (let x = 0; x < W; x++) put(x, y, [225, 225, 228]);
+  const lo = Math.min(...prices);
+  const hi = Math.max(...prices);
+  const pad = 20 * dpr;
+  const yOf = (p: number) => pad + ((hi - p) / (hi - lo)) * (H - 2 * pad);
+  const n = prices.length;
+  for (let x = 0; x < W; x++) {
+    const f = (x / (W - 1)) * (n - 1);
+    const a = Math.floor(f);
+    const b = Math.min(n - 1, a + 1);
+    const y = Math.round(yOf(prices[a]! + (prices[b]! - prices[a]!) * (f - a)));
+    for (let t = 0; t < 2 * dpr; t++) put(x, y + t, rgb);
+  }
+  const last = Math.round(yOf(prices.at(-1)!)) - 6 * dpr;
+  for (let x = 0; x < W; x += 6) for (let t = 0; t < 3; t++) put(x + t, last, rgb);
+  return { width: W, height: H, data };
+}
+
+/** Candles as pixels: green bodies up, red bodies down, a 1px wick through each, on white. */
+function drawCandles(bars: ReadonlyArray<{ open: number; close: number; high: number; low: number }>, width: number, height: number): Pixels {
+  const data = new Uint8ClampedArray(width * height * 4).fill(255);
+  const lo = Math.min(...bars.map((b) => b.low));
+  const hi = Math.max(...bars.map((b) => b.high));
+  const yOf = (p: number) => Math.round(10 + ((hi - p) / (hi - lo)) * (height - 20));
+  const step = width / bars.length;
+  bars.forEach((bar, i) => {
+    const c: [number, number, number] = bar.close >= bar.open ? [8, 153, 129] : [242, 54, 69];
+    const x0 = Math.round(i * step + step * 0.2);
+    const x1 = Math.round((i + 1) * step - step * 0.2);
+    const mid = Math.round((x0 + x1) / 2);
+    const fill = (x: number, y0: number, y1: number) => {
+      for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
+        const k = (y * width + x) * 4;
+        [data[k], data[k + 1], data[k + 2]] = c;
+      }
+    };
+    fill(mid, yOf(bar.high), yOf(bar.low));
+    for (let x = x0; x <= x1; x++) fill(x, yOf(bar.open), yOf(bar.close));
+  });
+  return { width, height, data };
+}
+
+/** A fake mark layer: what was drawn, and when it closed. */
+function fakeLayer(): MarkLayer & { marks: unknown[]; closed: boolean } {
+  const l = { marks: [] as unknown[], closed: false, drawn: 0, isOpen: true, add: (a: unknown) => (l.marks.push(a), (l.drawn = l.marks.length)), close: () => ((l.closed = true), (l.isOpen = false)) };
+  return l as never;
+}
+
+describe("the flow: canvas, then DOM labels, then vision; else nothing drawn and a question (rule 3)", () => {
   beforeEach(clearCalibrations);
   const facts1D = { ...facts, range: "1D" as const };
+  const pane = { x: 32, y: 522, width: 1148, height: 292 };
   const deps = (over: Partial<LensFlowDeps> = {}) => {
-    const lensAnnotate = vi.fn();
-    const openLens = vi.fn(() => ({ annotate: lensAnnotate, clearAnnotations: vi.fn(), close: vi.fn() }) as unknown as ChartLens);
+    const layer = fakeLayer();
+    const openLayer = vi.fn(() => layer);
     const d: LensFlowDeps = {
       doc: document,
       win: window,
@@ -264,10 +329,11 @@ describe("the flow: page chart, lens, or a question first", () => {
       named: null,
       capture: vi.fn(async () => "data:image/jpeg;base64,AAAA"),
       vision: vi.fn(async () => ({ labels: json<{ labels: unknown }>("tradingview.vision.claude-sonnet-4-5.json").labels })),
-      chart: vi.fn(async () => chartData),
       facts: vi.fn(async () => facts1D),
-      drawings: () => null,
-      openLens,
+      marketCandles: vi.fn(async () => chartData),
+      openLayer,
+      // No canvas pixels in jsdom: each test that wants the canvas path gives its own.
+      readPixels: () => ({ error: "no canvas pixels in this test" }),
       now: () => asOfOf("tradingview") * 1000,
       crop: vi.fn(async () => {
         const v = json<{ crop: Box; scale: number; width: number; height: number }>("tradingview.vision.claude-sonnet-4-5.json");
@@ -275,19 +341,32 @@ describe("the flow: page chart, lens, or a question first", () => {
       }),
       ...over,
     };
-    return { d, openLens, lensAnnotate };
+    return { d, openLayer, layer };
   };
 
-  it("DOM labels that check out: drawn on the page's own chart, no screenshot taken", async () => {
+  it("A. the chart's own canvas, traced and fitted: marks go on the page's chart; no DOM labels read, no screenshot", async () => {
+    tradingViewLike({ labels: false });
+    const prices = chartData.points.map((p) => p.price);
+    const { d, openLayer, layer } = deps({ readPixels: () => ({ pixels: drawLine(prices, pane.width, pane.height) as never, pane, dpr: 1, canvases: 2 }) });
+    const got = await preparePageChart(d);
+    expect(got).toMatchObject({ kind: "ready", symbol: "TSLA", range: "1D", drawOn: "page", method: "canvas" });
+    expect((got as { r2: number }).r2).toBeGreaterThan(0.99);
+    expect(d.capture).not.toHaveBeenCalled();
+    expect(openLayer).toHaveBeenCalledWith(document.querySelector(".chart-container"), expect.objectContaining({ method: "canvas" }), expect.any(Object), expect.any(Function), expect.any(Function), null, "1D");
+    (got as { annotate(a: unknown): void }).annotate({ kind: "CHART_POINT", symbol: "TSLA", t: facts.high.t, at: 0 });
+    expect(layer.marks).toHaveLength(1);
+  });
+
+  it("B. DOM labels that check out (the canvas unreadable): marks on the page's chart, no screenshot", async () => {
     tradingViewLike();
-    const { d, openLens } = deps();
+    const { d, openLayer } = deps();
     const got = await preparePageChart(d);
     expect(got).toMatchObject({ kind: "ready", symbol: "TSLA", range: "1D", drawOn: "page", method: "dom" });
     expect(d.capture).not.toHaveBeenCalled();
-    expect(openLens).not.toHaveBeenCalled();
+    expect(openLayer).toHaveBeenCalledTimes(1);
   });
 
-  it("no DOM labels: a screenshot read by vision, fitted, and (the line not readable in this test) drawn on the page", async () => {
+  it("C. no DOM labels: a screenshot read by vision, fitted and validated here, drawn on the page", async () => {
     tradingViewLike({ labels: false });
     const { d } = deps();
     const got = await preparePageChart(d);
@@ -295,27 +374,26 @@ describe("the flow: page chart, lens, or a question first", () => {
     expect(got).toMatchObject({ kind: "ready", drawOn: "page", method: "vision" });
   });
 
-  it("a bad calibration (Haiku's real reply): the Glance lens over the page's chart, and the marks go on it", async () => {
+  it("D. a bad vision reading (Haiku's real reply): NOTHING drawn, no Glance chart, rule 3's question with the reasons", async () => {
     tradingViewLike({ labels: false });
-    const { d, openLens, lensAnnotate } = deps({ vision: vi.fn(async () => ({ labels: json<{ labels: unknown }>("tradingview.vision.claude-haiku-4-5.json").labels })) });
-    // The page's line, as the pixel reader saw it on the real capture.
+    const { d, openLayer } = deps({ vision: vi.fn(async () => ({ labels: json<{ labels: unknown }>("tradingview.vision.claude-haiku-4-5.json").labels })) });
     const got = await preparePageChart({ ...d, readLine: () => lineOf("tradingview") });
-    expect(got).toMatchObject({ kind: "ready", drawOn: "lens" });
-    expect(openLens).toHaveBeenCalledWith(document.querySelector(".chart-container"), chartData);
-    (got as { annotate(a: unknown): void }).annotate({ kind: "CHART_POINT", symbol: "TSLA", t: facts.high.t, at: 0 });
-    expect(lensAnnotate).toHaveBeenCalledTimes(1);
+    expect(got).toMatchObject({ kind: "cant-calibrate", symbol: "TSLA", range: "1D" });
+    expect((got as { reasons: string[] }).reasons.map((r) => r.split(":")[0])).toEqual(["canvas", "dom", "vision"]);
+    expect(openLayer).not.toHaveBeenCalled();
+    expect(LINES.cantLineUp).toBe("I can't line up marks on this chart. Want me to pull up my own?");
   });
 
-  it("no screenshot possible (no activeTab): ask for Option+G, and offer the lens", async () => {
+  it("no screenshot possible, or today's vision readings used up: nothing drawn, rule 3, and why", async () => {
     tradingViewLike({ labels: false });
-    const { d } = deps({ capture: vi.fn(async () => null) });
-    expect(await preparePageChart(d)).toEqual({ kind: "no-screenshot", symbol: "TSLA", range: "1D" });
-    const { d: d2, openLens } = deps({ capture: vi.fn(async () => null) });
-    expect(await preparePageChart(d2, { confirmed: { symbol: "TSLA", range: "1D" }, forceLens: true })).toMatchObject({ drawOn: "lens" });
-    expect(openLens).toHaveBeenCalled();
+    const none = await preparePageChart(deps({ capture: vi.fn(async () => null) }).d);
+    expect(none).toMatchObject({ kind: "cant-calibrate" });
+    expect((none as { reasons: string[] }).reasons.at(-1)).toMatch(/^vision: no screenshot/);
+    const limit = await preparePageChart(deps({ vision: vi.fn(async () => ({ limit: "today's chart readings are used up" })) }).d);
+    expect((limit as { reasons: string[] }).reasons.at(-1)).toBe("vision: today's chart readings are used up");
   });
 
-  it("the same chart asked about again within 10 minutes: the calibration is reused, no screenshot or vision call", async () => {
+  it("the same chart asked about again within 10 minutes: the vision calibration is reused, no screenshot or vision call", async () => {
     tradingViewLike({ labels: false });
     let now = asOfOf("tradingview") * 1000;
     const { d } = deps({ now: () => now });
@@ -324,7 +402,6 @@ describe("the flow: page chart, lens, or a question first", () => {
     expect(await preparePageChart(d)).toMatchObject({ drawOn: "page", method: "vision" });
     expect(d.vision).toHaveBeenCalledTimes(1);
     expect(d.capture).toHaveBeenCalledTimes(1);
-    // Ten minutes on: read again.
     now += 2_000;
     await preparePageChart(d);
     expect(d.vision).toHaveBeenCalledTimes(2);
@@ -338,19 +415,29 @@ describe("the flow: page chart, lens, or a question first", () => {
     expect(d.vision).toHaveBeenCalledTimes(2);
   });
 
-  it("the API's daily vision limit reached: the Glance lens, saying why", async () => {
-    tradingViewLike({ labels: false });
-    const { d, openLens } = deps({ vision: vi.fn(async () => ({ limit: "today's chart readings are used up" })) });
-    expect(await preparePageChart(d)).toMatchObject({ kind: "ready", drawOn: "lens", reason: "today's chart readings are used up" });
-    expect(openLens).toHaveBeenCalled();
+  it("vision's structured reading (plot box, price ticks, time ticks) becomes axis labels; the 3% rule validates the scale", () => {
+    const labels = visionLabels({ plot: { x: 10, y: 20, width: 500, height: 200 }, price: [{ price: 380, y: 40 }, { price: 370, y: 190 }], time: [{ time: "10:00", x: 60 }, { time: "12:00", x: 300 }] }) as Array<{ axis: string; text: string; x: number; y: number }>;
+    expect(labels).toEqual([
+      { axis: "price", text: "380", x: 530, y: 40 },
+      { axis: "price", text: "370", x: 530, y: 190 },
+      { axis: "time", text: "10:00", x: 60, y: 232 },
+      { axis: "time", text: "12:00", x: 300, y: 232 },
+    ]);
+    // px = a * price + b: 380 at y 40, 370 at y 190 (15 px a dollar), on a plot from y 20 to 220.
+    const cal = { method: "vision", price: { a: -15, b: 5_740, rmse: 0, n: 2 }, time: { kind: "linear", anchors: [], fit: { a: 1, b: 0, rmse: 0, n: 2 } }, plot: { x: 10, y: 20, width: 500, height: 200 }, priceSide: "right" } as Calibration;
+    expect(validateScale(cal, 379, 371).ok).toBe(true);
+    expect(validateScale(cal, 385, 371)).toMatchObject({ ok: false, reason: "the candles' high and low fall outside the plot (over 3%)" });
   });
 
   it("the page's own range decides (6 months: six months of prices, no question)", async () => {
     tradingViewLike({ selected: "6 months" });
     const { d } = deps();
     await preparePageChart(d);
-    expect(d.chart).toHaveBeenCalledWith("TSLA", "6M");
-    expect(d.facts).toHaveBeenCalledWith("TSLA", "6M");
+    // Six months of the market's candles (no finer or pre-market set on a long range), and facts from the same.
+    expect(d.marketCandles).toHaveBeenCalledWith("TSLA", "6M", {});
+    expect(d.marketCandles).toHaveBeenCalledWith("TSLA", "6M", { fine: true });
+    expect(d.marketCandles).toHaveBeenCalledTimes(2);
+    expect(d.facts).toHaveBeenCalledWith("TSLA", "6M", {});
   });
 
   it("no stock on the page or in the question: one short question, nothing fetched", async () => {
@@ -361,7 +448,7 @@ describe("the flow: page chart, lens, or a question first", () => {
     document.querySelector("section > span")!.textContent = "Nasdaq Stock Market";
     const { d } = deps();
     expect(await preparePageChart(d)).toEqual({ kind: "ask", question: "Which stock is this chart?", symbol: null, range: "1D" });
-    expect(d.chart).not.toHaveBeenCalled();
+    expect(d.marketCandles).not.toHaveBeenCalled();
   });
 });
 
@@ -410,30 +497,99 @@ describe("marks on the page's chart follow scroll and resize", () => {
   });
 });
 
-describe("the Glance lens", () => {
-  it("sits exactly over the page's chart, says what it is, follows scroll, draws once its chart is up, and closes", async () => {
+describe("the annotation layer: marks on the page's own chart", () => {
+  const cal = { method: "canvas", price: { a: -2, b: 900, rmse: 0, n: 2 }, time: { kind: "linear", anchors: [], fit: { a: 0.5, b: -500, rmse: 0, n: 2 } }, plot: { x: 100, y: 200, width: 600, height: 240 }, priceSide: "right" } as Calibration;
+  const at = { x: 100, y: 200, width: 600, height: 240 };
+  // price 300 -> y 300 (100 into the box); t 1600 -> x 300 (200 into the box)
+  const priceAt = () => 300;
+
+  it("each primitive, in the chart box's coordinates: a circle with its price, a dashed level with its label, a trend line with an arrow, a shaded box", () => {
+    expect(markShapes({ kind: "CHART_POINT", symbol: "X", t: 1600, at: 0 }, cal, at, priceAt, () => [])).toEqual([
+      { kind: "circle", cx: 200, cy: 100, r: 9 },
+      { kind: "text", x: 200, y: 85, text: "$300.00", anchor: "middle" },
+    ]);
+    expect(markShapes({ kind: "CHART_LEVEL", symbol: "X", price: 300, label: "Support $300.00, 2 touches", at: 0 }, cal, at, priceAt, () => [])).toEqual([
+      { kind: "line", x1: 0, y1: 100, x2: 600, y2: 100, dashed: true },
+      { kind: "text", x: 594, y: 94, text: "Support $300.00, 2 touches", anchor: "end" },
+    ]);
+    const trend = markShapes({ kind: "CHART_TREND", symbol: "X", t1: 1400, t2: 1800, at: 0 }, cal, at, (t) => (t === 1400 ? 290 : 310), () => [])!;
+    expect(trend[0]).toEqual({ kind: "line", x1: 100, y1: 120, x2: 300, y2: 80 });
+    expect(trend[1]!.kind).toBe("polygon");
+    expect(markShapes({ kind: "CHART_RANGE", symbol: "X", t1: 1400, t2: 1800, at: 0 }, cal, at, priceAt, () => [295, 305])).toEqual([{ kind: "polygon", points: [[100, 87], [300, 87], [300, 113], [100, 113]] }]);
+  });
+
+  it("a shaded zone over nearly the whole chart marks nothing: skipped", () => {
+    expect(markShapes({ kind: "CHART_RANGE", symbol: "X", t1: 1200, t2: 2400, at: 0 }, cal, at, priceAt, () => [295, 305])).toBeNull();
+  });
+
+  it("a mark outside the plot is skipped, never guessed", () => {
+    expect(markShapes({ kind: "CHART_LEVEL", symbol: "X", price: 900, label: "x", at: 0 }, cal, at, priceAt, () => [])).toBeNull();
+    expect(markShapes({ kind: "CHART_POINT", symbol: "X", t: 99_999, at: 0 }, cal, at, priceAt, () => [])).toBeNull();
+  });
+
+  it("pinned to the chart's box (click-through), follows scroll, marks 400ms apart, x and range change clear it", async () => {
+    vi.useFakeTimers();
     tradingViewLike();
     const target = document.querySelector(".chart-container")!;
     const host = document.createElement("div");
     document.body.append(host);
-    const annotate = vi.fn();
-    let ready: (h: unknown) => void = () => {};
-    const mount = vi.fn(() => new Promise((r) => (ready = r)));
+    let range = "1D";
     const onClose = vi.fn();
-    const lens = new ChartLens(host, target, chartData, mount as never, onClose);
-    expect([lens.root.style.left, lens.root.style.top, lens.root.style.width, lens.root.style.height]).toEqual(["32px", "522px", "1210px", "320px"]);
-    expect(lens.root.textContent).toContain(LENS_LABEL);
-    lens.annotate({ kind: "CHART_POINT", symbol: "TSLA", t: facts.high.t, at: 0 });
-    ready({ annotate, clearAnnotations: vi.fn(), destroy: vi.fn(), update: vi.fn() });
-    await Promise.resolve();
-    expect(annotate).toHaveBeenCalledTimes(1);
+    const layer = new ChartLayer(host, target, cal, rectOf(target), priceAt, () => [], { onClose, range: "1D", rangeNow: () => range });
+    expect([layer.root.style.left, layer.root.style.top, layer.root.style.width, layer.root.style.height]).toEqual(["32px", "522px", "1210px", "320px"]);
+    expect(layer.root.className).toBe("g-chart-layer");
+    layer.add({ kind: "CHART_LEVEL", symbol: "X", price: 300, label: "Low", at: 0 });
+    layer.add({ kind: "CHART_LEVEL", symbol: "X", price: 310, label: "High", at: 0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(layer.drawn).toBe(1);
+    await vi.advanceTimersByTimeAsync(MARK_GAP_MS - 50);
+    expect(layer.drawn).toBe(1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(layer.drawn).toBe(2);
     scrollY = 300;
     window.dispatchEvent(new Event("scroll"));
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    expect(lens.root.style.top).toBe("222px");
-    (lens.root.querySelector("button[aria-label='Close the Glance lens']") as HTMLButtonElement).click();
+    expect(layer.root.style.top).toBe("222px");
+    // The page's range changes: those marks are for another chart.
+    range = "1W";
+    await vi.advanceTimersByTimeAsync(900);
+    expect(layer.isOpen).toBe(false);
     expect(onClose).toHaveBeenCalled();
-    expect(host.contains(lens.root)).toBe(false);
+    const again = new ChartLayer(host, target, cal, rectOf(target), priceAt, () => []);
+    (again.root.querySelector("button[aria-label=\"Clear Glance's marks from this chart\"]") as HTMLButtonElement).click();
+    expect(host.contains(again.root)).toBe(false);
+    vi.useRealTimers();
+  });
+});
+
+describe("Glance's own chart: only when asked, docked, never over the page's chart", () => {
+  it("explicit requests only", () => {
+    for (const q of ["show me your chart", "pull up Glance's chart", "open your chart", "use your chart", "Pull up your own"]) expect(wantsOwnChart(q), q).toBe(true);
+    for (const q of ["explain this chart", "what's this chart doing", "show me Tesla's chart", "where did it bounce", "show me support", "is this a good entry"]) expect(wantsOwnChart(q), q).toBe(false);
+  });
+
+  it("regression: wherever the panel and the page's chart are, the dock never intersects the page's chart", () => {
+    const viewport = { width: 1440, height: 900 };
+    const charts = [
+      { x: 40, y: 478, width: 1292, height: 292 }, // TradingView's symbol page
+      { x: 0, y: 0, width: 1440, height: 400 },
+      { x: 700, y: 100, width: 740, height: 700 },
+      { x: 200, y: 300, width: 600, height: 300 },
+    ];
+    const panels = [null, { x: 1056, y: 244, width: 360, height: 560 }, { x: 24, y: 24, width: 360, height: 500 }, { x: 540, y: 300, width: 360, height: 300 }];
+    let placed = 0;
+    for (const chart of charts) {
+      for (const panel of panels) {
+        const box = placeOwnChart(panel, viewport, [chart]);
+        if (!box) continue;
+        placed++;
+        expect(intersects(box, chart, 4), JSON.stringify({ chart, panel, box })).toBe(false);
+        if (panel) expect(intersects(box, panel, 4)).toBe(false);
+        expect(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height).toBe(true);
+      }
+    }
+    expect(placed).toBeGreaterThan(10);
+    // No room anywhere: none (never over the chart).
+    expect(placeOwnChart(null, viewport, [{ x: 0, y: 0, width: 1440, height: 900 }])).toBeNull();
   });
 });
 
@@ -523,11 +679,11 @@ describe("any US stock on a page", () => {
 
   it("NVDA's chart: its own prices for its own range (the extension asks for NVDA 1D), never a catalog stand-in", async () => {
     tradingViewReal();
-    const chart = vi.fn(async () => null);
+    const marketCandles = vi.fn(async () => null);
     const facts = vi.fn(async () => null);
-    const prep = await preparePageChart({ doc: document, win: window, symbols: ["TSLA", "AMD"], named: null, capture: async () => null, vision: async () => null, chart, facts, drawings: () => null, openLens: vi.fn() as never });
-    expect(chart).toHaveBeenCalledWith("NVDA", "1D");
-    expect(facts).toHaveBeenCalledWith("NVDA", "1D");
+    const prep = await preparePageChart({ doc: document, win: window, symbols: ["TSLA", "AMD"], named: null, capture: async () => null, vision: async () => null, facts, marketCandles, openLayer: vi.fn() as never, readPixels: () => ({ error: "none" }) });
+    expect(marketCandles).toHaveBeenCalledWith("NVDA", "1D", {});
+    expect(marketCandles).toHaveBeenCalledWith("NVDA", "1D", { fine: true, prepost: true });
     expect(prep).toEqual({ kind: "unavailable", message: "I don't have NVDA's prices for that range right now." });
   });
 });
@@ -549,21 +705,153 @@ describe("which chart a question is about, and the one log line", () => {
     expect(chooseChartRoute("what's this article saying?", { hasChart: true, pageSymbol: "NVDA", named: null }).route).toBe("none");
   });
 
-  it("one line per chart request: the path (DOM labels, vision, the overlay) and why", () => {
-    const ready = (drawOn: "page" | "lens", method: "dom" | "vision" | null, reason: string) =>
-      ({ kind: "ready", symbol: "NVDA", range: "1D", site: "tradingview", drawOn, method, reason, forced: false, annotate: () => {}, lens: null }) as Prepared;
+  it("one line per chart request: site, symbol, range, method, R^2 or the error, marks, and Glance's own chart", () => {
+    const layer = fakeLayer();
+    const ready = (method: "canvas" | "dom" | "vision", r2: number | null, reason: string) =>
+      ({ kind: "ready", symbol: "HOG", range: "1D", site: "tradingview", drawOn: "page", method, reason, r2, forced: false, annotate: () => {}, annotated: 0, facts, layer, box: { x: 0, y: 0, width: 1, height: 1 } }) as unknown as Prepared;
     const q = "Explain this chart";
-    expect(chartPathLine(ready("page", "dom", "linear time axis; ok"), q)).toBe('[glance] chart "Explain this chart": page chart via DOM labels (NVDA 1D; linear time axis; ok)');
-    expect(chartPathLine(ready("page", "vision", "piecewise time axis; ok"), q)).toBe('[glance] chart "Explain this chart": page chart via vision (NVDA 1D; piecewise time axis; ok)');
-    expect(chartPathLine(ready("lens", null, "today's chart readings are used up"), q)).toBe('[glance] chart "Explain this chart": Glance overlay (NVDA 1D; today\'s chart readings are used up)');
-    expect(chartPathLine({ kind: "none" }, q)).toBe('[glance] chart "Explain this chart": Glance\'s own chart (no chart on this page)');
-    expect(chartPathLine({ kind: "no-screenshot", symbol: "NVDA", range: "1D" }, q)).toContain("no screenshot yet");
+    expect(chartPathLine(ready("canvas", 0.9768, "line #f23645, R^2 0.977, range off 1.2%"), q, { marks: 4 })).toBe(
+      '[glance] chart "Explain this chart": site=tradingview symbol=HOG range=1D method=canvas r2=0.977 (line #f23645, R^2 0.977, range off 1.2%) marks=4 ownChart=no',
+    );
+    expect(chartPathLine(ready("dom", null, "linear time axis; ok"), q, { marks: 2 })).toBe('[glance] chart "Explain this chart": site=tradingview symbol=HOG range=1D method=dom (linear time axis; ok) marks=2 ownChart=no');
+    expect(chartPathLine({ kind: "cant-calibrate", symbol: "HOG", range: "1D", site: "tradingview", reasons: ["canvas: R^2 0.812 under 0.95", "dom: no price axis", "vision: no screenshot"], box: { x: 0, y: 0, width: 1, height: 1 } }, q)).toBe(
+      '[glance] chart "Explain this chart": site=tradingview symbol=HOG range=1D method=none error="canvas: R^2 0.812 under 0.95; dom: no price axis; vision: no screenshot" marks=0 ownChart=offered (rule 3)',
+    );
+    expect(chartPathLine({ kind: "none" }, q)).toContain("no chart on this page");
   });
 
-  it("the overlay says where its prices come from", () => {
-    expect(LENS_LABEL).toBe("Glance lens · Chainlink prices");
-    expect(lensLabel("Yahoo Finance")).toBe("Glance lens · Yahoo Finance prices");
-    expect(LINES.cantReadChart).toBe("I can't read this chart, so here's mine.");
+  it("an answer that mentioned no marks still marks the chart: high, low, trend, and levels touched twice (computed)", () => {
+    const f = { ...facts, trend: { direction: "up" as const, from: facts.first, to: facts.last, pct: 1.2 }, levels: { support: { price: 360.5, touches: 2, times: [1, 2] }, resistance: { price: 380, touches: 1, times: [3] } } };
+    expect(defaultMarks(f, "TSLA")).toEqual([
+      { kind: "CHART_POINT", symbol: "TSLA", t: facts.high.t, at: 0 },
+      { kind: "CHART_POINT", symbol: "TSLA", t: facts.low.t, at: 0 },
+      { kind: "CHART_TREND", symbol: "TSLA", t1: facts.first.t, t2: facts.last.t, at: 0 },
+      { kind: "CHART_LEVEL", symbol: "TSLA", price: 360.5, label: "Support $360.50, 2 touches", at: 0 },
+    ]);
+  });
+
+  it("'show me Tesla's chart' on a page with no chart: Glance's own (the one case besides an explicit request)", () => {
+    expect(chooseChartRoute("show me Tesla's chart", { hasChart: false, pageSymbol: null, named: "TSLA" }).route).not.toBe("page");
+  });
+
+  it("support and entry questions are about the chart on the page (annotated), not Glance's own", () => {
+    const page = { hasChart: true, pageSymbol: "HOG", named: null };
+    for (const q of ["what's this chart doing", "where did it bounce", "show me support", "is this a good entry"]) expect(chooseChartRoute(q, page).route, q).toBe("page");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Tracing the page's canvas (lib/canvasTrace.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A real TradingView pane, captured from the live page (29 Sep 2026) with Yahoo's candles for the same range. */
+function capturedPane(name: string): { pixels: Pixels; meta: { width: number; height: number; dpr: number; pane: Box; candles: Array<{ t: number; price: number }> } } {
+  const meta = json<{ width: number; height: number; dpr: number; pane: Box; candles: Array<{ t: number; price: number }> }>(`${name}.json`);
+  const data = new Uint8ClampedArray(gunzipSync(readFileSync(`${DIR}/${name}.rgba.gz`)));
+  return { pixels: { width: meta.width, height: meta.height, data }, meta };
+}
+
+describe("tracing the page's own chart and fitting it", () => {
+  it.each([
+    ["tv-hog-1D", 0.97],
+    ["tv-tsla-1W", 0.99],
+    ["tv-nvda-1M", 0.99],
+  ])("%s: the real TradingView line traced, fitted to the candles (R^2 >= %s, range within 3%)", (name, minR2) => {
+    const { pixels, meta } = capturedPane(name);
+    const trace = traceSeries(pixels, meta.dpr)!;
+    expect(trace.kind).toBe("line");
+    expect(trace.points.length).toBeGreaterThan(pixels.width * 0.9);
+    const pts = trace.points.map((p) => ({ x: meta.pane.x + p.x / meta.dpr, y: meta.pane.y + p.y / meta.dpr }));
+    const fit = fitTrace(pts, meta.candles, meta.pane);
+    expect(fit.ok, fit.reason).toBe(true);
+    expect(fit.r2).toBeGreaterThanOrEqual(minR2 as number);
+    expect(fit.rangeError).toBeLessThanOrEqual(0.03);
+  });
+
+  it("devicePixelRatio 1 and 2: the same line, the same fit (the trace is in device px, the fit in CSS px)", () => {
+    const prices = [100, 102, 101, 105, 104, 108, 107, 103, 106, 110, 109, 112];
+    const candles = prices.map((price, i) => ({ t: 1_790_000_000 + i * 300, price }));
+    const pane = { x: 50, y: 60, width: 400, height: 200 };
+    for (const dpr of [1, 2]) {
+      const trace = traceSeries(drawLine(prices, pane.width, pane.height, dpr), dpr)!;
+      const pts = trace.points.map((p) => ({ x: pane.x + p.x / dpr, y: pane.y + p.y / dpr }));
+      const fit = fitTrace(pts, candles, pane);
+      expect(fit.ok, `dpr ${dpr}: ${fit.reason}`).toBe(true);
+      expect(fit.r2).toBeGreaterThan(0.99);
+      // Price to pixel and back: the high sits 20px below the pane's top, the low 20px above its bottom.
+      expect(fit.a * (pane.y + 20) + fit.b).toBeCloseTo(112, 0);
+      expect(fit.a * (pane.y + pane.height - 20) + fit.b).toBeCloseTo(100, 0);
+      // Time to pixel: the first candle at the left edge, the last at the right.
+      const anchors = fit.calibration!.time.anchors;
+      expect(anchors[0]!.px).toBeCloseTo(pane.x, 0);
+      expect(anchors.at(-1)!.px).toBeCloseTo(pane.x + pane.width, -1);
+    }
+  });
+
+  it("a chart spaced by clock time (Yahoo's day, sparse pre-market bars): fitted by time, not bar order", () => {
+    // Bars at irregular times: a quiet stretch (few bars) then a busy one; the page spaces them by time.
+    const times = [0, 600, 1200, 5400, 5460, 5520, 5580, 5640, 5700, 5760, 5820, 5880, 5940, 6000];
+    const prices = [100, 101, 99, 104, 105, 103, 106, 108, 107, 109, 110, 108, 111, 112];
+    const W = 600;
+    const H = 200;
+    const data = new Uint8ClampedArray(W * H * 4).fill(255);
+    const yOf = (p: number) => Math.round(20 + ((112 - p) / 13) * (H - 40));
+    for (let x = 0; x < W; x++) {
+      const t = (x / (W - 1)) * 6000;
+      let i = 0;
+      while (i < times.length - 2 && times[i + 1]! <= t) i++;
+      const w = (t - times[i]!) / (times[i + 1]! - times[i]!);
+      const y = yOf(prices[i]! + (prices[i + 1]! - prices[i]!) * w);
+      for (const dy of [0, 1]) {
+        const k = ((y + dy) * W + x) * 4;
+        [data[k], data[k + 1], data[k + 2]] = [189, 20, 20];
+      }
+    }
+    const trace = traceSeries({ width: W, height: H, data }, 1)!;
+    const fit = fitTrace(trace.points, times.map((t, i) => ({ t: 1_790_000_000 + t, price: prices[i]! })), { x: 0, y: 0, width: W, height: H });
+    expect(fit.ok, fit.reason).toBe(true);
+    expect(fit.reason).toMatch(/x by time/);
+    expect(fit.r2).toBeGreaterThan(0.98);
+  });
+
+  it("gridlines, the dotted last-price line and gray text are ignored; the series color is found", () => {
+    const trace = traceSeries(drawLine([10, 12, 11, 15, 13, 17, 16, 14, 18, 20], 300, 150), 1)!;
+    expect(trace.color).toBe("#f23645");
+    // One y per column, following the line, never jumping to the dotted line.
+    const ys = trace.points.map((p) => p.y);
+    for (let i = 1; i < ys.length; i++) expect(Math.abs(ys[i]! - ys[i - 1]!)).toBeLessThan(20);
+  });
+
+  it("candles: each body's close (top of an up candle, bottom of a down one), then the same fit", () => {
+    const closes = [100, 103, 101, 106, 104, 109, 107, 111, 108, 113, 112, 115];
+    const bars = closes.map((close, i) => {
+      const open = i === 0 ? 99 : closes[i - 1]!;
+      return { open, close, high: Math.max(open, close) + 1, low: Math.min(open, close) - 1 };
+    });
+    const pixels = drawCandles(bars, 480, 240);
+    const trace = traceSeries(pixels, 1)!;
+    expect(trace.kind).toBe("candles");
+    expect(trace.points).toHaveLength(bars.length);
+    const fit = fitTrace(trace.points, closes.map((price, i) => ({ t: 1_790_000_000 + i * 86_400, price })), { x: 0, y: 0, width: 480, height: 240 });
+    expect(fit.ok, fit.reason).toBe(true);
+    expect(fit.r2).toBeGreaterThan(0.99);
+  });
+
+  it("the gates: R^2 under 0.95, or a fitted range more than 3% off, is refused (and says why)", () => {
+    const pane = { x: 0, y: 0, width: 400, height: 200 };
+    const prices = [100, 104, 99, 106, 101, 108, 100, 110];
+    const trace = traceSeries(drawLine(prices, 400, 200), 1)!;
+    // Candles of another shape: the fit is poor.
+    const other = [110, 100, 108, 101, 106, 99, 104, 100].map((price, i) => ({ t: i, price }));
+    const bad = fitTrace(trace.points, other, pane);
+    expect(bad.ok).toBe(false);
+    expect(bad.reason).toMatch(/R\^2 [\d.]+ under 0.95|no alignment/);
+    // The same shape: accepted; its range within 3%.
+    const good = fitTrace(trace.points, prices.map((price, i) => ({ t: i, price })), pane);
+    expect(good).toMatchObject({ ok: true });
+    expect(good.rangeError).toBeLessThanOrEqual(0.03);
+    // Too little to fit.
+    expect(fitTrace(trace.points.slice(0, 3), other, pane).ok).toBe(false);
   });
 });
 

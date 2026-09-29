@@ -40,6 +40,8 @@ export const voiceReplies = storage.defineItem<boolean>("sync:voiceReplies", { f
 export const conversationMode = storage.defineItem<boolean>("sync:conversationMode", { fallback: false });
 /** Developer tools (on in dev builds anyway): "glance test drawing" in the panel draws every Show me shape. */
 export const devTools = storage.defineItem<boolean>("local:devTools", { fallback: false });
+/** Settings, Developer: "Show calibration points", small dots where a page chart's fit puts each candle's close. */
+export const calibrationDots = storage.defineItem<boolean>("local:calibrationDots", { fallback: false });
 /** The water-drop sound as the panel opens and closes (Settings → "Sounds"). */
 export const soundsEnabled = storage.defineItem<boolean>("sync:soundsEnabled", { fallback: sound.enabledByDefault });
 

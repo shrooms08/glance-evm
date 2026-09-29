@@ -34,7 +34,7 @@ export function asksAboutPriceMove(question: string): boolean {
   const q = question.toLowerCase();
   return (
     isChartQuestion(q) ||
-    /\b(bounce[ds]?|bouncing|rebound(ed|s)?|dip(ped|s)?|drop(ped|s)?|spike[ds]?|peak(ed|s)?|bottom(ed|s)?|support|resistance|break ?out|trend(ing|s)?|high|low|highs|lows|rall(y|ied|ies)|sell-?off|mov(e|ed|es)|jump(ed|s)?|fell|fall|rose|rise|climb(ed|s)?|slid|crash(ed)?|surge[ds]?|plunge[ds]?|swings?)\b/.test(q)
+    /\b(bounce[ds]?|bouncing|rebound(ed|s)?|dip(ped|s)?|drop(ped|s)?|spike[ds]?|peak(ed|s)?|bottom(ed|s)?|support|resistance|entry|break ?out|trend(ing|s)?|high|low|highs|lows|rall(y|ied|ies)|sell-?off|mov(e|ed|es)|jump(ed|s)?|fell|fall|rose|rise|climb(ed|s)?|slid|crash(ed)?|surge[ds]?|plunge[ds]?|swings?)\b/.test(q)
   );
 }
 
@@ -346,4 +346,51 @@ export async function cropScreenshot(dataUrl: string, box: Box, viewport: { widt
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return { base64: btoa(bin), width: canvas.width, height: canvas.height, crop, scale, pixels };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The chart's own pixels, for tracing (lib/canvasTrace.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface ChartPixels {
+  pixels: { width: number; height: number; data: Uint8ClampedArray };
+  /** The traced pane's box (viewport px). */
+  pane: Box;
+  /** Device pixels per CSS pixel in the pixels read. */
+  dpr: number;
+  canvases: number;
+}
+
+/**
+ * The chart's pane as pixels: the largest visible canvas in the chart (the price pane) and every canvas stacked over it
+ * (TradingView and lightweight-charts draw the series, the grid and the crosshair on separate layers), composited at
+ * the canvases' own resolution (devicePixelRatio). A page's canvases are readable by a content script unless the page
+ * drew something cross-origin on them: then a SecurityError, and the next method is tried.
+ */
+export function readChartPixels(el: Element, win: Window = window): ChartPixels | { error: string } {
+  const canvases = [...(el.tagName === "CANVAS" ? [el] : el.querySelectorAll("canvas"))] as HTMLCanvasElement[];
+  const visible = canvases
+    .map((c) => ({ c, r: c.getBoundingClientRect() }))
+    .filter(({ c, r }) => r.width >= 40 && r.height >= 40 && c.width > 0 && c.height > 0 && win.getComputedStyle(c).visibility !== "hidden");
+  if (visible.length === 0) return { error: "no canvas in the chart" };
+  const pane = visible.reduce((a, b) => (b.r.width * b.r.height > a.r.width * a.r.height ? b : a));
+  const dpr = pane.c.width / pane.r.width;
+  const layers = visible.filter(({ r }) => {
+    const w = Math.max(0, Math.min(r.right, pane.r.right) - Math.max(r.left, pane.r.left));
+    const h = Math.max(0, Math.min(r.bottom, pane.r.bottom) - Math.max(r.top, pane.r.top));
+    return w * h >= pane.r.width * pane.r.height * 0.9;
+  });
+  const doc = el.ownerDocument;
+  const out = doc.createElement("canvas");
+  out.width = Math.round(pane.r.width * dpr);
+  out.height = Math.round(pane.r.height * dpr);
+  const ctx = out.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return { error: "no 2d context" };
+  try {
+    for (const { c, r } of layers) ctx.drawImage(c, (r.left - pane.r.left) * dpr, (r.top - pane.r.top) * dpr, r.width * dpr, r.height * dpr);
+    const img = ctx.getImageData(0, 0, out.width, out.height);
+    return { pixels: { width: img.width, height: img.height, data: img.data }, pane: rectBox(pane.r), dpr, canvases: layers.length };
+  } catch (err) {
+    return { error: (err as Error).name === "SecurityError" ? "the chart's canvas is tainted (drawn from another site)" : `couldn't read the canvas (${(err as Error).message})` };
+  }
 }

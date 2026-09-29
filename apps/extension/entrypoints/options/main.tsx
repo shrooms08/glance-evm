@@ -29,6 +29,7 @@ import {
   vaultAddress,
   voiceKeyLetter,
   voiceReplies,
+  calibrationDots,
   devTools,
   vaultSource,
   type Mode,
@@ -63,6 +64,25 @@ function DevToggle() {
         }}
       />{" "}
       Developer tools (type “glance test drawing” in the panel to draw every Show me shape on your selection)
+    </label>
+  );
+}
+
+/** Developer: dots where a page chart's calibration puts each candle's close (for checking a fit by eye). */
+function CalibrationDotsToggle() {
+  const [on, setOn] = useState(false);
+  useEffect(() => void calibrationDots.getValue().then(setOn), []);
+  return (
+    <label className="g-row g-meta" style={{ gap: 8 }}>
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setOn(e.target.checked);
+          void calibrationDots.setValue(e.target.checked);
+        }}
+      />{" "}
+      Show calibration points (dots where Glance thinks a page chart's candle closes are)
     </label>
   );
 }
@@ -302,6 +322,7 @@ function Settings() {
         <div className="g-section">
           <VoiceDiagnostics status={voice} />
           <DevToggle />
+          <CalibrationDotsToggle />
         </div>
       </details>
     </main>

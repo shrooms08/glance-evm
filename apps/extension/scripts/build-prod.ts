@@ -49,13 +49,15 @@ function run(args: string[], env: Record<string, string>) {
 export function buildProd(apiUrl: string | undefined, consoleUrlValue: string | undefined): { zip: string; version: string } {
   const api = productionUrl("API_URL", apiUrl, true);
   const consoleUrl = productionUrl("CONSOLE_URL", consoleUrlValue, false);
-  const env = { WXT_API_URL: api, WXT_CONSOLE_URL: consoleUrl, WXT_CONSOLE_ORIGINS: consoleUrl, WXT_OUT_DIR: OUT };
+  // The real-site test's all-sites permission is never shipped: forced off here, whatever the shell has set.
+  const env = { WXT_API_URL: api, WXT_CONSOLE_URL: consoleUrl, WXT_CONSOLE_ORIGINS: consoleUrl, WXT_OUT_DIR: OUT, WXT_E2E_ALL_SITES: "" };
   console.log(`build:prod: API ${api}, console ${consoleUrl}`);
   run(["build"], env);
   run(["zip"], env);
   const manifest = JSON.parse(readFileSync(resolve(here, OUT, "chrome-mv3/manifest.json"), "utf8")) as { key?: string; version: string };
   const zip = readdirSync(resolve(here, OUT)).find((f) => f === `glance-extension-${manifest.version}.zip`);
   if (!manifest.key || extensionIdFor(manifest.key) !== EXTENSION_ID) throw new Error("the built manifest's key doesn't give the fixed extension ID");
+  if ((manifest as { host_permissions?: string[] }).host_permissions?.includes("<all_urls>")) throw new Error("the build asks for every site up front (a test-only setting)");
   if (!zip || !existsSync(resolve(here, OUT, zip))) throw new Error("the zip wasn't written");
   console.log(`build:prod: extension ID ${EXTENSION_ID} (the fixed key, checked)`);
   return { zip: resolve(here, OUT, zip), version: manifest.version };

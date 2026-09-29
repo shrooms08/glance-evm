@@ -197,10 +197,10 @@ const components = /* css */ `
 /* ---------- Portfolio, journal, why it moved ---------- */
 .g-up { color: var(--g-lime); }
 .g-chart-box { position: relative; height: 220px; margin: 0 var(--g-s7); border-radius: var(--g-r-md); overflow: hidden; background: var(--g-canvas); }
-.g-lens { position: fixed; z-index: 2147483645; display: flex; flex-direction: column; background: color-mix(in srgb, var(--g-canvas) 88%, transparent); border: 1px solid var(--g-line); border-radius: var(--g-r-md); overflow: hidden; pointer-events: auto; }
-.g-lens-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 2px 10px; }
-.g-lens-label { font: var(--g-meta-size) var(--g-font); color: var(--g-mute); }
-.g-lens-chart { position: relative; flex: 1; min-height: 0; }
+.g-chart-layer { position: fixed; pointer-events: none; }
+.g-chart-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.g-chart-layer-close { position: absolute; top: 2px; right: 2px; pointer-events: auto; background: color-mix(in srgb, var(--g-canvas) 70%, transparent); }
+.g-own-chart { position: fixed; z-index: 2147483645; display: flex; flex-direction: column; background: var(--g-canvas); border: 1px solid var(--g-line); border-radius: var(--g-r-md); overflow: hidden; pointer-events: auto; }
 .g-compare-base { stroke: var(--g-mute); stroke-width: 1; }
 .g-compare-table { width: 100%; border-collapse: collapse; }
 .g-compare-table th, .g-compare-table td { text-align: left; padding: 4px 6px 4px 0; border-top: 1px solid var(--g-line); font-weight: normal; }

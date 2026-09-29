@@ -71,13 +71,13 @@ export function summarize(data: ChartData, name: string, news: ChartSummary["new
 export const MOVEMENT =
   /\b(chart|graph|move|moved|moving|drop|dropped|dropping|fell|fall|falling|rose|rise|rising|jump|jumped|rally|rallied|slid|slide|plunge|plunged|surge|surged|climb|climbed|high|low|peak|bottom|price|trend|week|today|month|down|up|do|did|doing|done|perform|performed|drawdown|bumpy|volatile|volatility|swing|swings|bought|since)\b/i;
 
-type PageChartInput = { symbol: string; range: ChartRange; drawOn?: "page" | "lens"; method?: "dom" | "vision" | null; reason?: string; forced?: boolean };
+type PageChartInput = { symbol: string; range: ChartRange; drawOn?: "page" | "lens"; method?: "canvas" | "dom" | "vision" | null; reason?: string; forced?: boolean; candles?: { fine?: boolean; prepost?: boolean } };
 
 /** The one log line for a chart answer: which chart it's on (the page's, calibrated how; the overlay; Glance's own) and why. */
 export function chartPathLog(pageChart: PageChartInput | null | undefined, chosen: { symbol: string; range: ChartRange; source: string } | null, why: string): string {
   if (!chosen) return `[chart] no chart data (${why})`;
   const what = `${chosen.symbol} ${chosen.range}, ${chosen.source} prices`;
-  if (pageChart?.drawOn === "page") return `[chart] ${what}: page chart via ${pageChart.method === "dom" ? "DOM labels" : "vision"} (${pageChart.reason ?? "calibrated"})`;
+  if (pageChart?.drawOn === "page") return `[chart] ${what}: page chart via ${pageChart.method === "dom" ? "DOM labels" : pageChart.method === "canvas" ? "canvas trace" : "vision"} (${pageChart.reason ?? "calibrated"})`;
   if (pageChart?.drawOn === "lens") return `[chart] ${what}: Glance overlay (${pageChart.forced ? "asked for" : (pageChart.reason ?? "the page's chart couldn't be read")})`;
   return `[chart] ${what}: Glance's own chart (${why})`;
 }
@@ -112,7 +112,8 @@ export async function chartContextFor(
   if (!symbol) return { charts: [], facts: [] };
   try {
     const vault = input.vault as Address | undefined;
-    const data = await chartView(ctx, symbol, range, vault);
+    // A page's chart: the market's own candles (the set the page matched), so the answer describes the page's chart.
+    const data = await chartView(ctx, symbol, range, vault, input.pageChart ? { market: true, ...input.pageChart.candles } : {});
     const news = (ctx.why.summaries.get(symbol)?.value.sources ?? []).slice(0, 5).map((s) => ({ title: s.title, site: s.site, publishedAt: s.publishedAt }));
     const f = factsFor(ctx, data, vault);
     const s = summarize(data, f?.name ?? ctx.catalog.bySymbol.get(symbol)?.name ?? symbol, news);
@@ -190,6 +191,8 @@ export function factsBlock(f: ChartFacts): string {
       ? `bounces (a low the price then rose clearly from; for "where did it bounce"): ${f.bounces.map((x) => `up ${pct(x.pct)} (${usd(x.abs)}) from ${usd(x.from.price)} ${when(x.from.t)} to ${usd(x.to.price)} ${when(x.to.t)}`).join("; ")}`
       : "bounces: none clear in this range",
     `trend (a straight line through every price): ${f.trend.direction === "flat" ? "flat" : `${f.trend.direction} ${pct(f.trend.pct)}`}, from ${usd(f.trend.from.price)} ${when(f.trend.from.t)} to ${usd(f.trend.to.price)} ${when(f.trend.to.t)}`,
+    `support (a low it turned up from ${f.levels.support.touches} time(s)): ${usd(f.levels.support.price)}; resistance (a high it turned down from ${f.levels.resistance.touches} time(s)): ${usd(f.levels.resistance.price)}`,
+    f.zone ? `zone (the longest stretch in a narrow band): ${usd(f.zone.low)} to ${usd(f.zone.high)}, from ${when(f.zone.t1)} to ${when(f.zone.t2)}` : "zone: none",
     `prices from: ${f.source}`,
     `in time order: ${inOrder(f)}`,
     f.closed.length

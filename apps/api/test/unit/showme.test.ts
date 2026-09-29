@@ -125,7 +125,12 @@ describe("drawing on Glance's chart", () => {
       [chart],
       containsChartAdvice,
     );
-    expect(t.actions).toEqual([{ kind: "CHART_LEVEL", symbol: "TSLA", price: 362.5, label: "Week low $362.50", at: 0 }]);
+    // Support and resistance name prices it turned at (computed): kept. A forecast (breakout, target, will): dropped.
+    expect(t.actions).toEqual([
+      { kind: "CHART_LEVEL", symbol: "TSLA", price: 362.5, label: "Week low $362.50", at: 0 },
+      { kind: "CHART_LEVEL", symbol: "TSLA", price: 365, label: "Support at $365", at: 0 },
+      { kind: "CHART_LEVEL", symbol: "TSLA", price: 366, label: "Resistance", at: 0 },
+    ]);
   });
 
   it("chart tags for a chart that isn't shown are dropped; one that is gets its [CHART] first", () => {
@@ -142,7 +147,7 @@ describe("drawing on Glance's chart", () => {
   });
 
   it("a chart reply with a forecast word is replaced by the safe line", async () => {
-    const { s } = showMe(fake(`Tesla found support near its low [CHART_POINT:TSLA:${T}].`).client);
+    const { s } = showMe(fake(`Tesla will bounce from its low [CHART_POINT:TSLA:${T}].`).client);
     const a = await s.answer({ question: "show me where Tesla dropped this week", charts: [{ symbol: "TSLA", name: "Tesla", range: "1W", source: "Chainlink", points: chart.points, high: chart.points[0]!, low: chart.points[5]!, first: chart.points[0]!, latest: chart.points[5]!, markers: [], news: [] }] });
     expect(a).toMatchObject({ spoken: LINES.noAdvice, source: "guarded" });
   });

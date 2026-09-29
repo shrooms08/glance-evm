@@ -350,6 +350,8 @@ export function isAsk(text: string): boolean {
   const t = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ").trim();
   return (
     isChartQuestion(t) ||
+    // About the shape of a chart: where it bounced, its support, whether this is an entry (the answer never advises).
+    /\b(support|resistance|good entry|an entry|entry point|bounce[ds]?|bouncing|rebound(ed)?|consolidat(ion|ing|ed))\b/.test(t) ||
     /\b(this|the|that) (article|page|story|post|piece|chart|graph|image|picture|table|paragraph|section|headline|report)\b/.test(t) ||
     /\bshow me (where|what|how|which)\b|\bwhere (does|did|is) (it|this|the \w+) (say|mention|talk)/.test(t) ||
     /\b(point|circle|underline|highlight) (to |at |out )?(it|that|where|the)\b/.test(t) ||

@@ -1,6 +1,6 @@
 {
   "name": "extension",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "description": "Glance browser extension: an orb that finds companies on the page and buys through your vault.",
@@ -14,7 +14,8 @@
     "e2e": "node e2e/run.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "e2e:real": "node e2e/charts-real-run.ts"
   },
   "dependencies": {
     "@glance/core": "workspace:*",

@@ -30,6 +30,8 @@ apps/extension/.output/
 apps/extension/.output-prod/
 # The end-to-end check's own builds and results (pnpm --filter extension e2e)
 apps/extension/.output-e2e/
+apps/extension/.output-e2e-real/
+apps/extension/.output-diag/
 apps/extension/test-results/
 apps/extension/playwright-report/
 apps/extension/.wxt/

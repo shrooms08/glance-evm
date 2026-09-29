@@ -39,9 +39,9 @@ function resolverWith(client: MessagesClient, opts: { limit?: number | BudgetLim
 }
 
 describe("models", () => {
-  it("defaults every Claude call to Haiku, including the old ANTHROPIC_MODEL name", () => {
+  it("defaults every Claude call to Haiku, including the old ANTHROPIC_MODEL name; chart vision to Sonnet 4.5", () => {
     const c = createContext(loadConfig({ NODE_ENV: "test", DEPLOYMENT_FILE }), quiet);
-    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU, other: HAIKU, vision: HAIKU });
+    expect(c.llmModels).toEqual({ resolver: HAIKU, intent: HAIKU, why: HAIKU, other: HAIKU, vision: "claude-sonnet-4-5" });
     expect(HAIKU).toBe("claude-haiku-4-5");
   });
 

@@ -13,6 +13,9 @@ import { desksOf, loadDeployment, primaryVault, type Deployment } from "./deploy
 import type { ChartDeps } from "./chart.js";
 import { createLlmResolver, type LlmResolver } from "./llm.js";
 import { createChartVision, type ChartVision } from "./chartVision.js";
+
+/** The chart vision model when CHART_VISION_MODEL isn't set. */
+export const CHART_VISION_DEFAULT = "claude-sonnet-4-5";
 import { createShowMe, type ShowMe } from "./showme.js";
 import { PrerecordedLines } from "./voice/prerecorded.js";
 import { FIXED_LINES } from "@glance/core/persona";
@@ -94,7 +97,8 @@ export function createContext(config: Config, log: Log = (l) => console.log(l)):
     intent: chooseModel(config.INTENT_MODEL, config.ALLOW_OPUS, "intent", log),
     why: chooseModel(config.WHY_MODEL, config.ALLOW_OPUS, "why", log),
     other: chooseModel(config.SHOWME_MODEL, config.ALLOW_OPUS, "showme", log),
-    vision: chooseModel(config.CHART_VISION_MODEL, config.ALLOW_OPUS, "chart vision", log),
+    // Chart vision stays on Sonnet 4.5 unless set otherwise (never Opus without ALLOW_OPUS).
+    vision: chooseModel(config.CHART_VISION_MODEL ?? CHART_VISION_DEFAULT, config.ALLOW_OPUS, "chart vision", log),
   };
   const files = llmFiles(config);
   const cacheDir = files.cache ? dirname(files.cache) : null;

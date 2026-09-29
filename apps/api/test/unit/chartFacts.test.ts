@@ -339,12 +339,12 @@ describe("grounded answers", () => {
     expect(said).toEqual(["Tesla ended up 4%.", "The biggest single drop was 3.96%."]);
   });
 
-  it("the advice guard stays on chart replies: no support, target or will", async () => {
-    for (const text of ["Tesla found support at $97.00.", "The next target is $104.", "It will keep climbing from $104."]) {
+  it("the advice guard stays on chart replies: no target or will (support and resistance name where it turned)", async () => {
+    for (const text of ["The next target is $104.", "It will keep climbing from $104.", "It found support at $97.00 and will hold there."]) {
       expect((await make(text).answer(input)).spoken).toBe(LINES.noAdvice);
     }
     // A forecast in a drawing's label drops the drawing, not the answer.
-    const a = await make('The low was $97.00 [CHART_LEVEL:TSLA:97:"Support $97.00"].').answer(input);
+    const a = await make('The low was $97.00 [CHART_LEVEL:TSLA:97:"Target $97.00"].').answer(input);
     expect(a.actions.some((x) => x.kind === "CHART_LEVEL")).toBe(false);
   });
 
