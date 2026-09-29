@@ -14,8 +14,8 @@ You will load Glance as an "unpacked" extension. This is Chrome's normal way to 
 Chrome Web Store. It takes about a minute.
 
 1. **Get the extension folder.**
-   - If you were given `glance-extension-0.1.4.zip`, double-click it to unzip it. You now have a folder (on a Mac it
-     is named `glance-extension-0.1.4`). Leave it somewhere you won't delete it, such as your Documents folder:
+   - If you were given `glance-extension-0.1.5.zip`, double-click it to unzip it. You now have a folder (on a Mac it
+     is named `glance-extension-0.1.5`). Leave it somewhere you won't delete it, such as your Documents folder:
      Chrome loads the extension from this folder every time it starts.
    - If you are building from the source code, run `pnpm install` and then `pnpm --filter extension build`. The folder
      is `apps/extension/.output/chrome-mv3`.
