@@ -23,8 +23,11 @@ function run(cmd: string, args: string[], cwd: string, env: Record<string, strin
 
 let api: ChildProcess | null = null;
 try {
-  console.log("e2e:real: building the extension (.output-e2e-real)");
-  run("pnpm", ["exec", "wxt", "build"], extension, { WXT_OUT_DIR: ".output-e2e-real", WXT_E2E_ALL_SITES: "1" });
+  if (process.env.E2E_SKIP_BUILD) console.log("e2e:real: using the extension already built in .output-e2e-real");
+  else {
+    console.log("e2e:real: building the extension (.output-e2e-real)");
+    run("pnpm", ["exec", "wxt", "build"], extension, { WXT_OUT_DIR: ".output-e2e-real", WXT_E2E_ALL_SITES: "1" });
+  }
   console.log(`e2e:real: starting a local API on ${PORT} (no agent, faucet or keeper key)`);
   const env = { ...process.env, PORT, AGENT_PRIVATE_KEY: "", FAUCET_PRIVATE_KEY: "", KEEPER_IN_PROCESS: "", DATA_DIR: mkdtempSync(join(tmpdir(), "glance-real-api-")) };
   delete (env as Record<string, string | undefined>).KEEPER_PRIVATE_KEY;
@@ -34,7 +37,10 @@ try {
     if (up) break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  run("pnpm", ["exec", "playwright", "test", "--config", "playwright.real.config.ts"], extension, { E2E_REAL_API: `http://localhost:${PORT}` });
+  // Which checks: "charts" (default), "voice" (the spoken-answer reproduction), or both ("all").
+  const which = process.argv[2] ?? "charts";
+  const files = which === "all" ? [] : [`e2e/${which}.real.ts`];
+  run("pnpm", ["exec", "playwright", "test", "--config", "playwright.real.config.ts", ...files], extension, { E2E_REAL_API: `http://localhost:${PORT}` });
 } finally {
   api?.kill();
   // The cases' rows, merged into docs/qa/chart-annotate.json (in the cases' order).
@@ -43,5 +49,5 @@ try {
   const order = ["tradingview:HOG", "tradingview:TSLA", "tradingview:NVDA", "yahoo:TSLA"];
   rows.sort((a, b) => order.indexOf(`${a.site}:${a.symbol}`) - order.indexOf(`${b.site}:${b.symbol}`));
   if (rows.length) writeFileSync(resolve(qa, "chart-annotate.json"), `${JSON.stringify(rows, null, 2)}\n`);
-  for (const f of readdirSync(qa)) if (f.startsWith(".chart-annotate-")) rmSync(resolve(qa, f));
+  for (const f of readdirSync(qa)) if (f.startsWith(".chart-annotate-") || f.startsWith(".voice-")) rmSync(resolve(qa, f));
 }

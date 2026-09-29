@@ -9,6 +9,7 @@
  */
 import { browser } from "wxt/browser";
 
+import { webAudioOut } from "../../lib/gapless";
 import { listen } from "../../lib/voice";
 import type { OffscreenRequest, SpeechEvent, VoiceEvent, VoiceRequest } from "../../lib/voiceMessages";
 import type { VoiceCode } from "../../lib/voiceReasons";
@@ -143,6 +144,8 @@ const worker = new VoiceWorker({
   getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } }),
   capturePcm,
   createAudio: () => new Audio(),
+  // A reply in sentences plays gapless through Web Audio, at the speech's own sample rate (lib/gapless.ts).
+  audioOut: typeof AudioContext === "undefined" ? undefined : (rate) => webAudioOut(rate),
   streamInto,
   // This document has no chrome.storage: the background remembers what worked and decides what to show.
   micFailed: async (name) => ((await browser.runtime.sendMessage({ kind: "voice:mic-failed", name } satisfies VoiceRequest)) as VoiceCode | undefined) ?? "mic-denied",

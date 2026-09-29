@@ -14,12 +14,13 @@
  *        D. none     nothing is drawn: "I can't line up marks on this chart. Want me to pull up my own?" (rule 3)
  *   3. the marks go on an SVG layer pinned to the chart (lib/chartLayer.ts), from Glance's computed facts
  */
+import { during, yieldToPage } from "./workLabel";
 import type { ChartData, ChartRange } from "@glance/core/chart";
 import type { ChartFacts } from "@glance/core/chart-facts";
 import { calibrate, parseVisionLabels, priceToPx, sanityCheck, type AxisLabel, type Box, type Calibration } from "@glance/core/page-chart";
 import type { ChartAnnotation } from "@glance/core/showme";
 
-import { fitTrace, MAX_RANGE_ERROR, traceSeries } from "./canvasTrace";
+import { betterFit, fitTraceBy, MAX_RANGE_ERROR, traceSeries, type TraceFit } from "./canvasTrace";
 import { priceLookup } from "./chartMarks";
 import { cropScreenshot, pickPageChart, pixelLineReader, readChartPixels, readDomLabels, svgLineReader, type ChartPixels, type PageChartTarget } from "./pageChart";
 
@@ -160,16 +161,26 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   let dots: Array<{ x: number; y: number }> | null = null;
 
   // A. The chart's own canvas, traced and fitted.
-  const px = (deps.readPixels ?? readChartPixels)(target.el, deps.win);
+  // In slices, handing the page back between them (reading, tracing, each fit), so no long task holds the page.
+  const px = during("canvas trace", () => (deps.readPixels ?? readChartPixels)(target.el, deps.win));
   if ("error" in px) reasons.push(`canvas: ${px.error}`);
   else {
-    const trace = traceSeries(px.pixels, px.dpr);
+    await yieldToPage();
+    const trace = during("canvas trace", () => traceSeries(px.pixels, px.dpr));
     if (!trace) reasons.push("canvas: no series found in the chart's pixels");
     else {
       const points = trace.points.map((p) => ({ x: px.pane.x + p.x / px.dpr, y: px.pane.y + p.y / px.dpr }));
       // The page may draw at its own step, and with or without the pre- and after-market: fit each candle set we
       // have, keep the best one that passes.
-      const fits = sets.map((set) => ({ set, fit: fitTrace(points, set.data.points.map((p) => ({ t: p.t, price: p.price })), px.pane) }));
+      const fits: Array<{ set: (typeof sets)[number]; fit: TraceFit }> = [];
+      for (const set of sets) {
+        const candles = set.data.points.map((p) => ({ t: p.t, price: p.price }));
+        await yieldToPage();
+        const byBar = during("canvas trace", () => fitTraceBy(points, candles, px.pane, "bar"));
+        await yieldToPage();
+        const byTime = during("canvas trace", () => fitTraceBy(points, candles, px.pane, "time"));
+        fits.push({ set, fit: betterFit(byBar, byTime) });
+      }
       const best = fits.filter((f) => f.fit.ok).sort((a, b) => b.fit.r2 - a.fit.r2)[0] ?? fits.sort((a, b) => b.fit.r2 - a.fit.r2)[0]!;
       const fit = best.fit;
       if (fit.ok && fit.calibration) {
@@ -213,7 +224,7 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
       if (!shot) reasons.push("vision: no screenshot (the glance key hasn't been pressed on this page)");
       else {
         const crop = await (deps.crop ?? cropScreenshot)(shot, target.box, { width: deps.win.innerWidth, height: deps.win.innerHeight, dpr: deps.win.devicePixelRatio || 1 });
-        const read = await deps.vision(crop);
+        const read = await during("vision", () => deps.vision(crop));
         if (!read) reasons.push("vision: the model couldn't read the axes");
         else if ("limit" in read) reasons.push(`vision: ${read.limit}`);
         else {

@@ -4,6 +4,8 @@
  * Glance API (Deepgram), asks what was meant (Claude, validated), and plays the reply (Deepgram Aura by default). Events come back
  * over runtime messaging: relayed by the background to content scripts, and straight to extension pages.
  */
+import type { LongTask } from "./voiceReport";
+import { watchLongTasks } from "./workLabel";
 import { browser } from "wxt/browser";
 
 import { safely, send as sendSafe } from "./lifecycle";
@@ -228,6 +230,12 @@ export type SpeakOutcome = "ended" | "cut" | "unavailable" | "resting" | "off";
  * Speaks `text` in Glance's voice (the offscreen document plays the API's /voice/speak; never the browser's voice).
  * Resolves with how it went. onCut gets where it stopped (seconds, and the audio's length if known).
  */
+/** One line per spoken reply: the player's report, with this page's long tasks while it played. */
+function logReport(report: Extract<SpeechEvent, { type: "report" }>["report"], pageTasks: { stop(): LongTask[] }) {
+  const tasks = pageTasks.stop().map((t) => ({ ms: Math.round(t.ms), during: t.during, where: t.where }));
+  console.info(`[glance] voice report ${JSON.stringify({ ...report, longTasks: [...report.longTasks, ...tasks] })}`);
+}
+
 export function speak(
   text: string,
   enabled: boolean,
@@ -237,14 +245,28 @@ export function speak(
   const id = newId();
   return new Promise<SpeakOutcome>((resolve) => {
     let started = false;
+    let finished = false;
+    // This page's long tasks while the reply plays: logged with the player's report (lib/voiceReport.ts).
+    const pageTasks = watchLongTasks("page");
     const finish = (outcome: SpeakOutcome) => {
-      safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
+      if (finished) return;
+      finished = true;
+      // The player's report comes just after the end or the cut: listen a little longer for it.
+      setTimeout(() => {
+        pageTasks.stop();
+        safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
+      }, 3_000);
       clearTimeout(timer);
       if (started) h.onEnd?.();
       resolve(outcome);
     };
     const onMessage = (msg: SpeechEvent) => {
       if (msg?.kind !== "voice:speech" || msg.id !== id) return undefined;
+      if (msg.type === "report") {
+        logReport(msg.report, pageTasks);
+        return undefined;
+      }
+      if (finished) return undefined;
       if (msg.type === "start") {
         started = true;
         h.onStart?.();
@@ -291,16 +313,28 @@ export function speakParts(enabled: boolean, h: PartsHandlers = {}): { push(text
   let resolveResult: (o: SpeakOutcome) => void = () => {};
   const result = new Promise<SpeakOutcome>((r) => (resolveResult = r));
   let timer = setTimeout(() => finish(started ? "cut" : "unavailable"), 45_000);
+  // This page's long tasks while the answer plays: logged with the player's report (lib/voiceReport.ts).
+  const pageTasks = watchLongTasks("page");
+  let finished = false;
   const finish = (o: SpeakOutcome) => {
-    safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
+    if (finished) return;
+    finished = true;
+    // The player's report comes just after the end or the cut: listen a little longer for it.
+    setTimeout(() => {
+      pageTasks.stop();
+      safely(() => browser.runtime.onMessage.removeListener(onMessage), undefined);
+    }, 3_000);
     clearTimeout(timer);
     if (started) h.onEnd?.();
     resolveResult(o);
   };
   const onMessage = (msg: SpeechEvent) => {
     if (msg?.kind !== "voice:speech" || msg.id !== id) return undefined;
-    clearTimeout(timer);
-    timer = setTimeout(() => finish(started ? "cut" : "unavailable"), 45_000);
+    if (finished && msg.type !== "report") return undefined;
+    if (msg.type !== "report") {
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(started ? "cut" : "unavailable"), 45_000);
+    }
     if (msg.type === "start") {
       started = true;
       h.onStart?.();
@@ -312,6 +346,7 @@ export function speakParts(enabled: boolean, h: PartsHandlers = {}): { push(text
       finish("cut");
     } else if (msg.type === "unavailable") finish(msg.resting ? "resting" : "unavailable");
     else if (msg.type === "end") finish("ended");
+    else if (msg.type === "report") logReport(msg.report, pageTasks);
     return undefined;
   };
   safely(() => browser.runtime.onMessage.addListener(onMessage), undefined);

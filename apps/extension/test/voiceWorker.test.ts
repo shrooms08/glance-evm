@@ -166,7 +166,7 @@ function setup(o: Setup = {}) {
   };
   const worker = new VoiceWorker(deps);
   const types = () => events.filter((e): e is VoiceEvent => e.kind === "voice:event").map((e) => e.type);
-  const speech = () => events.filter((e): e is SpeechEvent => e.kind === "voice:speech").map((e) => e.type);
+  const speech = () => events.filter((e): e is SpeechEvent => e.kind === "voice:speech").map((e) => e.type).filter((type) => type !== "report");
   return { worker, deps, events, requests, types, listen, errorTone, speechSynthesis, speech, advance: (ms: number) => (clock += ms) };
 }
 
@@ -493,7 +493,7 @@ describe("voice worker: a reply spoken sentence by sentence", () => {
     expect(tries).toHaveLength(2); // one retry, same voice
     expect(tries.every((u) => u.endsWith("&voice=flux-sienna-en"))).toBe(true);
     expect(FakeAudio.all).toHaveLength(1); // nothing else played
-    expect(t.events.filter((e) => e.kind === "voice:speech").at(-1)).toMatchObject({ type: "cut", part: 1 });
+    expect(t.events.filter((e) => e.kind === "voice:speech" && e.type !== "report").at(-1)).toMatchObject({ type: "cut", part: 1 });
     expect(t.speechSynthesis.speak).not.toHaveBeenCalled();
     expect(t.errorTone).not.toHaveBeenCalled();
   });

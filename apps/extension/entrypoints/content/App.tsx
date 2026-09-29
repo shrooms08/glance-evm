@@ -5,6 +5,7 @@
  * cover the page's own controls) and speech started here is handed to the side panel. Speech itself never runs in the
  * page: lib/voiceClient runs it in Glance's offscreen document.
  */
+import { during } from "../../lib/workLabel";
 import { relinkLine } from "../../components/Setup";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { browser } from "wxt/browser";
@@ -210,11 +211,11 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const figureElements = useRef<Element[]>([]);
   /** The page as read on Option+V key down, so a question's context is ready by the release. */
   const prereadPage = useRef<{ at: number; page: ReturnType<typeof readPage>; elements: Element[] } | null>(null);
-  const readPageNow = () => {
+  const readPageNow = () => during("DOM scan", () => {
     const { figures, elements } = listFigures(document);
     figureElements.current = elements;
     return { at: Date.now(), page: readPage(document, { companies: companiesRef.current.map((c) => c.symbol), figures }), elements };
-  };
+  });
   preread.current = () => {
     try {
       prereadPage.current = readPageNow();

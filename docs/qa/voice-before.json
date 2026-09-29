@@ -1,0 +1,433 @@
+{
+  "totals": {
+    "questions": 10,
+    "answers": 6,
+    "sentences": 23,
+    "breaks": 8,
+    "underruns": 0,
+    "voiceChanges": 0,
+    "notEnded": 0,
+    "maxGapMs": 7369,
+    "longTasks": 0,
+    "longTasksByWork": {}
+  },
+  "answers": [
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-TSLA/",
+      "question": "Explain this chart",
+      "report": {
+        "id": "5e5e2855-b3b7-4738-bb00-ab237e3fb961",
+        "player": "element",
+        "outcome": "ended",
+        "sentences": 4,
+        "chunks": [
+          {
+            "i": 0,
+            "model": "flux-sienna-en",
+            "req": 0,
+            "firstByte": 460,
+            "ready": null,
+            "start": 630,
+            "end": 9602,
+            "rate": null
+          },
+          {
+            "i": 1,
+            "model": "flux-sienna-en",
+            "req": 460,
+            "firstByte": 980,
+            "ready": 3794,
+            "start": 9608,
+            "end": 14328,
+            "rate": 24000
+          },
+          {
+            "i": 2,
+            "model": "flux-sienna-en (prerecorded)",
+            "req": 9603,
+            "firstByte": 11472,
+            "ready": 11473,
+            "start": 14352,
+            "end": 16845,
+            "rate": 24000
+          },
+          {
+            "i": 3,
+            "model": "flux-sienna-en",
+            "req": 14332,
+            "firstByte": 14881,
+            "ready": 17877,
+            "start": 17880,
+            "end": 23010,
+            "rate": 24000
+          }
+        ],
+        "gaps": [
+          6,
+          24,
+          1036
+        ],
+        "breaks": 1,
+        "maxGap": 1036,
+        "underruns": 0,
+        "voiceChanges": 0,
+        "contextRate": null,
+        "rates": [
+          24000
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-TSLA/",
+      "question": "What's Tesla at and why is it moving?",
+      "report": null,
+      "note": [
+        "[glance] chart \"Explain this chart\": site=tradingview symbol=TSLA range=1W method=canvas r2=1.000 (line #f23645, R^2 1.000, range off 0.2%, x by bar) marks=2 ownChart=no"
+      ]
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-TSLA/",
+      "question": "How am I doing?",
+      "report": null,
+      "note": []
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-TSLA/",
+      "question": "Where did it bounce this week?",
+      "report": {
+        "id": "cdd7e928-19f7-410d-aa42-1cde2105cfda",
+        "player": "element",
+        "outcome": "ended",
+        "sentences": 4,
+        "chunks": [
+          {
+            "i": 0,
+            "model": "flux-sienna-en",
+            "req": 0,
+            "firstByte": 480,
+            "ready": null,
+            "start": 691,
+            "end": 2343,
+            "rate": null
+          },
+          {
+            "i": 1,
+            "model": "flux-sienna-en",
+            "req": 2241,
+            "firstByte": 2750,
+            "ready": 9708,
+            "start": 9712,
+            "end": 19986,
+            "rate": 24000
+          },
+          {
+            "i": 2,
+            "model": "flux-sienna-en",
+            "req": 9709,
+            "firstByte": 10210,
+            "ready": 12941,
+            "start": 19998,
+            "end": 24103,
+            "rate": 24000
+          },
+          {
+            "i": 3,
+            "model": "flux-sienna-en",
+            "req": 19988,
+            "firstByte": 21443,
+            "ready": 24499,
+            "start": 24510,
+            "end": 29180,
+            "rate": 24000
+          }
+        ],
+        "gaps": [
+          7369,
+          12,
+          407
+        ],
+        "breaks": 2,
+        "maxGap": 7369,
+        "underruns": 0,
+        "voiceChanges": 0,
+        "contextRate": null,
+        "rates": [
+          24000
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-NVDA/",
+      "question": "Explain this chart",
+      "report": {
+        "id": "fd7f3b8e-4bdb-4248-a860-88ff4788cf15",
+        "player": "element",
+        "outcome": "ended",
+        "sentences": 5,
+        "chunks": [
+          {
+            "i": 0,
+            "model": "flux-sienna-en",
+            "req": 0,
+            "firstByte": 441,
+            "ready": null,
+            "start": 599,
+            "end": 3480,
+            "rate": null
+          },
+          {
+            "i": 1,
+            "model": "flux-sienna-en",
+            "req": 789,
+            "firstByte": 1238,
+            "ready": 8547,
+            "start": 8551,
+            "end": 19352,
+            "rate": 24000
+          },
+          {
+            "i": 2,
+            "model": "flux-sienna-en",
+            "req": 8548,
+            "firstByte": 9175,
+            "ready": 16145,
+            "start": 19359,
+            "end": 29869,
+            "rate": 24000
+          },
+          {
+            "i": 3,
+            "model": "flux-sienna-en (prerecorded)",
+            "req": 19352,
+            "firstByte": 19356,
+            "ready": 19356,
+            "start": 29881,
+            "end": 32365,
+            "rate": 24000
+          },
+          {
+            "i": 4,
+            "model": "flux-sienna-en",
+            "req": 29870,
+            "firstByte": 31302,
+            "ready": 33987,
+            "start": 33996,
+            "end": 37933,
+            "rate": 24000
+          }
+        ],
+        "gaps": [
+          5071,
+          7,
+          12,
+          1631
+        ],
+        "breaks": 2,
+        "maxGap": 5071,
+        "underruns": 0,
+        "voiceChanges": 0,
+        "contextRate": null,
+        "rates": [
+          24000
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-NVDA/",
+      "question": "What's NVIDIA at and why is it moving?",
+      "report": {
+        "id": "0bc9759a-811f-424b-b4e8-3f0f7b29c870",
+        "player": "element",
+        "outcome": "ended",
+        "sentences": 3,
+        "chunks": [
+          {
+            "i": 0,
+            "model": "flux-sienna-en",
+            "req": 0,
+            "firstByte": 833,
+            "ready": null,
+            "start": 970,
+            "end": 3323,
+            "rate": null
+          },
+          {
+            "i": 1,
+            "model": "flux-sienna-en",
+            "req": 833,
+            "firstByte": 1356,
+            "ready": 3915,
+            "start": 3937,
+            "end": 7804,
+            "rate": 24000
+          },
+          {
+            "i": 2,
+            "model": "flux-sienna-en",
+            "req": 3916,
+            "firstByte": 4534,
+            "ready": 7995,
+            "start": 7998,
+            "end": 13393,
+            "rate": 24000
+          }
+        ],
+        "gaps": [
+          614,
+          194
+        ],
+        "breaks": 2,
+        "maxGap": 614,
+        "underruns": 0,
+        "voiceChanges": 0,
+        "contextRate": null,
+        "rates": [
+          24000
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NASDAQ-NVDA/",
+      "question": "Walk me through the biggest drop on this chart",
+      "report": {
+        "id": "cd5ed534-d280-4969-bec8-8e0c1e039b2a",
+        "player": "element",
+        "outcome": "ended",
+        "sentences": 5,
+        "chunks": [
+          {
+            "i": 0,
+            "model": "flux-sienna-en",
+            "req": 0,
+            "firstByte": 1885,
+            "ready": null,
+            "start": 1887,
+            "end": 8707,
+            "rate": null
+          },
+          {
+            "i": 1,
+            "model": "flux-sienna-en",
+            "req": 1885,
+            "firstByte": 2384,
+            "ready": 3621,
+            "start": 8714,
+            "end": 10884,
+            "rate": 24000
+          },
+          {
+            "i": 2,
+            "model": "flux-sienna-en",
+            "req": 8708,
+            "firstByte": 9169,
+            "ready": 12639,
+            "start": 12643,
+            "end": 18670,
+            "rate": 24000
+          },
+          {
+            "i": 3,
+            "model": "flux-sienna-en",
+            "req": 12640,
+            "firstByte": 13562,
+            "ready": 17492,
+            "start": 18677,
+            "end": 25838,
+            "rate": 24000
+          },
+          {
+            "i": 4,
+            "model": "flux-sienna-en",
+            "req": 18671,
+            "firstByte": 19379,
+            "ready": 20623,
+            "start": 25847,
+            "end": 27971,
+            "rate": 24000
+          }
+        ],
+        "gaps": [
+          7,
+          1759,
+          7,
+          9
+        ],
+        "breaks": 1,
+        "maxGap": 1759,
+        "underruns": 0,
+        "voiceChanges": 0,
+        "contextRate": null,
+        "rates": [
+          24000
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NYSE-HOG/",
+      "question": "Explain this chart",
+      "report": null,
+      "note": [
+        "[glance] chart: can't calibrate HOG 1D (canvas: R^2 0.837 under 0.95; dom: no price axis: fewer than 2 readable price labels in a column; vision: no price axis: fewer than 2 readable price labels in a",
+        "[glance] chart \"Explain this chart\": site=tradingview symbol=HOG range=1D method=none error=\"canvas: R^2 0.837 under 0.95; dom: no price axis: fewer than 2 readable price labels in a column; vision: n"
+      ]
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NYSE-HOG/",
+      "question": "What's Harley-Davidson at and why is it moving?",
+      "report": {
+        "id": "a23c4d11-0524-4db9-961d-eb2bf40c4bf4",
+        "player": "element",
+        "outcome": "ended",
+        "sentences": 2,
+        "chunks": [
+          {
+            "i": 0,
+            "model": "flux-sienna-en",
+            "req": 0,
+            "firstByte": 2126,
+            "ready": null,
+            "start": 2256,
+            "end": 4757,
+            "rate": null
+          },
+          {
+            "i": 1,
+            "model": "flux-sienna-en (prerecorded)",
+            "req": 2126,
+            "firstByte": 2128,
+            "ready": 2129,
+            "start": 4762,
+            "end": 10944,
+            "rate": 24000
+          }
+        ],
+        "gaps": [
+          5
+        ],
+        "breaks": 0,
+        "maxGap": 5,
+        "underruns": 0,
+        "voiceChanges": 0,
+        "contextRate": null,
+        "rates": [
+          24000
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "page": "https://www.tradingview.com/symbols/NYSE-HOG/",
+      "question": "How did it do today, from the open to now?",
+      "report": null,
+      "note": [
+        "[glance] chart: can't calibrate HOG 1D (canvas: R^2 0.836 under 0.95; dom: no price axis: fewer than 2 readable price labels in a column; vision: no price axis: fewer than 2 readable price labels in a",
+        "[glance] chart \"How did it do today, from the open to now?\": site=tradingview symbol=HOG range=1D method=none error=\"canvas: R^2 0.836 under 0.95; dom: no price axis: fewer than 2 readable price label"
+      ]
+    }
+  ]
+}

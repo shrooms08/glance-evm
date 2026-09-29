@@ -28,6 +28,9 @@
  *     replayed from memory (keyed by the voice the API reports).
  * Every browser dependency is injected, so this is unit tested.
  */
+import { FADE_S, MIN_SLICE_S, mp3FrameEnd, PREFETCH, TAIL_HOLD_S, Timeline, type AudioOut } from "./gapless";
+import { mp3SampleRate, VoiceReport, type ChunkTiming } from "./voiceReport";
+import { watchLongTasks } from "./workLabel";
 import type { Listener, ListenHandlers } from "./voice";
 import type { FallbackReason, ListenOptions, SpeechEvent, VoiceCommandContext, VoiceEvent, VoiceIntent, VoiceTiming } from "./voiceMessages";
 import type { VoiceCode } from "./voiceReasons";
@@ -35,6 +38,17 @@ import { ACKS, FIXED_LINES, LINES } from "@glance/core/persona";
 import { isSlowRequest } from "@glance/core/showme";
 
 const FIXED = new Set(FIXED_LINES);
+
+/** A reply in parts: its sentences as they are pushed, and how many there are once known. */
+interface Reply {
+  api: string;
+  parts: string[];
+  total: number | null;
+  wake: (() => void) | null;
+}
+
+/** How long a fallback voice may take to say the rest before it goes on screen instead. */
+export const FALLBACK_BUDGET_MS = 1_500;
 
 type EventBody = VoiceEvent extends infer E ? (E extends VoiceEvent ? Omit<E, "kind" | "session" | "seq"> : never) : never;
 
@@ -49,6 +63,11 @@ export interface WorkerDeps {
   capturePcm(stream: MediaStream, onChunk: (pcm: Uint8Array) => void): Promise<{ stop(): Promise<void> }>;
   /** Creates the element a reply plays in. */
   createAudio(): HTMLAudioElement;
+  /**
+   * An audio output for one answer in sentences (lib/gapless.ts), at the speech's sample rate when known. Absent
+   * (tests of the element player, or no Web Audio): each sentence plays in its own element instead.
+   */
+  audioOut?(sampleRate: number | null): AudioOut;
   /**
    * Points the element at a URL whose MP3 streams in, so playback starts on the first chunks rather than when the
    * whole file has arrived (MediaSource). Absent (tests, or no MediaSource): the element loads the URL itself.
@@ -92,6 +111,8 @@ interface Status {
   stream: boolean;
   /** The configured voice (the pre-recorded lines are kept per voice). */
   voice: string | null;
+  /** The speech chain's voices in order: the first answers while it can, the next is the fallback. */
+  voices?: string[];
   /** Today's cap on that direction is used up: "Voice is resting for today. You can still type." */
   resting?: { transcription: boolean; speech: boolean };
 }
@@ -165,6 +186,8 @@ export class VoiceWorker {
   private sessions = new Map<string, Session>();
   private status: { at: number; api: string; value: Status } | null = null;
   private playing: { el: HTMLAudioElement; id: string } | null = null;
+  /** The answer playing through Web Audio: stop() silences it at once (Escape, the user talking over it). */
+  private gapless: { stop(): void } | null = null;
 
   /**
    * This browser, to the API: a random id for as long as the offscreen document lives. The API keeps at most one warm
@@ -201,6 +224,7 @@ export class VoiceWorker {
         speech: Boolean(body.available?.speech),
         stream: Boolean(body.available?.stream),
         voice: body.speechChain?.[0]?.voice ?? null,
+        voices: [...new Set((body.speechChain ?? []).map((l) => l.voice).filter((v): v is string => Boolean(v)))],
         resting: { transcription: Boolean(body.resting?.transcription), speech: Boolean(body.resting?.speech) },
       };
     } catch {
@@ -561,6 +585,10 @@ export class VoiceWorker {
     }
     if (!status.speech) return unavailable();
 
+    // Gapless, streamed through Web Audio like a reply in parts (a common line is a short clip from memory instead).
+    if (this.d.audioOut && !FIXED.has(text.trim())) {
+      return this.playPartsGapless(id, { api, parts: [text], total: 1, wake: null }, status, this.d.audioOut.bind(this.d), { onStarted: markStarted });
+    }
     const url = `${api}/voice/speak?text=${encodeURIComponent(text)}`;
     const el = this.d.createAudio();
     this.playing = { el, id };
@@ -646,7 +674,7 @@ export class VoiceWorker {
 
   // ---- A reply in parts (Show me, streamed): one sentence at a time, back to back, in one voice ------------------
 
-  private replies = new Map<string, { api: string; parts: string[]; total: number | null; wake: (() => void) | null; running: boolean }>();
+  private replies = new Map<string, Reply & { running: boolean }>();
 
   /** A sentence of reply `id`. The first one starts the reply (queued behind anything already speaking). */
   speakPart(id: string, index: number, text: string, api: string) {
@@ -655,6 +683,7 @@ export class VoiceWorker {
       r = { api, parts: [], total: null, wake: null, running: false };
       this.replies.set(id, r);
     }
+    r.api ||= api;
     r.parts[index] = text;
     r.wake?.();
     if (!r.running) {
@@ -673,7 +702,10 @@ export class VoiceWorker {
     const r = this.replies.get(id);
     if (!r) {
       // Nothing was ever pushed: an empty reply.
-      if (total === 0) this.d.emit({ kind: "voice:speech", id, type: "end" });
+      if (total === 0) return this.d.emit({ kind: "voice:speech", id, type: "end" });
+      // The end can arrive before its parts (a reply pushed all at once: the parts wait on the API's address in the
+      // background, the end doesn't). Kept, so the reply still knows where it ends.
+      this.replies.set(id, { api: "", parts: [], total, wake: null, running: false });
       return;
     }
     r.total = total;
@@ -694,26 +726,41 @@ export class VoiceWorker {
     }
   }
 
-  private async playParts(id: string, r: { api: string; parts: string[]; total: number | null; wake: (() => void) | null }) {
+  private async playParts(id: string, r: Reply) {
     const gen = this.gen;
     const status = await this.apiStatus(r.api);
+    if (status.speech && this.d.audioOut) return this.playPartsGapless(id, r, status, this.d.audioOut.bind(this.d));
+    const report = new VoiceReport(id, "element", null);
+    const sendReport = () => this.d.emit({ kind: "voice:speech", id, type: "report", report: report.summary() });
+    // The report follows the end: the page keeps listening a few seconds for it.
     const done = (type: "end" | "unavailable") => {
+      report.outcome = type === "end" ? "ended" : "unavailable";
       this.replies.delete(id);
       if (type === "unavailable") {
         this.d.errorTone();
         this.status = null;
-        return this.d.emit({ kind: "voice:speech", id, type, ...(status.resting?.speech ? { resting: true } : {}) });
-      }
-      this.d.emit({ kind: "voice:speech", id, type });
+        this.d.emit({ kind: "voice:speech", id, type, ...(status.resting?.speech ? { resting: true } : {}) });
+      } else this.d.emit({ kind: "voice:speech", id, type });
+      sendReport();
     };
     if (!status.speech) return done("unavailable");
     let voice: string | null = null;
     // Each later part is fetched whole while the one before it plays, pinned to the first part's voice (one retry).
-    const fetchPart = async (text: string): Promise<Blob | null> => {
+    const fetchPart = async (text: string, index: number): Promise<Blob | null> => {
       const url = `${r.api}/voice/speak?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice ?? "")}`;
+      const c = report.chunk(index);
+      c.requestAt = this.d.now();
       for (let attempt = 0; attempt < 2; attempt++) {
         const res = await this.d.fetch(url).catch(() => null);
-        if (res?.ok) return res.blob();
+        if (res?.ok) {
+          c.firstByteAt = this.d.now();
+          c.model = `${res.headers.get("x-voice") ?? "?"}${res.headers.get("x-voice-cache") === "prerecorded" ? " (prerecorded)" : ""}${attempt ? " (retry)" : ""}`;
+          report.voices.add(res.headers.get("x-voice") ?? "?");
+          const blob = await res.blob();
+          c.readyAt = this.d.now();
+          c.sampleRate = mp3SampleRate(new Uint8Array(await blob.slice(0, 4096).arrayBuffer()));
+          return blob;
+        }
       }
       return null;
     };
@@ -722,17 +769,19 @@ export class VoiceWorker {
       if (preloaded.has(index) || voice === null) return;
       const text = await this.partText(r, index, gen);
       if (text === null || preloaded.has(index)) return;
-      preloaded.set(index, fetchPart(text));
+      preloaded.set(index, fetchPart(text, index));
     };
     for (let index = 0; ; index++) {
       const text = await this.partText(r, index, gen);
       if (text === null) return gen === this.gen ? done(index === 0 ? "unavailable" : "end") : done("end");
       // A later part's audio is ready first (preloaded while the one before played): no element for a part never said.
-      const blob = index === 0 ? null : await (preloaded.get(index) ?? fetchPart(text));
+      const blob = index === 0 ? null : await (preloaded.get(index) ?? fetchPart(text, index));
       if (index > 0 && !blob) {
         // This voice can't say the next sentence: stop here, in the same voice; the rest stays written.
+        report.outcome = "cut";
         this.replies.delete(id);
         this.d.emit({ kind: "voice:speech", id, type: "cut", t: 0, d: null, part: index });
+        sendReport();
         return;
       }
       const el = this.d.createAudio();
@@ -742,11 +791,16 @@ export class VoiceWorker {
         // The first part streams, so it starts on the first bytes (play() isn't held for the download); the voice
         // that answers is kept for the rest.
         const url = `${r.api}/voice/speak?text=${encodeURIComponent(text)}`;
+        const c0 = report.chunk(0);
+        c0.requestAt = this.d.now();
         setup = async (fail) => {
           if (this.d.streamInto) {
             void this.d
               .streamInto(el, url, (v) => {
                 voice = v;
+                c0.firstByteAt = this.d.now();
+                c0.model = v;
+                if (v) report.voices.add(v);
                 void preload(1);
               })
               .catch(fail);
@@ -764,9 +818,11 @@ export class VoiceWorker {
           return true;
         };
       }
-      const outcome = await this.playOne(id, el, index, setup);
+      const outcome = await this.playOne(id, el, index, setup, report);
       if (outcome === "cut") {
+        report.outcome = "cut";
         this.replies.delete(id);
+        sendReport(); // after playOne's own cut event
         return;
       }
       if (outcome === "unavailable") return done(index === 0 ? "unavailable" : "end");
@@ -774,8 +830,290 @@ export class VoiceWorker {
     }
   }
 
+  /**
+   * A reply in parts through Web Audio (lib/gapless.ts). Each sentence streams in (N+1 and N+2 are asked for while N
+   * plays); as its MP3 arrives, the whole-frame prefix is decoded again and the new samples are scheduled to start
+   * exactly where the last ones end, so a long sentence starts before it has finished arriving and the next one
+   * follows without a gap. One voice per answer: later sentences are pinned to the voice of the first; if that voice
+   * fails partway, the remaining sentences are said in the fallback voice when it can have the next one ready within
+   * FALLBACK_BUDGET_MS (it never switches back); otherwise "I've put the answer on screen." follows what was said, in
+   * the answer's voice, and the rest is shown.
+   */
+  private async playPartsGapless(id: string, r: Reply, status: Status, open: (rate: number | null) => AudioOut, single?: { onStarted(): void }) {
+    const gen = this.gen;
+    // A single reply (speak()) has one part: its page listens for start, progress, end and cut, not parts.
+    const emit = (e: SpeechEvent) => {
+      if (!single) return this.d.emit(e);
+      if (e.type === "part" || e.type === "part-end") return;
+      if (e.type === "start" || e.type === "unavailable") single.onStarted();
+      if (e.type === "part-progress") return this.d.emit({ kind: "voice:speech", id, type: "progress", t: e.t, d: e.d });
+      if (e.type === "cut") return this.d.emit({ kind: "voice:speech", id, type: "cut", t: e.t, d: e.d });
+      this.d.emit(e);
+    };
+    const hushed = () => gen !== this.gen;
+    const report = new VoiceReport(id, "webaudio", null);
+    const tasks = watchLongTasks("player");
+    type Buffer = Parameters<AudioOut["play"]>[0];
+    /** One sentence's audio as it arrives. */
+    interface Feed {
+      chunks: Uint8Array[];
+      size: number;
+      done: boolean;
+      voice: string | null;
+      wake: (() => void) | null;
+      timing: ChunkTiming;
+    }
+    type Got = { kind: "feed"; feed: Feed } | { kind: "none" } | { kind: "failed" };
+    let out: AudioOut | null = null;
+    // The voice this answer is in: the one that said its first sentence.
+    let pin: string | null = null;
+    let known: () => void = () => {};
+    const voiceKnown = new Promise<void>((resolve) => (known = resolve));
+    const jobs = new Map<number, Promise<Got>>();
+    const timeline = new Timeline();
+    const sources: Array<{ stop(): void }> = [];
+    const segments: Array<{ index: number; start: number; end: number; complete: boolean; line?: boolean; begun?: boolean; done?: boolean; lastProgress?: number }> = [];
+    let anchor: { ms: number; t: number } | null = null;
+    const toMs = (t: number) => (anchor ? anchor.ms + (t - anchor.t) * 1000 : null);
+    let begun = false;
+    let stopped = false;
+    const over = () => hushed() || stopped;
+    const stopAll = () => {
+      stopped = true;
+      for (const s of sources) s.stop();
+      sources.length = 0;
+    };
+    this.gapless = { stop: stopAll };
+    const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+
+    // Asks for one sentence (index -1: the on-screen line) and reads its audio as it comes. One retry before any audio.
+    const openFeed = async (index: number, text: string, voice: string | null): Promise<Got> => {
+      const timing = index >= 0 ? report.chunk(index) : new VoiceReport(id, "webaudio", null).chunk(0);
+      timing.requestAt = this.d.now();
+      const url = `${r.api}/voice/speak?text=${encodeURIComponent(text)}${voice ? `&voice=${encodeURIComponent(voice)}` : ""}`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await this.d.fetch(url).catch(() => null);
+        if (over()) return { kind: "none" };
+        if (!res?.ok || !res.body) continue;
+        const reader = res.body.getReader();
+        const first = await reader.read().catch(() => null);
+        if (!first || first.done || !first.value?.byteLength) continue;
+        timing.firstByteAt = this.d.now();
+        const v = res.headers.get("x-voice");
+        timing.model = `${v ?? "?"}${res.headers.get("x-voice-cache") === "prerecorded" ? " (prerecorded)" : ""}${attempt ? " (retry)" : ""}`;
+        timing.sampleRate = mp3SampleRate(first.value.subarray(0, 4096));
+        const feed: Feed = { chunks: [first.value], size: first.value.byteLength, done: false, voice: v, wake: null, timing };
+        if (index === 0) {
+          pin = v;
+          this.d.debug?.(`[glance] reply voice: ${v ?? "?"}`);
+          known();
+        }
+        void (async () => {
+          for (;;) {
+            const next = await reader.read().catch(() => null);
+            if (!next || next.done || over()) break;
+            if (next.value?.byteLength) {
+              feed.chunks.push(next.value);
+              feed.size += next.value.byteLength;
+              feed.wake?.();
+            }
+          }
+          if (over()) void reader.cancel().catch(() => {});
+          feed.done = true;
+          timing.readyAt = this.d.now();
+          feed.wake?.();
+        })();
+        return { kind: "feed", feed };
+      }
+      return { kind: "failed" };
+    };
+
+    const job = (index: number): Promise<Got> => {
+      let p = jobs.get(index);
+      if (!p) {
+        p = (async (): Promise<Got> => {
+          const text = await this.partText(r, index, gen);
+          if (text === null || over()) return { kind: "none" };
+          report.chunk(index).textAt = this.d.now();
+          if (index > 0) await voiceKnown;
+          if (over()) return { kind: "none" };
+          const got = await openFeed(index, text, index === 0 ? null : pin);
+          if (index === 0) known();
+          return got;
+        })();
+        jobs.set(index, p);
+      }
+      return p;
+    };
+
+    // Which sentence is sounding now (0 before the first starts).
+    const current = () => {
+      const t = out?.currentTime ?? 0;
+      let at = 0;
+      for (const s of segments) if (!s.line && s.start <= t) at = s.index;
+      return at;
+    };
+
+    // The events the page follows (its drawings keep time with the words), from the output clock.
+    const tick = () => {
+      if (!out || stopped) return;
+      const t = out.currentTime;
+      for (const s of segments) {
+        if (s.line || s.done) continue;
+        if (!s.begun && t >= s.start) {
+          s.begun = true;
+          if (!begun) {
+            begun = true;
+            emit({ kind: "voice:speech", id, type: "start" });
+          }
+          emit({ kind: "voice:speech", id, type: "part", index: s.index });
+        }
+        if (s.begun && s.complete && t >= s.end) {
+          s.done = true;
+          emit({ kind: "voice:speech", id, type: "part-end", index: s.index });
+        } else if (s.begun && (s.lastProgress === undefined || t - s.lastProgress >= 0.25)) {
+          s.lastProgress = t;
+          emit({ kind: "voice:speech", id, type: "part-progress", index: s.index, t: Math.min(t, s.end) - s.start, d: s.complete ? s.end - s.start : null });
+        }
+      }
+    };
+    const ticker = setInterval(tick, 40);
+
+    // Plays a feed's sentence slice by slice as it arrives, each slice where the last one ends. False: no sound came.
+    const playFeed = async (index: number, feed: Feed, line = false): Promise<boolean> => {
+      let taken = 0; // samples scheduled
+      let decodedBytes = 0;
+      let last: Buffer | null = null;
+      let seg: (typeof segments)[number] | null = null;
+      for (;;) {
+        if (over()) return seg !== null;
+        const done = feed.done;
+        const bytes = new Uint8Array(feed.size);
+        let at = 0;
+        for (const c of feed.chunks) {
+          bytes.set(c, at);
+          at += c.byteLength;
+        }
+        const upToFrame = done ? bytes.length : (mp3FrameEnd(bytes) ?? bytes.length);
+        if (upToFrame > decodedBytes) {
+          if (!out) {
+            // One output per answer, at the speech's own rate.
+            out = open(feed.timing.sampleRate);
+            report.contextRate = out.sampleRate;
+          }
+          const decoded = await out.decode(bytes.slice(0, upToFrame).buffer).catch(() => null);
+          if (decoded) last = decoded;
+          // Not decodable yet: wait for more; at the end, what did decode is all there is.
+          if (decoded || done) decodedBytes = upToFrame;
+        }
+        if (over()) return seg !== null;
+        const final = done && decodedBytes === upToFrame;
+        if (last) {
+          // The newest samples wait while more may come: the decoder can still change its last few.
+          const upto = Math.max(taken, last.length - (final ? 0 : Math.round(TAIL_HOLD_S * last.sampleRate)));
+          if (upto - taken >= (final ? 1 : Math.round(MIN_SLICE_S * last.sampleRate))) {
+            const piece = taken === 0 && upto === last.length ? last : out!.slice(last, taken, upto);
+            if (!anchor) anchor = { ms: this.d.now(), t: out!.currentTime };
+            const placed = timeline.place(out!.currentTime, piece.duration);
+            if (placed.late) {
+              // The sound ran out before this was ready: inside a sentence it's a gap of its own.
+              report.underruns++;
+              if (seg) report.innerGaps.push(Math.round(placed.gap * 1000));
+            }
+            sources.push(out!.play(piece, placed.start, { in: taken === 0 ? FADE_S : 0, out: final ? FADE_S : 0 }));
+            if (!seg) {
+              seg = { index, start: placed.start, end: placed.end, complete: false, line };
+              segments.push(seg);
+              if (!line) {
+                feed.timing.playStartAt = toMs(placed.start);
+                if (feed.voice) report.voices.add(feed.voice);
+              }
+            }
+            seg.end = placed.end;
+            taken = upto;
+          }
+        }
+        if (final) {
+          if (seg) {
+            seg.complete = true;
+            if (!line) feed.timing.playEndAt = toMs(seg.end);
+          }
+          return seg !== null;
+        }
+        // Wait for more of it (or its end).
+        if (!feed.done) {
+          await Promise.race([new Promise<void>((res) => (feed.wake = res)), sleep(120)]);
+          feed.wake = null;
+        }
+      }
+    };
+
+    // Resolves once everything scheduled has played (or it was stopped).
+    const drain = async () => {
+      while (out && !over() && timeline.end !== null && out.currentTime < timeline.end) await sleep(40);
+      tick();
+    };
+
+    const finish = (type: "end" | "unavailable" | "cut", part = 0) => {
+      clearInterval(ticker);
+      known(); // nothing waits on a voice that won't come
+      if (this.gapless?.stop === stopAll) this.gapless = null;
+      stopAll();
+      out?.close();
+      report.longTasks = tasks.stop();
+      report.outcome = type === "end" ? "ended" : type === "cut" ? "on-screen" : "unavailable";
+      this.replies.delete(id);
+      if (type === "unavailable") {
+        this.d.errorTone();
+        this.status = null;
+        emit({ kind: "voice:speech", id, type, ...(status.resting?.speech ? { resting: true } : {}) });
+      } else if (type === "cut") emit({ kind: "voice:speech", id, type, t: 0, d: null, part });
+      else emit({ kind: "voice:speech", id, type });
+      // The report follows the end: the page keeps listening a few seconds for it.
+      emit({ kind: "voice:speech", id, type: "report", report: report.summary() });
+    };
+
+    for (let index = 0; ; index++) {
+      // Ask no further than two sentences past the one playing.
+      while (!hushed() && index > current() + PREFETCH) await sleep(40);
+      if (hushed()) return finish("end");
+      for (let j = index; j <= current() + PREFETCH; j++) void job(j);
+      let got = await job(index);
+      if (hushed()) return finish("end");
+      if (got.kind === "failed" && index > 0) {
+        // The answer's voice failed partway. The rest in the fallback voice, if it can be ready in time; never back.
+        const fallback = (status.voices ?? []).find((v) => v !== pin) ?? null;
+        const said = pin;
+        if (fallback) {
+          pin = fallback;
+          for (const j of [...jobs.keys()]) if (j >= index) jobs.delete(j);
+          for (let j = index; j <= index + PREFETCH; j++) void job(j);
+          got = await Promise.race([job(index), sleep(FALLBACK_BUDGET_MS).then((): Got => ({ kind: "failed" }))]);
+          if (hushed()) return finish("end");
+        }
+        if (got.kind === "failed") {
+          // Not in time: what was said stays said; the on-screen line follows it, in the same voice; the rest is shown.
+          pin = said;
+          const line = await openFeed(-1, LINES.answerOnScreen, said);
+          if (line.kind === "feed") await playFeed(-1, line.feed, true);
+          await drain();
+          return finish("cut", index);
+        }
+      }
+      if (got.kind === "none") {
+        if (index === 0) return finish("unavailable");
+        await drain();
+        return finish("end");
+      }
+      if (got.kind === "failed") return finish("unavailable"); // the first sentence: no voice at all
+      const played = await playFeed(index, got.feed);
+      if (hushed()) return finish("end");
+      if (!played && index === 0) return finish("unavailable");
+    }
+  }
+
   /** Plays one part: its own start, progress and end events; a stall or an error after it started is a cut. */
-  private playOne(id: string, el: HTMLAudioElement, index: number, setup: (fail: () => void) => Promise<boolean>): Promise<"ended" | "cut" | "unavailable"> {
+  private playOne(id: string, el: HTMLAudioElement, index: number, setup: (fail: () => void) => Promise<boolean>, report?: VoiceReport): Promise<"ended" | "cut" | "unavailable"> {
     return new Promise((resolve) => {
       let begun = false;
       let settled = false;
@@ -801,10 +1139,15 @@ export class VoiceWorker {
         }
         this.d.emit({ kind: "voice:speech", id, type: "cut", t, d, part: index });
       };
+      // An underrun: the audio ran out while more was expected (it had started, and it hasn't ended).
+      el.onwaiting = () => {
+        if (begun && !settled && report) report.underruns++;
+      };
       el.onplaying = () => {
         if (begun) return;
         begun = true;
         lastMove = this.d.now();
+        if (report) report.chunk(index).playStartAt = this.d.now();
         if (index === 0) this.d.emit({ kind: "voice:speech", id, type: "start" });
         this.d.emit({ kind: "voice:speech", id, type: "part", index });
         watch = setInterval(() => {
@@ -817,6 +1160,7 @@ export class VoiceWorker {
       el.ontimeupdate = () => this.d.emit({ kind: "voice:speech", id, type: "part-progress", index, t: el.currentTime, d: Number.isFinite(el.duration) ? el.duration : null });
       const ended = () => {
         if (settled) return;
+        if (report && begun) report.chunk(index).playEndAt = this.d.now();
         if (begun) this.d.emit({ kind: "voice:speech", id, type: "part-end", index });
         settle(begun ? "ended" : "unavailable");
       };
@@ -837,6 +1181,8 @@ export class VoiceWorker {
     this.gen++;
     for (const r of this.replies.values()) r.wake?.();
     this.replies.clear();
+    this.gapless?.stop();
+    this.gapless = null;
     if (!this.playing) return;
     const { el } = this.playing;
     this.playing = null;

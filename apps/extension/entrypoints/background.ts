@@ -189,7 +189,8 @@ function relayVoice(event: VoiceEvent) {
 
 function relaySpeech(event: SpeechEvent) {
   const tabId = speechTabs.get(event.id);
-  if (event.type === "end" || event.type === "cut" || event.type === "unavailable") speechTabs.delete(event.id);
+  // The playback report follows the end or the cut: the reply's tab is kept a few seconds longer for it.
+  if (event.type === "end" || event.type === "cut" || event.type === "unavailable") setTimeout(() => speechTabs.delete(event.id), 5_000);
   if (tabId !== undefined) browser.tabs.sendMessage(tabId, event).catch(() => {});
 }
 

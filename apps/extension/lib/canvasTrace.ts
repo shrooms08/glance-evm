@@ -245,13 +245,16 @@ function regress(pairs: ReadonlyArray<readonly [number, number]>): { a: number; 
 export function fitTrace(points: readonly TracePoint[], candles: ReadonlyArray<{ t: number; price: number }>, plot: Box): TraceFit {
   // Charts space x two ways: by bar (TradingView: nights and weekends take no room) or by clock time (Yahoo's day,
   // where quiet pre-market minutes have no bar): both are tried, and the better fit kept.
-  const byBar = fitTraceBy(points, candles, plot, "bar");
-  const byTime = fitTraceBy(points, candles, plot, "time");
+  return betterFit(fitTraceBy(points, candles, plot, "bar"), fitTraceBy(points, candles, plot, "time"));
+}
+
+/** The better of the by-bar and by-time fits. */
+export function betterFit(byBar: TraceFit, byTime: TraceFit): TraceFit {
   if (byBar.ok !== byTime.ok) return byBar.ok ? byBar : byTime;
   return byTime.r2 > byBar.r2 ? byTime : byBar;
 }
 
-function fitTraceBy(points: readonly TracePoint[], candles: ReadonlyArray<{ t: number; price: number }>, plot: Box, axis: "bar" | "time"): TraceFit {
+export function fitTraceBy(points: readonly TracePoint[], candles: ReadonlyArray<{ t: number; price: number }>, plot: Box, axis: "bar" | "time"): TraceFit {
   const fail = (reason: string, r2 = 0, rangeError = 1, a = 0, b = 0): TraceFit => ({ ok: false, r2, rangeError, a, b, reason });
   const bars = [...candles].sort((x, y) => x.t - y.t);
   if (points.length < 8 || bars.length < 2) return fail(`too little to fit (${points.length} traced, ${bars.length} candles)`);

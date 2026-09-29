@@ -70,7 +70,9 @@ export type SpeechEvent =
   /** A reply spoken in parts (one per sentence): part `index` started, or ended. */
   | { kind: "voice:speech"; id: string; type: "part" | "part-end"; index: number }
   /** Progress within part `index` of a reply spoken in parts. */
-  | { kind: "voice:speech"; id: string; type: "part-progress"; index: number; t: number; d: number | null };
+  | { kind: "voice:speech"; id: string; type: "part-progress"; index: number; t: number; d: number | null }
+  /** How the reply played, chunk by chunk (lib/voiceReport.ts): logged by the page with its own long tasks. */
+  | { kind: "voice:speech"; id: string; type: "report"; report: ReturnType<import("./voiceReport").VoiceReport["summary"]> };
 
 /** What the page (or side panel) knows that helps the API understand a command. */
 export interface VoiceCommandContext {

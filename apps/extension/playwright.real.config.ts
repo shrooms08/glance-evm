@@ -6,8 +6,8 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "e2e",
-  testMatch: /charts\.real\.ts$/,
-  timeout: 180_000,
+  testMatch: /(charts|voice)\.real\.ts$/,
+  timeout: 900_000,
   workers: 1,
   reporter: [["list"]],
   use: { trace: "off" },

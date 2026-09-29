@@ -13,6 +13,7 @@
  * they read on light and dark charts. They stay until Escape, the layer's x, the next chart question, navigation, or
  * the page's range changing (the page's chart is then a different chart).
  */
+import { during } from "./workLabel";
 import { color } from "@glance/design";
 import { priceToPx, timeToPx, type Box, type Calibration } from "@glance/core/page-chart";
 import type { ChartAnnotation } from "@glance/core/showme";
@@ -202,6 +203,10 @@ export class ChartLayer {
   }
 
   private draw(a: ChartAnnotation) {
+    during("mark drawing", () => this.drawNow(a));
+  }
+
+  private drawNow(a: ChartAnnotation) {
     const shapes = markShapes(a, this.cal, this.at, this.priceAt, this.pricesBetween);
     if (!shapes) return;
     const g = this.svg.ownerDocument.createElementNS(SVG, "g");
