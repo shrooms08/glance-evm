@@ -83,6 +83,14 @@ describe("signed trade requests", () => {
     expect(await code(auth().check({ ...req, raw: `${req.raw} ` }))).toBe("BAD_SIGNATURE");
   });
 
+  it("a sell is signed like a buy, over its exact shares; a signed buy can't be turned into a sell", async () => {
+    const sell = { ...trade, side: "sell" as const, amount: "0.027027027027027027" };
+    expect(await auth().check(await signed(linked, sell))).toEqual({ via: "session", session: linked.address });
+    const buy = await signed(linked, trade);
+    const flipped = { ...trade, side: "sell" as const };
+    expect(await code(auth().check({ ...buy, fields: flipped, raw: JSON.stringify(flipped) }))).toBe("BAD_SIGNATURE");
+  });
+
   it("a deadline that has passed: REPLAYED; one more than 60s ahead: BAD_SIGNATURE", async () => {
     expect(await code(auth().check(await signed(linked, trade, { deadline: NOW - 1 })))).toBe("REPLAYED");
     expect(await code(auth().check(await signed(linked, trade, { deadline: NOW + 600 })))).toBe("BAD_SIGNATURE");

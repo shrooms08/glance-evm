@@ -251,12 +251,15 @@ function Receipt(props: { symbol: string; amount: string; txUrl: string; txHash:
 export function NeedsLink({
   flow,
   symbol,
+  retryLabel,
   onLink,
   onRetry,
   onCancel,
 }: {
-  flow: Extract<FlowStep, { step: "needs-link" }>;
+  flow: Pick<Extract<FlowStep, { step: "needs-link" }>, "message" | "link" | "until"> & { amount?: string };
   symbol: string;
+  /** The button that sends the same trade once linked (default: "Buy $10 of TSLA"). */
+  retryLabel?: string;
   onLink(): void;
   onRetry(): void;
   onCancel(): void;
@@ -271,7 +274,7 @@ export function NeedsLink({
           </span>
           <div className="g-row">
             <button className="g-btn g-btn-primary g-grow" onClick={onRetry} autoFocus>
-              Buy ${flow.amount} of {symbol}
+              {retryLabel ?? `Buy $${flow.amount} of ${symbol}`}
             </button>
             <button className="g-btn g-btn-ghost" onClick={onCancel}>
               Cancel

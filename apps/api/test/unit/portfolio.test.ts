@@ -87,10 +87,12 @@ describe("average cost", () => {
     expect(m.get(TSLA.toLowerCase())!.costBasis).toBe(5_000_000n);
   });
 
-  it("speaks one plain sentence", () => {
-    expect(portfolioSentence(2, 62_000_000n, 10_000_000n, 1_400_000n, 6)).toBe("You hold $62 across 2 stocks, up $1.40 overall.");
+  it("speaks one plain sentence, with the USDG a sale brought back", () => {
+    expect(portfolioSentence(2, 62_000_000n, 10_000_000n, 1_400_000n, 6)).toBe("You hold $62 across 2 stocks and $10 in USDG, up $1.40 overall.");
     expect(portfolioSentence(1, 9_920_000n, 0n, -80_000n, 6)).toBe("You hold $9.92 across 1 stock, down $0.08 overall.");
     expect(portfolioSentence(0, 0n, 50_000_000n, 0n, 6)).toBe("No stocks yet. Everything's in USDG. You have $50 to trade with.");
+    // Everything sold: the result of the sales is still said.
+    expect(portfolioSentence(0, 0n, 51_200_000n, 1_200_000n, 6)).toBe("No stocks yet. Everything's in USDG. You have $51.20 to trade with, up $1.20 overall.");
   });
 });
 
@@ -232,7 +234,7 @@ describe("buildPortfolio", () => {
     expect(t.priceAge.text).toBe("1 hour");
     expect(p.totals.value.formatted).toBe("$61");
     expect(p.usdg.formatted).toBe("$50");
-    expect(p.sentence).toBe("You hold $11 across 1 stock, up $1 overall.");
+    expect(p.sentence).toBe("You hold $11 across 1 stock and $50 in USDG, up $1 overall.");
   });
 });
 

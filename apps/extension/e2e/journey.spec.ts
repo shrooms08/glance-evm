@@ -58,7 +58,7 @@ async function consoleSays(page: Page, message: Record<string, unknown>) {
   await page.evaluate((m) => window.postMessage({ source: "glance-console", ...m }, window.location.origin), message);
 }
 
-test("gated setup journey: install, setup card, setup completes, ready, hover, buy, receipt", async () => {
+test("gated setup journey: install, setup card, setup completes, ready, hover, buy, receipt, sell half back", async () => {
   // 1. The install page notices Glance.
   const consolePage = await context.newPage();
   await consolePage.goto(`${CONSOLE}/install`);
@@ -113,6 +113,23 @@ test("gated setup journey: install, setup card, setup completes, ready, hover, b
   await expect(article.getByText("Bought 0.0263 TSLA", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(article.getByRole("link", { name: /tx 0xe2e0/ })).toHaveAttribute("href", `https://explorer.testnet.chain.robinhood.com/tx/${FAKE_TX}`);
   expect(api.trades).toEqual([{ vault: USER_VAULT, symbol: "TSLA", side: "buy", amount: "10" }]);
+
+  // 6. Sell half of it back, typed in the panel: the sell card quotes the shares and the USDG back, one tap sells
+  //    exactly those shares, and the receipt links the transaction.
+  // Enter on the orb opens the floating panel with its text box (a click would dock Glance to the side panel).
+  const ask = article.getByRole("textbox", { name: "Ask Glance" });
+  await article.getByRole("button", { name: /^Glance: / }).press("Enter");
+  await expect(ask).toBeVisible({ timeout: 10_000 });
+  await ask.fill("sell half my Tesla");
+  await ask.press("Enter");
+  const sell = article.getByRole("button", { name: "Confirm sale of 0.0131 TSLA" });
+  await expect(sell).toBeVisible({ timeout: 15_000 });
+  await expect(article.getByText("You hold 0.0263 TSLA · about $10.00")).toBeVisible();
+  await sell.click();
+  const sellCard = article.getByRole("dialog", { name: "Sell Tesla (TSLA)" });
+  await expect(sellCard.getByText("Sold 0.0131 TSLA for $4.99", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(sellCard.getByRole("link", { name: /tx 0xe2e0/ })).toHaveAttribute("href", `https://explorer.testnet.chain.robinhood.com/tx/${FAKE_TX}`);
+  expect(api.trades.at(-1)).toEqual({ vault: USER_VAULT, symbol: "TSLA", side: "sell", amount: "0.013157894736842105" });
 });
 
 test("console routes: the landing page at '/', Get Glance to /install, the old link URL to /dashboard", async () => {

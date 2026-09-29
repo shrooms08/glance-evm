@@ -81,6 +81,29 @@ export async function startMockApi(port = 8797): Promise<MockApi> {
     if (path.startsWith("/vault/")) return json(res, 200, vault);
     if (path === "/quote") {
       const q = url.searchParams;
+      // A sell: the API works out the shares (here, half or all of 0.0263 TSLA, or dollars at $380) and quotes the USDG back.
+      if (q.get("side") === "sell") {
+        const held = 26_315_789_473_684_210n;
+        const shares = q.get("fraction") === "1" ? held : q.get("fraction") === "0.5" ? held / 2n : (BigInt(Math.round(Number(q.get("usd")) * 1e6)) * 10n ** 20n) / 38_000_000_000n;
+        const worth = Number((shares * 380n) / 10n ** 12n) / 1e6;
+        const shareAmount = (raw: bigint) => ({ raw: String(raw), value: (Number(raw) / 1e18).toString(), formatted: `${(Math.floor(Number(raw) / 1e14) / 1e4).toString()} TSLA` });
+        return json(res, 200, {
+          vault: q.get("vault"),
+          symbol: q.get("symbol"),
+          side: "sell",
+          amountIn: { ...shareAmount(shares), value: String(shares).padStart(19, "0").replace(/^(\d+)(\d{18})$/, "$1.$2").replace(/\.?0+$/, "") },
+          deskQuote: amount((worth * 0.999).toFixed(2)),
+          oracleImplied: amount(worth.toFixed(2)),
+          spreadBps: 10,
+          spread: "0.10%",
+          minOut: amount((worth * 0.999).toFixed(2)),
+          price,
+          marketState: "OPEN",
+          priceAgeSeconds: 60,
+          preflight: { ok: true, simulatedAs: "0x0000000000000000000000000000000000000abc" },
+          sell: { basis: q.get("fraction") ? "fraction" : "usd", held: shareAmount(held), heldValue: amount("10"), value: amount(worth.toFixed(2)) },
+        });
+      }
       return json(res, 200, {
         vault: q.get("vault"),
         symbol: q.get("symbol"),
@@ -98,8 +121,18 @@ export async function startMockApi(port = 8797): Promise<MockApi> {
       });
     }
     if (path === "/trade" && req.method === "POST") {
-      const b = JSON.parse(await body(req)) as { symbol: string };
+      const b = JSON.parse(await body(req)) as { symbol: string; side: string; amount: string };
       trades.push(b);
+      if (b.side === "sell") {
+        return json(res, 200, {
+          txHash: FAKE_TX,
+          explorerUrl: `https://explorer.testnet.chain.robinhood.com/tx/${FAKE_TX}`,
+          symbol: b.symbol,
+          side: "sell",
+          filled: { tokensIn: { raw: "13157894736842105", value: b.amount, formatted: "0.0131 TSLA" }, usdgOut: amount("4.99") },
+          balancesAfter: {},
+        });
+      }
       return json(res, 200, {
         txHash: FAKE_TX,
         explorerUrl: `https://explorer.testnet.chain.robinhood.com/tx/${FAKE_TX}`,

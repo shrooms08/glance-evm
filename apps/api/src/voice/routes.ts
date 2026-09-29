@@ -18,7 +18,7 @@ import { z } from "zod";
 import type { AppContext } from "../context.js";
 import { LINES } from "@glance/core/persona";
 
-import { ApiError, liveView, portfolioView, priceView, vaultView, whyView } from "../services.js";
+import { ApiError, heldShares, liveView, portfolioView, priceView, vaultView, whyView } from "../services.js";
 import { spokenSummary } from "../why.js";
 import { factsView } from "../chartFacts.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
@@ -131,8 +131,18 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
       return {
         reply: it.amount ? LINES.buying(spoken(it.amount), name) : LINES.howMuch(name),
       };
-    case "sell":
-      return { reply: LINES.sellingElsewhere(name || "the stocks in your baskets") };
+    case "sell": {
+      // A basket is bought as one but held as separate stocks: each one is sold by name.
+      if (!it.symbol) return { reply: LINES.basketSell };
+      if (!it.amount && !it.fraction) return { reply: LINES.howMuchSell(name) };
+      // Nothing held is said now; the card opens anyway and shows the same refusal.
+      if (vault && isAddress(vault)) {
+        const held = await heldShares(ctx, vault, it.symbol).catch(() => null);
+        if (held === 0n) return { reply: LINES.nothingToSell(name), facts: { held: "0" } };
+      }
+      const what = it.fraction === "1" ? "all your" : it.fraction === "0.5" ? "half your" : `${spoken(it.amount!)} of`;
+      return { reply: LINES.selling(what, name) };
+    }
     case "price": {
       const p = await priceFact(ctx, it.symbol!, vault);
       const market = p.marketState === "OPEN" ? "The market's open." : p.marketState === "CLOSED" ? "The market's closed." : "That price is too old to trade on.";
@@ -185,6 +195,7 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
       if (it.note?.includes("past") || it.note?.includes("hypothetical") || it.note?.includes("deferred")) {
         return { reply: LINES.onlyNow };
       }
+      if (it.note?.includes("sell without a catalog company")) return { reply: LINES.unknownStockSell };
       return { reply: it.modelReply ?? LINES.missingCompanyOrAmount };
   }
 }
@@ -275,6 +286,7 @@ export function registerVoice(
       intent: it.intent,
       symbol: it.symbol,
       amount: it.amount,
+      ...(it.fraction ? { fraction: it.fraction } : {}),
       ...(it.symbols ? { symbols: it.symbols, range: it.range } : {}),
       reply,
       facts: replyFacts,

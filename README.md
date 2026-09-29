@@ -23,9 +23,12 @@ is enforced by that vault's contract, not by Glance.
 - **Shows.** Ask about the page and Glance points at what it's talking about as it speaks. Ask about a chart on another
   site ("explain this chart", "show me the dip") and it draws on that chart, calibrated to its axes, or lays its own
   chart over it when the axes can't be read reliably.
-- **Buys.** "Buy ten dollars of Palantir" opens a confirm card with the market price and the price the vault will trade
-  at. One tap sends it through your vault, which checks every limit on chain.
+- **Buys and sells.** "Buy ten dollars of Palantir" opens a confirm card with the market price and the price the vault
+  will trade at. One tap sends it through your vault, which checks every limit on chain. Selling works the same way,
+  by voice or typed: "sell ten dollars of Tesla", "sell half my Tesla", "sell all my Palantir". The card shows the USDG
+  you get back, and the USDG lands in your vault.
 - **Baskets.** Name a group of stocks ("my tech basket") and buy it in one command; each leg is its own vault trade.
+  Baskets are sold one stock at a time.
 - **Live prices, with a drift guard.** Market prices come from Finnhub every 15 seconds while the market is open, for
   display. The vault trades on its own oracle price, and Glance refuses to send a trade while the two are more than 2%
   apart.
@@ -298,7 +301,6 @@ stand-in: [docs/CHAIN_NOTES.md](docs/CHAIN_NOTES.md).
 - An audit of the vault, and a multisig for the keys Glance holds.
 - A public extension release in the Chrome Web Store.
 - Mainnet: the real Stock Tokens and ETFs, priced by Chainlink's own feeds.
-- Selling by voice.
 - A yield on idle USDG in the vault.
 - Connecting to broker agent accounts.
 - Mobile.

@@ -3,6 +3,7 @@
  * it isn't (or when Claude is slow or fails). Whichever produced it, every intent passes the same validator:
  *   - the symbol must be one of our catalog's, or it is dropped;
  *   - the amount must be one the user actually said (extractAmounts), or it is dropped: nothing invents an amount;
+ *   - a sell's "all" or "half" must be a word the user said, or it is dropped;
  *   - a negation, a question asking for advice, a past tense or a hypothetical never becomes a buy or a sell.
  * An intent is only ever a suggestion to the extension: a buy opens the same confirm card as the typed path, with the
  * same on-chain preflight and vault guards. Nothing here can trade.
@@ -23,6 +24,17 @@ import { extractAmounts } from "./amounts.js";
 export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "basket-buy", "basket-make", "baskets", "compare", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
+export type SellFraction = "1" | "0.5";
+
+/** "all", "everything" -> "1"; "half" -> "0.5". Null when neither is said, or both are (ambiguous: we ask). */
+export function saidFraction(transcript: string): SellFraction | null {
+  const t = ` ${normalise(transcript).replace(/\?/g, " ")} `;
+  const all = / (all|everything|every share|the lot) /.test(t);
+  const half = / half /.test(t);
+  if (all === half) return null;
+  return all ? "1" : "0.5";
+}
+
 export interface VoiceContext {
   /** The page's host, e.g. "cnbc.com". */
   host?: string;
@@ -41,6 +53,8 @@ export interface Intent {
   symbol: string | null;
   /** Whole-dollar or cent amount, only ever one the user said. */
   amount: string | null;
+  /** A sell of part of the holding: "1" ("sell all my Palantir"), "0.5" ("sell half my Tesla"). Only ever one said. */
+  fraction?: SellFraction;
   /** "compare": the 2 or 3 catalog stocks named, in order, and the range asked about ("today" 1D, "this month" 1M). */
   symbols?: string[];
   range?: "1D" | "1W" | "1M";
@@ -85,10 +99,11 @@ const LEAD = "(?:(?:ok|okay|hey|glance|please|so|um|uh|can you|could you|would y
 
 /** The first verb, only when it opens the request: "buy ...", "please sell ...", "I'd like to buy ...". */
 function leadingVerb(t: string): "buy" | "sell" | null {
-  const m = new RegExp(`^${LEAD}(buy|get|purchase|grab|pick up|sell|dump|unload)\\b`).exec(t);
+  // "get rid of" is a sell, and must be tried before "get" (a buy).
+  const m = new RegExp(`^${LEAD}(get rid of|buy|get|purchase|grab|pick up|sell|dump|unload)\\b`).exec(t);
   // Speech-to-text often writes "buy" as "by" ("by $10 of Tesla"): only in that exact shape, an amount then "of".
   if (!m) return new RegExp(`^${LEAD}by \\$?[\\d.,]+( dollars?)? (worth )?of\\b`).test(t) ? "buy" : null;
-  return ["sell", "dump", "unload"].includes(m[1]!) ? "sell" : "buy";
+  return ["sell", "dump", "unload", "get rid of"].includes(m[1]!) ? "sell" : "buy";
 }
 
 function aliasTable(catalog: readonly CatalogEntry[]): Array<{ phrase: string; symbol: string }> {
@@ -160,6 +175,11 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   if (isChartQuestion(t)) return { ...base, intent: "ask" };
 
   const verb = leadingVerb(t);
+  if (verb === "sell") {
+    // "sell all my Palantir", "sell half my Tesla": part of the holding, never also a dollar amount.
+    const fraction = saidFraction(transcript);
+    if (fraction) return { ...base, intent: "sell", amount: null, fraction };
+  }
   if (verb) return { ...base, intent: verb, amount: amounts.length === 1 ? amounts[0]! : null };
   // A trade verb elsewhere ("don't buy Tesla", "should I sell Amazon?"): hand it to the validator, which refuses it as
   // a trade and records why, so the reply can answer what was actually asked.
@@ -234,12 +254,20 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
       notes.push(`amount ${raw.amount} was not said`);
     }
   }
+  // "all" or "half": only on a sell, only when said, and never together with a dollar amount.
+  if (out.fraction !== undefined) {
+    if (out.intent !== "sell" || saidFraction(transcript) !== out.fraction) {
+      notes.push(`fraction ${raw.fraction} was not said`);
+      delete out.fraction;
+    } else out.amount = null;
+  }
   if (out.intent === "buy" || out.intent === "sell") {
     const block = blocksTrade(transcript);
     if (block) {
       notes.push(`not a trade request (${block})`);
       out.intent = out.symbol ? "price" : "unknown";
       out.amount = null;
+      delete out.fraction;
       if (block !== "advice") out.intent = "unknown";
     }
   }
@@ -268,13 +296,15 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     delete out.range;
   }
   if (out.intent === "ask") out.amount = null;
-  // "sell the tech basket": selling stays in the console, which the reply says (a basket names no single company).
+  // "sell my tech basket": a basket names no single company, so the reply asks for the stock by name.
   const basketSell = out.intent === "sell" && !out.symbol && /\bbaskets?\b/i.test(transcript);
   if ((out.intent === "buy" || out.intent === "sell" || out.intent === "price") && !out.symbol && !basketSell) {
     notes.push(`${out.intent} without a catalog company`);
     out.intent = "unknown";
     out.amount = null;
+    delete out.fraction;
   }
+  if (out.intent !== "sell") delete out.fraction;
   if (out.intent !== "buy" && out.intent !== "sell" && out.intent !== "basket-buy") out.amount = null;
   if (out.intent === "spend-so-far" || out.intent === "explain" || out.intent === "unknown") {
     if (out.intent !== "unknown") out.symbol = null;
@@ -291,6 +321,7 @@ const ClaudeIntent = z.object({
   intent: z.enum(INTENTS),
   symbol: z.string().nullable(),
   amount: z.string().nullable(),
+  fraction: z.enum(["all", "half"]).nullable().optional(),
   reply: z.string().max(240).nullable(),
   symbols: z.array(z.string()).max(MAX_COMPARE).nullable().optional(),
 });
@@ -338,6 +369,8 @@ export function createClaudeIntent(
     "- symbol: ONLY a ticker from the list below, or null. Never any other ticker.",
     "- amount: ONLY a dollar amount the user explicitly said, as digits (\"ten dollars\" -> \"10\"). If they named no",
     "  amount, null. Never guess, round, suggest or default an amount.",
+    "- fraction: for sell only, \"all\" when they sell all of a stock (\"sell all my Palantir\"), \"half\" for half",
+    "  (\"sell half my Tesla\"). Otherwise null. With a fraction, amount is null.",
     "- Only an explicit request to act now is buy or sell. Negations (\"don't buy\"), advice questions (\"should I",
     "  buy\"), past events (\"I bought\", \"Tesla bought\"), hypotheticals and anything for later are NOT buy or sell.",
     "- If you are not sure, answer unknown.",
@@ -355,6 +388,7 @@ export function createClaudeIntent(
         intent: { type: "string", enum: [...INTENTS] },
         symbol: { type: ["string", "null"], description: "A ticker from the list, or null" },
         amount: { type: ["string", "null"], description: "Dollar amount the user said, as digits, or null" },
+        fraction: { type: ["string", "null"], enum: ["all", "half", null], description: "For sell: all or half of the holding, else null" },
         reply: { type: ["string", "null"], description: "One sentence for explain/unknown, else null" },
         symbols: { type: ["array", "null"], items: { type: "string" }, description: "For compare: 2 or 3 tickers from the list, else null" },
       },
@@ -384,8 +418,16 @@ export function createClaudeIntent(
       const use = response.content.find((b) => b.type === "tool_use");
       const parsed = ClaudeIntent.safeParse(use && "input" in use ? use.input : null);
       if (!parsed.success) throw new Error("intent model returned no usable answer");
-      const { intent, symbol, amount, reply, symbols: named } = parsed.data;
-      return { intent, symbol, amount, modelReply: reply ?? undefined, source: "claude", ...(named ? { symbols: named } : {}) };
+      const { intent, symbol, amount, fraction, reply, symbols: named } = parsed.data;
+      return {
+        intent,
+        symbol,
+        amount,
+        modelReply: reply ?? undefined,
+        source: "claude",
+        ...(named ? { symbols: named } : {}),
+        ...(fraction ? { fraction: fraction === "all" ? ("1" as const) : ("0.5" as const) } : {}),
+      };
     },
   };
 }

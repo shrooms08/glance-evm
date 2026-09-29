@@ -109,7 +109,7 @@ export function BasketsCard({
             <button className="g-btn g-btn-ghost" onClick={() => setView({ view: "edit", draft: { id: newBasketId(), name: "", legs: equalWeights(allowed.slice(0, 2)) }, isNew: true })}>
               New basket
             </button>
-            <span className="g-meta">Selling stays in your console: it can sell any stock a basket bought.</span>
+            <span className="g-meta">A basket is sold one stock at a time: say or type “sell all my Tesla”.</span>
           </>
         )}
 

@@ -60,10 +60,16 @@ describe("per-trade cap", () => {
     );
   });
 
-  it("offers a sell in dollar terms", () => {
+  it("offers a sell in dollar terms, the rule first", () => {
     expect(explain("ExceedsPerTradeCap", [usd(1900.5), usd(100)], { side: "sell" }).message).toBe(
-      "That's over your $100 per trade limit. Want me to sell $100 worth instead?",
+      "Each trade is capped at $100. Want me to sell $100 worth instead?",
     );
+  });
+
+  it("a sell while the market is closed says why the cap is lower", () => {
+    const e = explain("ExceedsPerTradeCap", [usd(40), usd(25)], { side: "sell", marketState: "CLOSED" });
+    expect(e.message).toBe("The market is closed, so each trade is capped at $25. Want me to sell $25 worth instead?");
+    expect(e.detail.suggestedAmountFormatted).toBe("$25");
   });
 
   it("does not offer a zero-dollar trade when closed-market trading is off", () => {
@@ -107,7 +113,13 @@ describe("daily caps", () => {
   it("handles the sell limit, and a missing window", () => {
     const e = explain("ExceedsDailySellCap", [usd(500), usd(10), usd(500)], { side: "sell" });
     expect(e.code).toBe("DAILY_SELL_CAP");
-    expect(e.message).toBe("You've used your daily sell limit. It frees up within 24 hours.");
+    expect(e.message).toBe("Sells are capped at $500 a day, and you've sold that much. It frees up within 24 hours.");
+  });
+
+  it("a sell with some of the day's sell cap left, the market closed", () => {
+    const e = explain("ExceedsDailySellCap", [usd(100), usd(40), usd(125)], { side: "sell", marketState: "CLOSED" });
+    expect(e.message).toBe("The market is closed, so sells are capped at $125 a day. You have $25 left. Want me to sell $25 worth instead? The rest frees up within 24 hours.");
+    expect(e.detail.suggestedAmount).toBe("25000000");
   });
 
   it("mentions the closed market", () => {

@@ -3,6 +3,8 @@
  * confidence is "unknown", and the assistant says so honestly rather than guessing at a trade.
  *
  *   "buy ten dollars of Tesla", "buy $25 of TSLA", "buy twenty five bucks worth of amazon", "buy tesla for $10"
+ *   "sell ten dollars of Tesla", "sell all my Palantir", "sell half my Tesla", "sell my Tesla" (the card asks how much)
+ *   "sell my tech basket": baskets aren't sold as one (the reply says to name the stock)
  *   "what's Tesla at", "what is amd trading at", "price of netflix", "how much is palantir"
  *   "how much have I spent today", "how much do I have left today"
  *   "buy $30 of the tech basket", "buy the EV basket for $20"
@@ -18,6 +20,10 @@ import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
 
 export type Command =
   | { kind: "buy"; symbol: string; amount: string }
+  /** Dollars' worth (`amount`), part of the holding (`fraction`: "1" all, "0.5" half), or neither (the card asks). */
+  | { kind: "sell"; symbol: string; amount?: string; fraction?: "1" | "0.5" }
+  /** A basket named in a sell: not sold as one. */
+  | { kind: "sellBasket"; basket: string }
   | { kind: "price"; symbol: string }
   | { kind: "spent" }
   | { kind: "portfolio" }
@@ -140,12 +146,14 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   const table = aliasTable(companies);
 
   if (/^(glance )?test drawings?$/.test(t) || normalise(heard) === "glance test drawing") return { kind: "testDrawing" };
-  if (/^(yes|yeah|yep|confirm|do it|go ahead|buy it)$/.test(t)) return { kind: "confirm" };
+  if (/^(yes|yeah|yep|confirm|do it|go ahead|buy it|sell it)$/.test(t)) return { kind: "confirm" };
   if (/^(no|nope|cancel|stop|never mind|nevermind)$/.test(t)) return { kind: "cancel" };
 
   // Baskets, before the single-stock buy: "buy $30 of the tech basket", "buy the EV basket for $20", "make a basket
   // called EV with Tesla and AMD, 50/50", "show my baskets".
   if (/^(?:(?:show|list|see|open)(?: me)? )?(?:my |the )?baskets$|^what baskets\b/.test(t)) return { kind: "baskets" };
+  const sb = /^(?:sell|dump|unload)\s+(?:(?:all|half)\s+(?:of\s+)?)?(?:the\s+|my\s+)?(.+?)\s+basket$/.exec(t) ?? /^(?:sell|dump|unload)\s+(?:the\s+|my\s+)?basket\s+(.+)$/.exec(t);
+  if (sb) return { kind: "sellBasket", basket: sb[1]! };
   let b = /^(?:make|create|build|start)(?: me)? (?:a |an )?(?:new )?basket (?:called|named) (.+?) (?:with|of|from) (.+)$/.exec(t);
   if (b) return { kind: "makeBasket", name: titleCase(heardName(heard, b[1]!)), ...basketLegs(b[2]!, table) };
   b =
@@ -216,6 +224,9 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
     if (amount && symbol) return { kind: "buy", symbol, amount };
   }
 
+  const sell = parseSell(t, table);
+  if (sell) return sell;
+
   m =
     /^(?:what's|whats|what is|how's|how is|where's|where is)\s+(.+?)\s+(?:at|trading at|trading|doing|going for)$/.exec(t) ??
     /^(?:price of|quote for|quote on|how much is|what's the price of|what is the price of)\s+(.+)$/.exec(t) ??
@@ -232,6 +243,38 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   }
 
   return { kind: "unknown", heard };
+}
+
+/**
+ * "sell $10 of tesla", "sell ten dollars worth of tesla", "sell tesla for $10", "sell all my palantir", "sell all of my
+ * palantir", "sell half my tesla", "sell my tesla". Null when no catalog company is named.
+ */
+function parseSell(t: string, table: ReturnType<typeof aliasTable>): Command | null {
+  const verb = /^(?:sell|dump|unload|get rid of)\s+(.+)$/.exec(t);
+  if (!verb) return null;
+  const rest = verb[1]!;
+  // All or half of the holding.
+  const part = /^(all|everything|half)(?:\s+of)?(?:\s+(?:my|the|your))?\s+(.+?)(?:\s+(?:shares?|stock|position))?$/.exec(rest);
+  if (part) {
+    const symbol = findCompany(part[2]!, table);
+    if (symbol) return { kind: "sell", symbol, fraction: part[1] === "half" ? "0.5" : "1" };
+  }
+  // A dollar amount: "<amount> [dollars] [worth] of <company>", "<company> for <amount>".
+  const worth = new RegExp(`^(.+?)\\s*${CURRENCY}?\\s+(?:worth\\s+)?of\\s+(?:my\\s+)?(.+)$`).exec(rest);
+  if (worth) {
+    const amount = parseAmount(worth[1]!.replace(new RegExp(`\\s*${CURRENCY}$`), ""));
+    const symbol = findCompany(worth[2]!, table);
+    if (amount && symbol) return { kind: "sell", symbol, amount };
+  }
+  const forAmount = new RegExp(`^(?:my\\s+)?(.+?)\\s+for\\s+(.+?)(?:\\s+${CURRENCY})?$`).exec(rest);
+  if (forAmount) {
+    const amount = parseAmount(forAmount[2]!);
+    const symbol = findCompany(forAmount[1]!, table);
+    if (amount && symbol) return { kind: "sell", symbol, amount };
+  }
+  // No amount: the card asks.
+  const symbol = findCompany(rest.replace(/^(?:my|the|some)\s+/, ""), table);
+  return symbol ? { kind: "sell", symbol } : null;
 }
 
 /** The basket's name as the user wrote it (their capitals), found back in the original text. */

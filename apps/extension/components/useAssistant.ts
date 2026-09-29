@@ -1,6 +1,7 @@
 /**
  * The assistant: turns speech or typed text into a command and acts on it. Shared by the floating orb and the
- * docked side panel. It never trades on a guess: a buy always goes through the preflight and an explicit confirm tap.
+ * docked side panel. It never trades on a guess: a buy or a sell always goes through the preflight and an explicit
+ * confirm tap.
  *
  * Voice (Option+V): the offscreen document records and streams the audio to the Glance API, which transcribes it
  * (Deepgram), works out what was meant (Claude, validated against our catalog and against what was actually said),
@@ -27,6 +28,13 @@ import { spokenWhy } from "./Why";
 import { LINES, NOT_HEARD } from "@glance/core/persona";
 import { VOICE_RESTING } from "@glance/core/session";
 import { CUT_NOTE, noVoiceNote } from "../lib/showMe";
+import type { SellSpec } from "./SellCard";
+
+/** A sell command's amount as the card's spec: dollars, or all or half of the holding. */
+function sellSpec(amount: string | null | undefined, fraction: "1" | "0.5" | undefined): SellSpec | undefined {
+  if (fraction) return { fraction };
+  return amount ? { usd: amount } : undefined;
+}
 
 /** The short label under the reason, so the kinds of failure are told apart at a glance. */
 const KIND_META: Record<VoiceFailureKind, string> = {
@@ -58,6 +66,8 @@ export function voiceReason(code: VoiceCode): string {
 
 export type AssistantCard =
   | { kind: "company"; symbol: string; autoAmount?: string; key: number }
+  /** Selling: `spec` quotes straight away ("sell all my Palantir"); without it, the card asks how much. */
+  | { kind: "sell"; symbol: string; spec?: SellSpec; voice?: boolean; key: number }
   | { kind: "spent" }
   | { kind: "portfolio"; key: number; tab?: "positions" | "journal" }
   | { kind: "why"; symbol: string; key: number }
@@ -155,6 +165,15 @@ export function useAssistant(opts: AssistantOptions = {}) {
         case "buy":
           setCard({ kind: "company", symbol: cmd.symbol, autoAmount: cmd.amount, key: ++seq.current });
           return;
+        case "sell": {
+          // The same rule as a buy: the confirm card, the on-chain preflight, and nothing moves without the tap.
+          const spec = sellSpec(cmd.amount, cmd.fraction);
+          setCard({ kind: "sell", symbol: cmd.symbol, spec, voice: source === "voice", key: ++seq.current });
+          if (!spec) return say(LINES.howMuchSell(g.catalog.find((s) => s.symbol === cmd.symbol)?.name ?? cmd.symbol));
+          return;
+        }
+        case "sellBasket":
+          return say(LINES.basketSell);
         case "price": {
           setCard({ kind: "company", symbol: cmd.symbol, key: ++seq.current });
           g.setOrb({ state: "thinking", line: `Checking ${cmd.symbol}`, meta: "" });
@@ -258,6 +277,11 @@ export function useAssistant(opts: AssistantOptions = {}) {
           // The same confirm card as typing: preflight, review, and nothing moves without the tap.
           setCard({ kind: "company", symbol: it.symbol!, autoAmount: it.amount ?? undefined, key: ++seq.current });
           break;
+        case "sell":
+          // The reply (already speaking) named the sell; the card quotes it and waits for the tap. A basket names no
+          // stock: the reply alone asks for one.
+          if (it.symbol) setCard({ kind: "sell", symbol: it.symbol, spec: sellSpec(it.amount, it.fraction), voice: true, key: ++seq.current });
+          break;
         case "price":
           setCard({ kind: "company", symbol: it.symbol!, key: ++seq.current });
           break;
@@ -332,7 +356,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
       ...contextRef.current?.(),
       lastGuard: lastGuard.current,
       lastReply: lastReply.current,
-      openCard: card?.kind === "company" ? card.symbol : null,
+      openCard: card?.kind === "company" || card?.kind === "sell" ? card.symbol : null,
     };
     listener.current = startVoice(
       {

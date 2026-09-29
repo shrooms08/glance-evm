@@ -333,11 +333,18 @@ export async function buildPortfolio(deps: PortfolioDeps, ctx: Pick<AppContext, 
   };
 }
 
-/** One spoken sentence, plain and without advice: "You hold $62 across 2 stocks, up $1.40 overall." */
+/**
+ * One spoken sentence, plain and without advice: "You hold $62 across 2 stocks and $10 in USDG, up $1.40 overall."
+ * The USDG and the overall result include what sales brought back, so a sell shows up the moment it's asked about.
+ */
 export function portfolioSentence(stocks: number, stocksValue: bigint, usdg: bigint, overall: bigint, decimals: number): string {
-  if (stocks === 0) return `${EMPTY_PORTFOLIO} You have ${formatUsd(usdg, decimals)} to trade with.`;
+  const result = upDown(overall, (x) => formatUsd(x, decimals));
+  if (stocks === 0) {
+    return `${EMPTY_PORTFOLIO} You have ${formatUsd(usdg, decimals)} to trade with${overall === 0n ? "" : `, ${result} overall`}.`;
+  }
   const across = `${formatUsd(stocksValue, decimals)} across ${stocks} ${stocks === 1 ? "stock" : "stocks"}`;
-  return `You hold ${across}, ${upDown(overall, (x) => formatUsd(x, decimals))} overall.`;
+  const cash = usdg > 0n ? ` and ${formatUsd(usdg, decimals)} in USDG` : "";
+  return `You hold ${across}${cash}, ${result} overall.`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

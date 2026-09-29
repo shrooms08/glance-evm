@@ -48,15 +48,22 @@ export const LINES = {
   wontTrade: "Got it. Nothing bought, nothing sold.",
   noVaultPortfolio: "Add your vault in settings, and I'll show you your portfolio.",
   noVaultSpent: "Add your vault in settings, and I'll tell you what you've spent.",
-  sellingElsewhere: (name: string) => `I can't sell from here yet. Your console can sell ${name}.`,
+  /** A sell by voice: "$10 of Tesla", "all your Tesla", "half your Tesla". The card then checks it on chain. */
+  selling: (what: string, name: string) => `Selling ${what} ${name}. Let me check your limits first.`,
+  howMuchSell: (name: string) => `Sure. How much ${name} should I sell? Say a dollar amount, all, or half.`,
+  nothingToSell: (name: string) => `You don't hold any ${name} in your vault, so there's nothing to sell.`,
+  /** Baskets are bought as one but held as separate stocks: each is sold by name. */
+  basketSell: "I can't sell a basket as one. Name the stock instead, like “sell all my Tesla”.",
   nothingRefused: "Nothing's been refused yet. So, nothing to explain.",
   noSpeech: "I didn't hear anything. Hold the key while you talk, or just type.",
   /** Pre-recorded: every voice failed to speak a reply (the reply's text is in the panel). */
   answerOnScreen: "I've put the answer on screen.",
   /** Spoken (pre-recorded) when a turn ends with nothing heard after the key was held: the panel shows NOT_HEARD. */
   notHeardSpoken: "Didn't catch that. Hold Option V and try again.",
-  tapToConfirm: "Tap Confirm to buy, or Cancel. I never buy on a spoken yes.",
-  onlyNow: "I only buy when you ask, right then. Try: buy ten dollars of Tesla.",
+  tapToConfirm: "Tap Confirm, or Cancel. I never trade on a spoken yes.",
+  onlyNow: "I only trade when you ask, right then. Try: buy ten dollars of Tesla.",
+  /** A sell naming a stock Glance doesn't trade (or none it could find). */
+  unknownStockSell: "I can't find that stock in Glance's list, so there's nothing I can sell. Try: sell all my Tesla.",
   noAdvicePrefix: "I don't give advice, but here's the price. ",
   hereIsChart: (name: string) => `Here's ${name}'s chart.`,
   /** A chart answer never claims a cause without a cached "Why it moved" source. */

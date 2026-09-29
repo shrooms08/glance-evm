@@ -14,6 +14,7 @@ import type { PageContext } from "../lib/journal";
 import { LostBanner, RelinkNotice, SetupCard } from "./Setup";
 import { setupRows } from "../lib/readiness";
 import { CompanyCard, WeekendBadge } from "./CompanyCard";
+import { SellCard } from "./SellCard";
 import { PortfolioCard } from "./Portfolio";
 import { BasketsCard } from "./Baskets";
 import { CompareCard } from "./CompareCard";
@@ -164,6 +165,19 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
               decision={assistant.decision}
               onClose={() => assistant.setCard(null)}
               pageContext={pageContext ? () => pageContext(cardSymbol!) : undefined}
+            />
+          </div>
+        )}
+
+        {assistant.card?.kind === "sell" && (
+          <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
+            <SellCard
+              key={assistant.card.key}
+              symbol={assistant.card.symbol}
+              spec={assistant.card.spec}
+              voice={assistant.card.voice}
+              decision={assistant.decision}
+              onClose={() => assistant.setCard(null)}
             />
           </div>
         )}

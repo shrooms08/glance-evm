@@ -177,6 +177,11 @@ export interface Quote {
   /** The drift guard: blocked means the API will refuse this trade (the oracle is behind the market). */
   drift?: { checked: boolean; gapBps: number | null; maxGapBps: number; blocked: boolean; guard: Guard | null };
   preflight: { ok: true; simulatedAs: string } | { ok: false; guard: Guard; simulatedAs: string };
+  /**
+   * A sell: what the vault holds and how the shares were worked out ("$10 worth", "half"). `amountIn.value` is the
+   * exact share count, which /trade is sent (the signed request always names shares).
+   */
+  sell?: { basis: "shares" | "usd" | "fraction"; usd?: string; fraction?: "1" | "0.5"; held: Amount; heldValue: Amount; value: Amount } | null;
 }
 
 export interface Trade {

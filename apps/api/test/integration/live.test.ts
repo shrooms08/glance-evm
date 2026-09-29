@@ -169,10 +169,16 @@ describe.skipIf(!online)("live testnet", () => {
     expect(body.preflight.guard.detail.suggestedAmount).toBe(cap.raw);
   });
 
-  it("GET /quote: selling more than the vault holds is blocked by its balance", async () => {
-    const { body } = await get(`/quote?vault=${vault}&symbol=AMD&side=sell&amount=0.01`);
+  it("GET /quote: selling more than the vault holds is blocked by its balance (or refused outright when it holds none)", async () => {
+    const { status, body } = await get(`/quote?vault=${vault}&symbol=AMD&side=sell&amount=0.01`);
     const v = (await get(`/vault/${vault}`)).body;
     const amd = v.positions.find((p: any) => p.symbol === "AMD");
+    if (BigInt(amd.quantity.raw) === 0n) {
+      expect(status).toBe(422);
+      expect(body.error.code).toBe("NOTHING_HELD");
+      expect(body.error.message).toBe("You don't hold any AMD in your vault, so there's nothing to sell.");
+      return;
+    }
     if (BigInt(amd.quantity.raw) >= 10n ** 16n || amd.marketState === "STALE") return;
     expect(body.preflight.guard.code).toBe("INSUFFICIENT_BALANCE");
     expect(body.preflight.guard.message).toBe(`You only hold ${amd.quantity.formatted} in the vault.`);

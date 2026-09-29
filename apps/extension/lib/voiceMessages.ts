@@ -11,6 +11,8 @@ export interface VoiceIntent {
   intent: "buy" | "sell" | "price" | "spend-so-far" | "explain" | "portfolio" | "why" | "chart" | "ask" | "basket-buy" | "basket-make" | "baskets" | "compare" | "unknown";
   symbol: string | null;
   amount: string | null;
+  /** A sell of part of the holding: "1" all of it, "0.5" half. */
+  fraction?: "1" | "0.5";
   /** "compare": the stocks and the range. */
   symbols?: string[];
   range?: "1D" | "1W" | "1M";

@@ -18,14 +18,16 @@ import { Orb, Shield } from "./Orb";
 interface Props {
   guard: Guard;
   symbol?: string;
+  /** A sell's refusal offers sells ("Sell $25 worth instead", "Sell all instead"). */
+  side?: "buy" | "sell";
   onRetry(amount: string): void;
   onRequote(): void;
   onDismiss(): void;
 }
 
-export function BlockedCard({ guard, symbol, onRetry, onRequote, onDismiss }: Props) {
+export function BlockedCard({ guard, symbol, side = "buy", onRetry, onRequote, onDismiss }: Props) {
   const g = useGlance();
-  const view = viewForGuard(guard, g.usdgDecimals);
+  const view = viewForGuard(guard, g.usdgDecimals, Date.now(), side);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Move focus to the explanation so keyboard and screen-reader users hear why.

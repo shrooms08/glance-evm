@@ -15,7 +15,7 @@ import { HeroStory } from "./HeroStory";
 
 const TITLE = "Glance · Talk to the stocks you read about";
 const DESCRIPTION =
-  "Glance is a voice agent for tokenized stocks. Hold Option+V on any page and ask: it answers out loud, points at what it means, and buys from a vault only you control.";
+  "Glance is a voice agent for tokenized stocks. Hold Option+V on any page and ask: it answers out loud, points at what it means, and buys and sells from a vault only you control.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://glance-evm-console.vercel.app"),
@@ -33,7 +33,7 @@ const DOES = [
   ["01", "Reads", "Spots every stock on the page and prices it from Chainlink."],
   ["02", "Speaks", "Hold Option+V and ask. It answers out loud, starting on its first sentence."],
   ["03", "Shows", "Circles, underlines and chart marks on exactly what it's explaining, even on TradingView."],
-  ["04", "Buys", "Say 'buy $10 of Tesla'. Your vault checks every rule, then trades."],
+  ["04", "Buys and sells", "Say 'buy $10 of Tesla' or 'sell half my Tesla'. Your vault checks every rule, then trades."],
 ] as const;
 
 const LOOP = [
@@ -147,7 +147,7 @@ export default function LandingPage() {
               </h1>
               <p className="lp-lede">
                 Glance lives on the page you&apos;re reading. Hold Option+V and ask. It answers out loud, points at what it means,
-                and buys from a vault only you control.
+                and buys and sells from a vault only you control.
               </p>
               <div className="lp-cta-block">
                 <div className="lp-cta-row">
@@ -173,7 +173,7 @@ export default function LandingPage() {
         <section id="how" className="lp-wrap lp-section" style={{ scrollMarginTop: 40 }}>
           <div className="lp-head">
             <Eyebrow>What it does</Eyebrow>
-            <h2 className="lp-h2">Reads. Speaks. Shows. Buys<span className="lp-lime">.</span></h2>
+            <h2 className="lp-h2">Reads. Speaks. Shows. Buys and sells<span className="lp-lime">.</span></h2>
           </div>
           <div className="lp-cards">
             {DOES.map(([n, title, body]) => (

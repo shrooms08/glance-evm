@@ -7,6 +7,7 @@ import type { Guard } from "./api-types";
 import { clockIn, fromRaw, until, usd } from "./format";
 
 export type GuardAction =
+  /** Try again at `amount` (dollars). A sell may also retry as "all": the whole holding. */
   | { kind: "retry"; amount: string; label: string }
   | { kind: "wait"; seconds: number; label: string }
   | { kind: "requote"; label: string }
@@ -25,7 +26,8 @@ export interface GuardView {
 
 const money = (raw: string | undefined, d: number) => (raw === undefined ? "?" : usd(raw, d));
 
-export function viewForGuard(guard: Guard, usdgDecimals = 6, now = Date.now()): GuardView {
+export function viewForGuard(guard: Guard, usdgDecimals = 6, now = Date.now(), side: "buy" | "sell" = "buy"): GuardView {
+  const sell = side === "sell";
   const d = guard.detail ?? {};
   const base = { message: guard.message };
   const waitFacts = (seconds: number | undefined) =>
@@ -42,24 +44,26 @@ export function viewForGuard(guard: Guard, usdgDecimals = 6, now = Date.now()): 
           { label: "You asked for", value: money(d.requested, usdgDecimals) },
           { label: "Limit per trade", value: money(d.limit, usdgDecimals) },
         ],
-        primary: retry ? { kind: "retry", amount: retry, label: `Buy ${usd(d.suggestedAmount!, usdgDecimals)} instead` } : undefined,
+        primary: retry
+          ? { kind: "retry", amount: retry, label: sell ? `Sell ${usd(d.suggestedAmount!, usdgDecimals)} worth instead` : `Buy ${usd(d.suggestedAmount!, usdgDecimals)} instead` }
+          : undefined,
       };
     }
     case "DAILY_BUY_CAP":
     case "DAILY_SELL_CAP": {
-      const sell = guard.code === "DAILY_SELL_CAP";
+      const sellCap = guard.code === "DAILY_SELL_CAP";
       const retry = d.suggestedAmount ? fromRaw(d.suggestedAmount, usdgDecimals) : undefined;
       const seconds = typeof d.retryAfterSeconds === "number" ? d.retryAfterSeconds : undefined;
       return {
         ...base,
-        title: sell ? "Your daily sell limit is used" : "Your daily limit is used",
-        meta: `Guard · 24h ${sell ? "sell" : "buy"} cap ${money(d.limit, usdgDecimals)}`,
+        title: sellCap ? "Your daily sell limit is used" : "Your daily limit is used",
+        meta: `Guard · 24h ${sellCap ? "sell" : "buy"} cap ${money(d.limit, usdgDecimals)}`,
         facts: [
           { label: "Used in 24h", value: money(d.used as string | undefined, usdgDecimals) },
           { label: "Left", value: money(d.remaining, usdgDecimals) },
           ...waitFacts(seconds),
         ],
-        primary: retry ? { kind: "retry", amount: retry, label: `${sell ? "Sell" : "Buy"} ${usd(d.suggestedAmount!, usdgDecimals)} instead` } : undefined,
+        primary: retry ? { kind: "retry", amount: retry, label: sellCap ? `Sell ${usd(d.suggestedAmount!, usdgDecimals)} worth instead` : `Buy ${usd(d.suggestedAmount!, usdgDecimals)} instead` } : undefined,
         secondary: seconds ? { kind: "wait", seconds, label: `Frees up in ${until(seconds)}` } : undefined,
       };
     }
@@ -95,6 +99,10 @@ export function viewForGuard(guard: Guard, usdgDecimals = 6, now = Date.now()): 
     case "PAUSED":
       return { ...base, title: "Trading is paused", meta: "Guard · vault paused", facts: [], primary: { kind: "console", label: "Open the console" } };
     case "INSUFFICIENT_BALANCE": {
+      // Selling more than the vault holds: offer the whole holding instead.
+      if (sell) {
+        return { ...base, title: "You don't hold that much", meta: "Guard · vault holdings", facts: [], primary: { kind: "retry", amount: "all", label: "Sell all instead" } };
+      }
       const retry = d.suggestedAmount && BigInt(d.suggestedAmount) > 0n ? fromRaw(d.suggestedAmount, usdgDecimals) : undefined;
       return {
         ...base,
@@ -125,6 +133,8 @@ export function viewForGuard(guard: Guard, usdgDecimals = 6, now = Date.now()): 
     case "ROUTER_NOT_APPROVED":
     case "NO_PRICE_FEED":
       return { ...base, title: "Not set up on this vault", meta: "Guard · vault allowlist", facts: [], primary: { kind: "console", label: "Open the console" } };
+    case "NOTHING_HELD":
+      return { ...base, title: "Nothing to sell", meta: "Guard · vault holdings", facts: [] };
     case "DESK_INVENTORY":
       return { ...base, title: "The desk is short", meta: "Guard · desk inventory", facts: [] };
     default:

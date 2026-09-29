@@ -51,6 +51,7 @@ export type GuardCode =
   | "INVALID_SETTING"
   | "FAUCET_LIMIT"
   | "PRICE_DRIFT"
+  | "NOTHING_HELD"
   | "UNKNOWN";
 
 export interface DecodedRevert {
@@ -210,6 +211,11 @@ export function explainRevert(decoded: DecodedRevert | null, ctx: ExplainContext
         );
       }
       const offer = ctx.side === "sell" ? `sell ${usd(cap)} worth` : `buy ${usd(cap)}`;
+      // A sell says the rule first, in the market's words: "The market is closed, so each trade is capped at $25."
+      if (ctx.side === "sell") {
+        const rule = ctx.marketState === "CLOSED" ? `The market is closed, so each trade is capped at ${usd(cap)}.` : `Each trade is capped at ${usd(cap)}.`;
+        return make("PER_TRADE_CAP", `${rule} Want me to ${offer} instead?`, detail);
+      }
       return make(
         "PER_TRADE_CAP",
         `That's over your ${usd(cap)} per trade limit${closedSuffix(ctx)}. Want me to ${offer} instead?`,
@@ -236,7 +242,18 @@ export function explainRevert(decoded: DecodedRevert | null, ctx: ExplainContext
         retryAfterSeconds: wait ?? undefined,
       };
       // Anything under a cent left is effectively nothing left.
-      if (remaining < 10n ** BigInt(Math.max(0, ctx.usdgDecimals - 2))) {
+      const spent = remaining < 10n ** BigInt(Math.max(0, ctx.usdgDecimals - 2));
+      if (sell) {
+        // The rule first, then what's left: "The market is closed, so sells are capped at $125 a day."
+        const rule = `${ctx.marketState === "CLOSED" ? "The market is closed, so sells are" : "Sells are"} capped at ${usd(cap)} a day`;
+        if (spent) return make(code, `${rule}, and you've sold that much. It frees up ${when}.`, detail);
+        return make(
+          code,
+          `${rule}. You have ${usd(remaining)} left. Want me to sell ${usd(remaining)} worth instead? The rest frees up ${when}.`,
+          { ...detail, suggestedAmount: remaining.toString(), suggestedAmountFormatted: usd(remaining) },
+        );
+      }
+      if (spent) {
         return make(code, `You've used your ${limitName}${closedSuffix(ctx)}. It frees up ${when}.`, detail);
       }
       const verb = sell ? `sell ${usd(remaining)} worth` : `buy ${usd(remaining)}`;

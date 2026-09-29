@@ -328,11 +328,11 @@ describe("voice: baskets, rules first", () => {
     expect(got.symbol).toBeNull();
   });
 
-  it("selling a basket stays in the console, and says so", async () => {
+  it("selling a basket as one isn't offered: the reply asks for the stock by name", async () => {
     const got = intentOf("sell my tech basket");
     expect(got.intent).toBe("sell");
     const { replyFor } = await import("../../src/voice/routes.js");
-    expect((await replyFor(ctx, got, {})).reply).toBe("I can't sell from here yet. Your console can sell the stocks in your baskets.");
+    expect((await replyFor(ctx, got, {})).reply).toBe("I can't sell a basket as one. Name the stock instead, like “sell all my Tesla”.");
   });
 
   it("never a basket buy from a negation or a question", () => {

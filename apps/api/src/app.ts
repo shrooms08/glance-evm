@@ -19,7 +19,7 @@ import type { AppContext } from "./context.js";
 import { clientIp, rateLimit, sessionOf } from "./rateLimit.js";
 import { isRpcTrouble } from "./rpc.js";
 import { attemptLabel } from "./refusals.js";
-import { activityView, ApiError, chartView, healthView, liveView, portfolioView, priceView, quoteView, type RefusedAttempt, rpcUnavailable, tradeView, vaultView, whyView } from "./services.js";
+import { activityView, ApiError, chartView, healthView, liveView, portfolioView, priceView, quoteView, type RefusedAttempt, rpcUnavailable, SELL_FRACTIONS, tradeView, vaultView, whyView } from "./services.js";
 import { registerVoice } from "./voice/routes.js";
 import { factsView } from "./chartFacts.js";
 import { VISION_MAX_IMAGE_CHARS } from "./chartVision.js";
@@ -45,7 +45,22 @@ const slippageBps = z.coerce.number().int().min(0).max(1_000);
 const resolveBody = z.object({ text: z.string().min(1).max(MAX_RESOLVE_CHARS) });
 /** A glance's unresolved candidate names: the server keeps the first MAX_NAMES company-like ones. */
 const namesBody = z.object({ names: z.array(z.string().max(120)).max(200) });
-const quoteQuery = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() });
+/**
+ * A quote names its amount one way: `amount` (USDG for a buy, shares for a sell), or, for a sell only, `usd` (dollars
+ * worth at the vault's price) or `fraction` ("1" all, "0.5" half of the holding). /trade always takes shares.
+ */
+const quoteQuery = z
+  .object({
+    vault: address,
+    symbol,
+    side,
+    amount: decimal.optional(),
+    usd: decimal.optional(),
+    fraction: z.enum(SELL_FRACTIONS).optional(),
+    slippageBps: slippageBps.optional(),
+  })
+  .refine((q) => [q.amount, q.usd, q.fraction].filter((x) => x !== undefined).length === 1, "name exactly one of amount, usd or fraction")
+  .refine((q) => q.side === "sell" || (q.usd === undefined && q.fraction === undefined), "usd and fraction are for sells only");
 const tradeBody = z.object({ vault: address, symbol, side, amount: decimal, slippageBps: slippageBps.optional() }).strict();
 /** A basket: the legs in order, each an amount in dollars (the extension planned them from the weights). */
 const basketBody = z

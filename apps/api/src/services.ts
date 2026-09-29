@@ -33,6 +33,7 @@ import {
   type QuoteHistory,
 } from "./chart.js";
 import type { ChartRange } from "@glance/core/chart";
+import { LINES } from "@glance/core/persona";
 import { usTicker } from "@glance/core/tickers";
 import { TtlCache } from "./ttlCache.js";
 import { explainMove, type FeedMove, type WhyAnswer } from "./why.js";
@@ -663,26 +664,76 @@ export interface TradeRequest {
   vault: string;
   symbol: string;
   side: Side;
-  /** Decimal string: USDG for a buy, shares for a sell. */
-  amount: string;
+  /** Decimal string: USDG for a buy, shares for a sell. A sell quote may name `usd` or `fraction` instead. */
+  amount?: string;
+  /** A sell by dollar value: this many USDG worth of shares at the vault's oracle price (rounded down). Quotes only. */
+  usd?: string;
+  /** A sell by share of the holding: "1" all of it, "0.5" half (rounded down). Quotes only. */
+  fraction?: SellFraction;
   /** Extra tolerance below the desk quote for minOut, in basis points. Default 0: the desk is deterministic. */
   slippageBps?: number;
 }
 
-async function prepare(ctx: AppContext, req: TradeRequest) {
+export const SELL_FRACTIONS = ["1", "0.5"] as const;
+export type SellFraction = (typeof SELL_FRACTIONS)[number];
+
+/** How a sell's shares were worked out, for the confirm card: what the vault holds, and what was asked for. */
+export interface SellBasis {
+  basis: "shares" | "usd" | "fraction";
+  usd?: string;
+  fraction?: SellFraction;
+  held: bigint;
+}
+
+/** Said when the vault holds none of the stock: nothing is quoted or sent. */
+export const nothingHeld = LINES.nothingToSell;
+
+/** How many shares of a stock the vault holds (raw units). */
+export async function heldShares(ctx: AppContext, vault: string, symbol: string): Promise<bigint> {
+  const stock = stockBySymbol(ctx, symbol);
+  return ctx.client.readContract({ address: stock.token, abi: erc20Abi, functionName: "balanceOf", args: [getAddress(vault)] });
+}
+
+async function prepare(ctx: AppContext, req: TradeRequest, price?: Promise<PriceReading>) {
   const vault = getAddress(req.vault);
   const stock = stockBySymbol(ctx, req.symbol);
   const v = await readVaultCore(ctx, vault);
   const desk = await deskFor(ctx, vault, v.usdg);
   const decimals = req.side === "buy" ? v.usdgDecimals : stock.tokenDecimals;
+  const parse = (value: string, places: number) => {
+    try {
+      return parseDecimal(value, places);
+    } catch (err) {
+      throw new ApiError(400, "BAD_AMOUNT", (err as Error).message);
+    }
+  };
   let amount: bigint;
-  try {
-    amount = parseDecimal(req.amount, decimals);
-  } catch (err) {
-    throw new ApiError(400, "BAD_AMOUNT", (err as Error).message);
+  let sell: SellBasis | null = null;
+  if (req.side === "sell") {
+    // Every sell starts from the holding: none held is a plain refusal, before any quote or simulation.
+    const held = await ctx.client.readContract({ address: stock.token, abi: erc20Abi, functionName: "balanceOf", args: [vault] });
+    if (held === 0n) {
+      const message = nothingHeld(stock.name);
+      throw new ApiError(422, "NOTHING_HELD", message, { code: "NOTHING_HELD", error: "NothingHeld", message, args: {}, detail: { held: "0" } });
+    }
+    if (req.fraction) {
+      amount = req.fraction === "1" ? held : held / 2n;
+      sell = { basis: "fraction", fraction: req.fraction, held };
+    } else if (req.usd !== undefined) {
+      // Dollars to shares at the vault's own (oracle) price, rounded down: the sale's value never exceeds what was asked.
+      const usd = parse(req.usd, v.usdgDecimals);
+      const p = await (price ?? readPrice(ctx, stock, vault));
+      amount = usdgToTokens(usd, v.usdgDecimals, p.price, p.decimals, stock.tokenDecimals);
+      sell = { basis: "usd", usd: req.usd, held };
+    } else {
+      amount = parse(req.amount ?? "", decimals);
+      sell = { basis: "shares", held };
+    }
+  } else {
+    amount = parse(req.amount ?? "", decimals);
   }
   if (amount === 0n) throw new ApiError(400, "BAD_AMOUNT", "The amount has to be more than zero.");
-  return { vault, stock, v, desk, amount };
+  return { vault, stock, v, desk, amount, sell };
 }
 
 /** Which desk serves which vault changes only when the owner reconfigures it; remember it for a minute. */
@@ -739,7 +790,7 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
   const windowsPromise = chainNow(ctx).then((n) => readWindows(ctx, vaultAddr, n.timestamp));
   pricePromise.catch(() => {});
   windowsPromise.catch(() => {});
-  const p = await prepare(ctx, req);
+  const p = await prepare(ctx, req, pricePromise);
   const now = await latestTimestamp(ctx);
   // Everything that doesn't depend on another read goes out together, as one batch.
   const deskQuote = ctx.client
@@ -817,6 +868,18 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
     price: { raw: price.price.toString(), decimals: price.decimals, value: toDecimalString(price.price, price.decimals) },
     marketState: price.state,
     priceAgeSeconds: price.ageSeconds,
+    /**
+     * A sell: what the vault holds and how the shares were worked out. `amountIn.value` is the exact share count to
+     * send to /trade (the signed request always names shares).
+     */
+    sell: p.sell && {
+      basis: p.sell.basis,
+      ...(p.sell.usd !== undefined ? { usd: p.sell.usd } : {}),
+      ...(p.sell.fraction ? { fraction: p.sell.fraction } : {}),
+      held: quantity(p.sell.held, p.stock.tokenDecimals, p.stock.symbol),
+      heldValue: money(tokenValueInUsdg(p.sell.held, p.stock.tokenDecimals, price.price, price.decimals, d), d),
+      value: money(oracleOut, d),
+    },
     /** The live market price next to the vault's execution price, and whether the drift guard would refuse. */
     live: liveView(ctx, p.stock.symbol),
     drift: driftCheck(ctx, p.stock, price, () => {}),

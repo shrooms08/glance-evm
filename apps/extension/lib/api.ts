@@ -109,7 +109,8 @@ export const api = {
   /** The chart's computed breakdown, or a comparison ("TSLA,AMD"): numbers from code, never from a model. */
   chartFacts: (symbols: readonly string[], range: ChartRange, vault?: string) =>
     call<ChartFactsView>("GET", `/chart/${symbols.map(encodeURIComponent).join(",")}/facts?${q({ range, vault })}`),
-  quote: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
+  /** A buy names USDG; a sell names shares, or `usd` (dollars worth) or `fraction` ("1" all, "0.5" half). */
+  quote: (p: { vault: string; symbol: string; side: Side; amount?: string; usd?: string; fraction?: "1" | "0.5"; slippageBps?: number }) =>
     call<Quote>("GET", `/quote?${q(p)}`),
   trade: (p: { vault: string; symbol: string; side: Side; amount: string; slippageBps?: number }) =>
     call<Trade>("POST", "/trade", p),
