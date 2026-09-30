@@ -18,7 +18,8 @@ import { z } from "zod";
 import type { AppContext } from "../context.js";
 import { LINES } from "@glance/core/persona";
 
-import { ApiError, heldShares, liveView, portfolioView, priceView, vaultView, whyView } from "../services.js";
+import { activityView, ApiError, heldShares, liveView, portfolioView, priceView, vaultView, whyView } from "../services.js";
+import { lastTradesReply, NO_VAULT_TRADES } from "@glance/core/trades";
 import { spokenSummary } from "../why.js";
 import { factsView } from "../chartFacts.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
@@ -168,6 +169,12 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
         reply: `You've spent ${w.used.formatted} of your ${w.limit.formatted} in the last 24 hours. ${w.remaining.formatted} left.`,
         facts: { used: w.used.formatted, limit: w.limit.formatted, remaining: w.remaining.formatted },
       };
+    }
+    case "last-trades": {
+      // Read only, from the vault's own events (the console's Activity page reads the same).
+      if (!vault) return { reply: NO_VAULT_TRADES };
+      const a = await activityView(ctx, vault, 50);
+      return { reply: lastTradesReply(a.items, it.trades ?? { side: "any", count: 1 }), facts: { trades: it.trades } };
     }
     case "portfolio": {
       if (!vault) return { reply: LINES.noVaultPortfolio };

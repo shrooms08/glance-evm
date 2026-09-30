@@ -17,6 +17,7 @@ import { parseSplit } from "@glance/core/basket";
 import type { ChartRange } from "@glance/core/chart";
 import { MAX_COMPARE } from "@glance/core/chart-facts";
 import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
+import { lastTradesAsk, type LastTradesAsk } from "@glance/core/trades";
 
 export type Command =
   | { kind: "buy"; symbol: string; amount: string }
@@ -37,6 +38,8 @@ export type Command =
   | { kind: "makeBasket"; name: string; symbols: string[]; weights: number[] | null; unmatched: string[] }
   | { kind: "baskets" }
   | { kind: "compare"; symbols: string[]; range: ChartRange }
+  /** "What did I buy last?", "Show my last 3 trades": the vault's own activity, read only. */
+  | { kind: "lastTrades"; ask: LastTradesAsk }
   /** Developer check: draw every Show me shape on the current selection. */
   | { kind: "testDrawing" }
   /** A question about the page, a term, or how to use Glance: answered by Show me. */
@@ -192,6 +195,11 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
     const amount = parseAmount(named[1]!.replace(new RegExp(`\\s*${CURRENCY}$`), ""));
     if (amount) return { kind: "buyBasket", basket: named[2]!, amount };
   }
+
+  // "What did I buy last?", "show my last 3 trades": never a command that starts with a trade verb ("buy the last
+  // one", "sell what I bought last" stay trades, with their confirm cards).
+  const trades = lastTradesAsk(heard);
+  if (trades) return { kind: "lastTrades", ask: trades };
 
   // "compare Tesla and AMD this week", "Tesla vs AMD": 2 or 3 stocks, side by side.
   if (/^compare\b|\b(vs|versus)\b/.test(t)) {

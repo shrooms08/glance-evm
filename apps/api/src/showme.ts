@@ -43,6 +43,7 @@ import { CAUSE, factNumbers, factSentences, groundedSentence, snapChartTags, tim
 import { SentenceSplitter } from "@glance/core/sentences";
 
 import { chartBlock, factsBlock, type ChartSummary } from "./showmeChart.js";
+import { withSkills } from "./showmeSkills.js";
 
 /** Anthropic's stream events we read (text as it's written, and the token counts). */
 interface StreamEvent {
@@ -327,7 +328,8 @@ export function createShowMe(o: {
     const content: Anthropic.ContentBlockParam[] = [];
     if (input.screenshot) content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: input.screenshot } });
     content.push({ type: "text", text: showMeUserText(input) });
-    return { model: o.model, max_tokens: SHOWME_MAX_OUTPUT_TOKENS, system, messages: [{ role: "user" as const, content }] };
+    // Skills only when the question calls for them: otherwise the prompt is the base, byte for byte.
+    return { model: o.model, max_tokens: SHOWME_MAX_OUTPUT_TOKENS, system: withSkills(system, input.question, input.page?.selection ?? ""), messages: [{ role: "user" as const, content }] };
   };
 
   /** Checks one piece of an answer (a whole reply, or one sentence) with every rule, given what came before it. */

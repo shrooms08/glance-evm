@@ -25,7 +25,8 @@
     "./page-chart": "./src/pageChart.ts",
     "./keyterms": "./src/keyterms.ts",
     "./freshness": "./src/freshness.ts",
-    "./candles": "./src/candles.ts"
+    "./candles": "./src/candles.ts",
+    "./trades": "./src/trades.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

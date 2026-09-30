@@ -29,6 +29,7 @@ import { LINES, NOT_HEARD } from "@glance/core/persona";
 import { VOICE_RESTING } from "@glance/core/session";
 import { CUT_NOTE, noVoiceNote } from "../lib/showMe";
 import type { SellSpec } from "./SellCard";
+import { lastTradesReply, NO_VAULT_TRADES } from "@glance/core/trades";
 
 /** A sell command's amount as the card's spec: dollars, or all or half of the holding. */
 function sellSpec(amount: string | null | undefined, fraction: "1" | "0.5" | undefined): SellSpec | undefined {
@@ -203,6 +204,13 @@ export function useAssistant(opts: AssistantOptions = {}) {
           const w = res.data.buyWindow;
           const frees = w.nextReleaseInSeconds ? ` The oldest buy frees up in ${until(w.nextReleaseInSeconds)}.` : "";
           return say(`You've spent ${w.used.formatted} of your ${w.limit.formatted} in the last 24 hours. ${w.remaining.formatted} left.${frees}`, "Rolling 24h window");
+        }
+        case "lastTrades": {
+          // Read only, from the vault's own events.
+          if (!isAddress(g.vaultAddress)) return say(NO_VAULT_TRADES);
+          const res = await api.activity(g.vaultAddress);
+          if (!res.ok) return say(res.message);
+          return say(lastTradesReply(res.data.items, cmd.ask), "Activity");
         }
         case "portfolio": {
           setCard({ kind: "portfolio", key: ++seq.current });

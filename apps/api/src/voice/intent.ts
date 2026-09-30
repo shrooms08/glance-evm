@@ -17,11 +17,12 @@ import type { MessagesClient } from "../llm.js";
 import { logUsage, type LlmBudget, type Log } from "../llmBudget.js";
 import { PERSONA } from "@glance/core/persona";
 import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
+import { lastTradesAsk, type LastTradesAsk } from "@glance/core/trades";
 import { MAX_COMPARE } from "@glance/core/chart-facts";
 
 import { extractAmounts } from "./amounts.js";
 
-export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "basket-buy", "basket-make", "baskets", "compare", "unknown"] as const;
+export const INTENTS = ["buy", "sell", "price", "spend-so-far", "explain", "portfolio", "why", "chart", "ask", "basket-buy", "basket-make", "baskets", "compare", "last-trades", "unknown"] as const;
 export type IntentKind = (typeof INTENTS)[number];
 
 export type SellFraction = "1" | "0.5";
@@ -62,6 +63,8 @@ export interface Intent {
   /** "compare": the 2 or 3 catalog stocks named, in order, and the range asked about ("today" 1D, "this month" 1M). */
   symbols?: string[];
   range?: "1D" | "1W" | "1M";
+  /** "last-trades": which trades ("what did I buy last?", "show my last 3 trades"), read from the vault's activity. */
+  trades?: LastTradesAsk;
   /** Why the validator changed it, if it did (for logs and tests; never spoken). */
   note?: string;
   /** Claude's one-sentence reply for explain and unknown (spoken replies for data come from our own code). */
@@ -190,6 +193,11 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   if (/^(?:(?:ok|okay|hey|glance|please|can you|could you) )*compare\b|\b(vs|versus)\b/.test(t) && companies.length >= 2 && companies.length <= MAX_COMPARE) {
     return { ...base, symbol: null, intent: "compare", symbols: companies };
   }
+  // "what did I buy last?", "show my last 3 trades": the vault's own activity, read only. Never a command that starts
+  // with a trade verb ("buy the last one", "sell what I bought last"): those stay trades, with their confirm cards.
+  const trades = lastTradesAsk(transcript);
+  if (trades) return { ...base, symbol: null, intent: "last-trades", trades };
+
   // "how did Tesla do this week?", "what was the biggest drop?", "how am I doing on AMD since I bought?": Show me
   // answers with the chart's computed facts (before "how am I doing", which is the whole portfolio).
   if (isChartQuestion(t)) return { ...base, intent: "ask" };
@@ -305,6 +313,10 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     out.intent = "unknown";
   }
   if (out.intent === "portfolio" || out.intent.startsWith("basket")) out.symbol = null;
+  if (out.intent === "last-trades") {
+    out.symbol = null;
+    out.trades = lastTradesAsk(transcript) ?? out.trades ?? { side: "any", count: 1 };
+  } else delete out.trades;
   if (out.intent === "compare") {
     const named = [...new Set((out.symbols ?? []).map((x) => x.toUpperCase().replace(/^\$/, "")))].filter((x) => symbols.has(x));
     if (named.length < 2 || named.length > MAX_COMPARE) {
@@ -387,7 +399,8 @@ export function createClaudeIntent(
     "Task: turn one spoken command to Glance into a structured intent.",
     "Intents: buy, sell, price (the user wants a price), spend-so-far (how much they have spent or have left today),",
     "explain (they ask why something happened, e.g. why a trade was refused), portfolio (how they're doing, what they",
-    "own, or to show their portfolio), why (why a named stock moved, e.g. \"why did Tesla move?\"; needs the symbol),",
+    "own, or to show their portfolio), last-trades (what they bought or sold before, e.g. \"what did I buy last?\"),",
+    "why (why a named stock moved, e.g. \"why did Tesla move?\"; needs the symbol),",
     "chart (they want to see a named stock's price chart, e.g. \"show me Tesla's chart\", \"chart AMD\"; needs the symbol),",
     "ask (a question about the page they're reading, a request to be shown something on it, a question about what a term",
     "means, or how to use Glance: \"what's this article saying about Tesla?\", \"explain this chart\", \"what's a stock",
@@ -468,7 +481,7 @@ export function createClaudeIntent(
  * ten dollars of Tesla", "show me Tesla's chart") or a clear question for Show me. Explain and unknown need Claude's
  * one-sentence reply (or its better reading of an unclear request).
  */
-const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask", "basket-buy", "basket-make", "baskets", "compare"]);
+const RULES_DECIDE: ReadonlySet<IntentKind> = new Set(["buy", "sell", "price", "spend-so-far", "portfolio", "chart", "why", "ask", "basket-buy", "basket-make", "baskets", "compare", "last-trades"]);
 
 /** Max output for the intent tool call: the answer is four short fields. */
 export const INTENT_MAX_OUTPUT_TOKENS = 150;

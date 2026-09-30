@@ -10,6 +10,7 @@ import type { PageFigure } from "./pageRead";
 import { send } from "./lifecycle";
 import { setChainStatus } from "./chainStatus";
 import type { ApiRequest, ApiResponse } from "./messages";
+import type { ActivityLike } from "@glance/core/trades";
 
 /** Backoff between retries of a read when the testnet RPC isn't responding (then the caller gets the message). */
 export const RPC_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
@@ -99,6 +100,8 @@ export const api = {
   price: (symbol: string, vault?: string) => call<Price>("GET", `/price/${encodeURIComponent(symbol)}${vault ? `?${q({ vault })}` : ""}`),
   vault: (address: string) => call<Vault>("GET", `/vault/${address}`),
   portfolio: (address: string) => call<Portfolio>("GET", `/portfolio/${address}`),
+  /** The vault's events, newest first (what the console's Activity page lists): read only. */
+  activity: (address: string, limit = 50) => call<{ items: ActivityLike[] }>("GET", `/vault/${address}/activity?limit=${limit}`),
   why: (symbol: string) => call<WhyMoved>("GET", `/why/${encodeURIComponent(symbol)}`),
   /** Show me, teach and guide: only when the user asks. The page text is sent once and never kept. */
   showme: (body: ShowMeRequest) => call<ShowMeReply>("POST", "/showme", body),
