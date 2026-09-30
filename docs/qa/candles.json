@@ -6,16 +6,16 @@
     "screenshot": "docs/qa/candles-tradingview-tsla.png",
     "series": "line",
     "found": [
-      "Doji",
       "Spinning top",
-      "Inside bar"
+      "Doji",
+      "Spinning top"
     ],
     "marks": 3,
     "voice": {
       "outcome": "ended",
       "breaks": 0
     },
-    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1W series=line found=[\"Doji\",\"Spinning top\",\"Inside bar\"] marks=3"
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1W series=line found=[\"Spinning top\",\"Doji\",\"Spinning top\"] marks=3"
   },
   {
     "site": "tradingview",
@@ -24,7 +24,7 @@
     "screenshot": "docs/qa/candles-tradingview-nvda.png",
     "series": "line",
     "found": [
-      "Bearish marubozu",
+      "Bullish harami",
       "Inside bar",
       "Spinning top"
     ],
@@ -33,7 +33,7 @@
       "outcome": "ended",
       "breaks": 0
     },
-    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=NVDA range=1M series=line found=[\"Bearish marubozu\",\"Inside bar\",\"Spinning top\"] marks=3"
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=NVDA range=1M series=line found=[\"Bullish harami\",\"Inside bar\",\"Spinning top\"] marks=3"
   },
   {
     "site": "tradingview chart",
