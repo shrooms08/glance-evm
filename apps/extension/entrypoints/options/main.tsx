@@ -276,6 +276,12 @@ function Settings() {
         </span>
       </div>
 
+      <div className="g-row">
+        <button className="g-btn" onClick={() => void browser.tabs.create({ url: browser.runtime.getURL("/welcome.html") })}>
+          Show welcome again
+        </button>
+      </div>
+
       <span className="g-meta" data-testid="get-glance">
         Get Glance for another browser:{" "}
         <a href={latestZipUrl(form.console || DEFAULT_CONSOLE_URL)} target="_blank" rel="noreferrer">

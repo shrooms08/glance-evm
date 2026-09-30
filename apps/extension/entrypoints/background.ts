@@ -209,8 +209,8 @@ export default defineBackground(() => {
   browser.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
-    // First install: open settings (the connection test, the extension ID for CORS, and "Enable voice").
-    if (reason === "install") await browser.runtime.openOptionsPage();
+    // First install: the Welcome page (Settings stays one click away, from the toolbar menu).
+    if (reason === "install") await browser.tabs.create({ url: browser.runtime.getURL("/welcome.html?installed=1") });
   });
 
   browser.runtime.onConnect.addListener((port) => {

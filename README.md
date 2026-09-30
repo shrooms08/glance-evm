@@ -315,6 +315,7 @@ stand-in: [docs/CHAIN_NOTES.md](docs/CHAIN_NOTES.md).
   by Farza. No Clicky code is used; see [NOTICE](NOTICE).
 - Built on Robinhood Chain, Paxos USDG, Chainlink, AssemblyAI, Anthropic Claude, Deepgram and Finnhub.
 - Glance began as a Solana project; this is the EVM rebuild.
+- Welcome copy adapted from GLANCE by Heylana.
 
 ## Team
 

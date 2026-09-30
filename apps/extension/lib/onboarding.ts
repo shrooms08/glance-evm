@@ -5,6 +5,7 @@
 import { storage } from "wxt/utils/storage";
 
 import { safely } from "./lifecycle";
+import { firstAnswerAt } from "./welcome";
 
 /** The tour was finished or skipped (the welcome's "greeted" flag lives with the greeting, components/useGreeting). */
 export const tourDone = storage.defineItem<boolean>("local:tourDone", { fallback: false });
@@ -24,7 +25,26 @@ export async function tick(item: ChecklistKey): Promise<void> {
     const c = await checklist.getValue();
     if (c[item]) return;
     await checklist.setValue({ ...c, [item]: true });
+    // The Welcome page celebrates the first question: "That's a glance."
+    if (item === "ask" && (await firstAnswerAt.getValue()) === null) await firstAnswerAt.setValue(Date.now());
   }, Promise.resolve());
+}
+
+/** How many page loads have shown the hotkey tip by the orb (it shows on the first 3, then never again). */
+export const hotkeyTips = storage.defineItem<number>("local:hotkeyTips", { fallback: 0 });
+export const HOTKEY_TIP_LOADS = 3;
+
+/** The tip by the orb, as GLANCE by Heylana words it, with this product's keys: "⌥G glance · hold ⌥V to talk · Esc stops". */
+export const hotkeyTip = (glanceKey: string, voiceKey: string) => `${glanceKey} glance · hold ${voiceKey} to talk · Esc stops`;
+
+/** Whether this page load shows the tip (and counts it). Never throws. */
+export async function takeHotkeyTip(): Promise<boolean> {
+  return safely(async () => {
+    const n = await hotkeyTips.getValue();
+    if (n >= HOTKEY_TIP_LOADS) return false;
+    await hotkeyTips.setValue(n + 1);
+    return true;
+  }, Promise.resolve(false));
 }
 
 export async function dismissChecklist(): Promise<void> {

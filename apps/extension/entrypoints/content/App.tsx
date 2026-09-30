@@ -33,7 +33,7 @@ import { requestCard } from "../../lib/chartPanel";
 import StockChart from "../../components/StockChart";
 import { greeted } from "../../components/useGreeting";
 import { Tour, Welcome } from "../../components/Onboarding";
-import { firstRun, prefersReducedMotion, tick, tourDone, tourSteps } from "../../lib/onboarding";
+import { firstRun, hotkeyTip, prefersReducedMotion, takeHotkeyTip, tick, tourDone, tourSteps } from "../../lib/onboarding";
 import { createCommandTalk } from "../../lib/commandTalk";
 import { GREETING, LINES, SPOKEN_GREETING } from "@glance/core/persona";
 import { api } from "../../lib/api";
@@ -730,6 +730,28 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.gated]);
 
+  // The hotkey tip by the orb: the first 3 page loads (once Glance is set up), 1.2s after load, for 6s; never again.
+  // Not while the welcome or the tour is showing by the orb.
+  const [tipShown, setTipShown] = useState(false);
+  const onboardRef = useRef(onboard);
+  onboardRef.current = onboard;
+  useEffect(() => {
+    if (g.gated !== false) return;
+    let hide: number | undefined;
+    const show = window.setTimeout(() => {
+      if (onboardRef.current || document.visibilityState !== "visible") return;
+      void takeHotkeyTip().then((yes) => {
+        if (!yes) return;
+        setTipShown(true);
+        hide = window.setTimeout(() => setTipShown(false), 6_000);
+      });
+    }, 1_200);
+    return () => {
+      window.clearTimeout(show);
+      window.clearTimeout(hide);
+    };
+  }, [g.gated]);
+
   // Underlines only once Glance is set up (and none again should it ever be gated).
   useEffect(() => {
     if (g.gated === false) underliner.start();
@@ -1001,6 +1023,16 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               onNext={() => (onboard.step + 1 < steps.length ? setOnboard({ phase: "tour", step: onboard.step + 1 }) : endTour())}
               onSkip={endTour}
             />
+          )}
+          {tipShown && !panelOpen && !orbFlying && !onboard && (
+            <span
+              className="g-kbd"
+              role="status"
+              data-testid="hotkey-tip"
+              style={{ position: "fixed", right: pos.right, bottom: pos.bottom + orbTokens.floating + 8, background: "var(--g-surface)", color: "var(--g-text)", pointerEvents: "none", animation: "g-in var(--g-panel) var(--g-ease)" }}
+            >
+              {hotkeyTip(keyLabel(g.glanceKey), keyLabel(g.voiceKey))}
+            </span>
           )}
           {/* This browser's link ends within 3 days (or has ended): a small "Relink" above the orb (one signature). */}
           {g.relink.show && g.gated === false && !panelOpen && !orbFlying && (
