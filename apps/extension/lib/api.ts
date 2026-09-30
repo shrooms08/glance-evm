@@ -100,6 +100,9 @@ export const api = {
   price: (symbol: string, vault?: string) => call<Price>("GET", `/price/${encodeURIComponent(symbol)}${vault ? `?${q({ vault })}` : ""}`),
   vault: (address: string) => call<Vault>("GET", `/vault/${address}`),
   portfolio: (address: string) => call<Portfolio>("GET", `/portfolio/${address}`),
+  /** Any two or three US stocks compared, by name or ticker (read only; the market's daily closes). */
+  compareAny: (names: readonly string[], range: "1D" | "1W" | "1M") =>
+    call<{ symbols: string[]; sentence: string; source: string; rows: unknown[]; unmatched: string[] }>("GET", `/compare?${q({ names: names.join("|"), range })}`),
   /** The vault's events, newest first (what the console's Activity page lists): read only. */
   activity: (address: string, limit = 50) => call<{ items: ActivityLike[] }>("GET", `/vault/${address}/activity?limit=${limit}`),
   why: (symbol: string) => call<WhyMoved>("GET", `/why/${encodeURIComponent(symbol)}`),

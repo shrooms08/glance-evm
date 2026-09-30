@@ -18,6 +18,7 @@ import { logUsage, type LlmBudget, type Log } from "../llmBudget.js";
 import { PERSONA } from "@glance/core/persona";
 import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
 import { lastTradesAsk, type LastTradesAsk } from "@glance/core/trades";
+import { compareNames } from "@glance/core/compare-any";
 import { MAX_COMPARE } from "@glance/core/chart-facts";
 
 import { extractAmounts } from "./amounts.js";
@@ -63,6 +64,8 @@ export interface Intent {
   /** "compare": the 2 or 3 catalog stocks named, in order, and the range asked about ("today" 1D, "this month" 1M). */
   symbols?: string[];
   range?: "1D" | "1W" | "1M";
+  /** "compare" of any US stocks by name ("compare AMD and NVIDIA"): resolved to tickers when answered. */
+  names?: string[];
   /** "last-trades": which trades ("what did I buy last?", "show my last 3 trades"), read from the vault's activity. */
   trades?: LastTradesAsk;
   /** Why the validator changed it, if it did (for logs and tests; never spoken). */
@@ -190,6 +193,9 @@ export function rulesIntent(transcript: string, catalog: readonly CatalogEntry[]
   }
 
   // "compare Tesla and AMD this week", "Tesla vs AMD today": 2 or 3 catalog stocks, side by side.
+  // Any US stocks, by name: "compare AMD and NVIDIA" (a name outside the catalog), answered from the market's candles.
+  const anyNames = compareNames(transcript);
+  if (anyNames !== null && anyNames.length > companies.length) return { ...base, symbol: null, intent: "compare", names: anyNames, range: rangeFor(transcript) };
   if (/^(?:(?:ok|okay|hey|glance|please|can you|could you) )*compare\b|\b(vs|versus)\b/.test(t) && companies.length >= 2 && companies.length <= MAX_COMPARE) {
     return { ...base, symbol: null, intent: "compare", symbols: companies };
   }
@@ -317,7 +323,14 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
     out.symbol = null;
     out.trades = lastTradesAsk(transcript) ?? out.trades ?? { side: "any", count: 1 };
   } else delete out.trades;
-  if (out.intent === "compare") {
+  if (out.intent === "compare" && out.names && out.names.length >= 2) {
+    // By name, for any US stocks: resolved (and checked) when answered, from the market's own prices.
+    out.names = out.names.slice(0, MAX_COMPARE);
+    out.range = rangeFor(transcript);
+    out.symbol = null;
+    delete out.symbols;
+  } else if (out.intent === "compare") {
+    delete out.names;
     const named = [...new Set((out.symbols ?? []).map((x) => x.toUpperCase().replace(/^\$/, "")))].filter((x) => symbols.has(x));
     if (named.length < 2 || named.length > MAX_COMPARE) {
       notes.push("compare needs 2 or 3 catalog stocks");
@@ -331,6 +344,7 @@ export function validateIntent(raw: Intent, transcript: string, catalog: readonl
   } else {
     delete out.symbols;
     delete out.range;
+    delete out.names;
   }
   if (out.intent === "ask") out.amount = null;
   // "sell my tech basket": a basket names no single company, so the reply asks for the stock by name.

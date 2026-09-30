@@ -20,6 +20,7 @@ import { LINES } from "@glance/core/persona";
 
 import { activityView, ApiError, heldShares, liveView, portfolioView, priceView, vaultView, whyView } from "../services.js";
 import { lastTradesReply, NO_VAULT_TRADES } from "@glance/core/trades";
+import { compareAnyView } from "../compareAny.js";
 import { spokenSummary } from "../why.js";
 import { factsView } from "../chartFacts.js";
 import { understand, type Intent, type VoiceContext } from "./intent.js";
@@ -189,6 +190,12 @@ export async function replyFor(ctx: AppContext, it: Intent, context: VoiceContex
       // The extension opens the side panel on the chart; the chart itself is read from GET /chart there.
       return { reply: LINES.hereIsChart(name) };
     case "compare": {
+      if (it.names) {
+        // Any US stocks, by name: resolved to tickers, the market's daily closes, a sentence built in code.
+        const view = await compareAnyView(ctx, it.names, it.range ?? "1W");
+        it.symbols = view.symbols;
+        return { reply: view.sentence, facts: { compare: view.rows } };
+      }
       // Numbers from code only: the comparison sentence is built from the computed facts.
       const view = await factsView(ctx, it.symbols ?? [], it.range ?? "1W", vault && isAddress(vault) ? getAddress(vault) : undefined);
       return { reply: view.comparison?.sentence ?? "", facts: { compare: view.comparison?.rows ?? [] } };

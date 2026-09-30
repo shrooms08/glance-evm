@@ -26,7 +26,8 @@
     "./keyterms": "./src/keyterms.ts",
     "./freshness": "./src/freshness.ts",
     "./candles": "./src/candles.ts",
-    "./trades": "./src/trades.ts"
+    "./trades": "./src/trades.ts",
+    "./compare-any": "./src/compareAny.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

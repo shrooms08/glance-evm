@@ -78,7 +78,7 @@ export type AssistantCard =
   /** One short question with a few answers (the chart lens asking which chart, or offering the lens). */
   | { kind: "choice"; key: number; question: string; options: Array<{ label: string; run(): void }> }
   /** 2 or 3 stocks side by side, rebased to 100 (`data`: already fetched for the typed path). */
-  | { kind: "compare"; key: number; symbols: string[]; range: import("@glance/core/chart").ChartRange; data?: import("../lib/api-types").ChartFactsView }
+  | { kind: "compare"; key: number; symbols: string[]; range: import("@glance/core/chart").ChartRange; data?: import("../lib/api-types").ChartFactsView; market?: boolean }
   | null;
 
 export interface AssistantOptions {
@@ -267,6 +267,14 @@ export function useAssistant(opts: AssistantOptions = {}) {
           if (!res.ok) return say(res.message);
           return say(res.data.comparison?.sentence ?? "", "Rebased to 100 · from Chainlink prices");
         }
+        case "compareAny": {
+          // Any US stocks, by name: the API finds the tickers; every number said is computed from the market's candles.
+          g.setOrb({ state: "thinking", line: `Comparing ${cmd.names.join(" and ")}`, meta: "" });
+          const res = await api.compareAny(cmd.names, cmd.range);
+          if (!res.ok) return say(res.message);
+          setCard({ kind: "compare", key: ++seq.current, symbols: res.data.symbols, range: cmd.range, market: true });
+          return say(res.data.sentence, res.data.source);
+        }
         case "ask":
           if (onAsk.current) return onAsk.current(cmd.question);
           return say(LINES.cantThink);
@@ -328,7 +336,11 @@ export function useAssistant(opts: AssistantOptions = {}) {
           break;
         case "compare":
           // The API is already speaking the comparison (built from the computed facts); the card draws it.
-          if (it.symbols && it.symbols.length >= 2) setCard({ kind: "compare", key: ++seq.current, symbols: it.symbols, range: it.range ?? "1W" });
+          // A stock outside the catalog: every line from the market's own prices (the spoken numbers came from them).
+          if (it.symbols && it.symbols.length >= 2) {
+            const market = it.symbols.some((s) => !g.catalog.some((c) => c.symbol === s));
+            setCard({ kind: "compare", key: ++seq.current, symbols: it.symbols, range: it.range ?? "1W", ...(market ? { market } : {}) });
+          }
           break;
         case "basket-buy":
         case "basket-make":

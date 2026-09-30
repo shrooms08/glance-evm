@@ -18,6 +18,7 @@ import type { ChartRange } from "@glance/core/chart";
 import { MAX_COMPARE } from "@glance/core/chart-facts";
 import { isAsk, isChartQuestion, rangeFor } from "@glance/core/showme";
 import { lastTradesAsk, type LastTradesAsk } from "@glance/core/trades";
+import { compareNames } from "@glance/core/compare-any";
 
 export type Command =
   | { kind: "buy"; symbol: string; amount: string }
@@ -38,6 +39,8 @@ export type Command =
   | { kind: "makeBasket"; name: string; symbols: string[]; weights: number[] | null; unmatched: string[] }
   | { kind: "baskets" }
   | { kind: "compare"; symbols: string[]; range: ChartRange }
+  /** Any US stocks, by name ("compare AMD and NVIDIA"): the API finds the tickers. */
+  | { kind: "compareAny"; names: string[]; range: "1D" | "1W" | "1M" }
   /** "What did I buy last?", "Show my last 3 trades": the vault's own activity, read only. */
   | { kind: "lastTrades"; ask: LastTradesAsk }
   /** Developer check: draw every Show me shape on the current selection. */
@@ -204,6 +207,9 @@ export function parseCommand(input: string, companies: readonly CompanyAliases[]
   // "compare Tesla and AMD this week", "Tesla vs AMD": 2 or 3 stocks, side by side.
   if (/^compare\b|\b(vs|versus)\b/.test(t)) {
     const symbols = companiesIn(t.replace(/^compare\s+/, ""), table);
+    // A name outside the catalog (NVIDIA): compared from the market's own prices, by name.
+    const names = compareNames(heard);
+    if (names && names.length > symbols.length) return { kind: "compareAny", names, range: rangeFor(t) };
     if (symbols.length >= 2 && symbols.length <= MAX_COMPARE) return { kind: "compare", symbols, range: rangeFor(t) };
   }
   // "how did Tesla do this week?", "how am I doing on AMD since I bought?": the chart's facts, before "how am I doing".

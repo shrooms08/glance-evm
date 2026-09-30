@@ -203,7 +203,7 @@ export function Panel({ layout, assistant, host, companies, onRevealCompany, onS
 
         {assistant.card?.kind === "compare" && (
           <div style={{ padding: "0 var(--g-s7) var(--g-s7)" }}>
-            <CompareCard key={assistant.card.key} symbols={assistant.card.symbols} range={assistant.card.range} data={assistant.card.data} onClose={() => assistant.setCard(null)} />
+            <CompareCard key={assistant.card.key} symbols={assistant.card.symbols} range={assistant.card.range} data={assistant.card.data} market={assistant.card.market} onClose={() => assistant.setCard(null)} />
           </div>
         )}
 

@@ -27,3 +27,12 @@ describe("typed: past trades", () => {
     expect(parseCommand("sell what I bought last", COMPANIES).kind).toBe(parseCommand("sell what I bought yesterday", COMPANIES).kind);
   });
 });
+
+describe("typed: compare any US stocks", () => {
+  it("\"Compare AMD and NVIDIA\" compares by name (NVIDIA is outside the catalog)", () => {
+    expect(parseCommand("Compare AMD and NVIDIA", COMPANIES)).toEqual({ kind: "compareAny", names: ["AMD", "NVIDIA"], range: "1W" });
+  });
+  it("\"compare Tesla and Amazon\" stays the catalog's own comparison", () => {
+    expect(parseCommand("compare Tesla and Amazon", COMPANIES)).toMatchObject({ kind: "compare", symbols: ["TSLA", "AMZN"] });
+  });
+});

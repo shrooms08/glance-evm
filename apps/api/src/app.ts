@@ -24,6 +24,7 @@ import { registerVoice } from "./voice/routes.js";
 import { factsView } from "./chartFacts.js";
 import { VISION_MAX_IMAGE_CHARS } from "./chartVision.js";
 import { chartContextFor } from "./showmeChart.js";
+import { compareAnyView } from "./compareAny.js";
 import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
 import { SESSION_HEADERS } from "@glance/core/session";
@@ -136,6 +137,7 @@ const sessionQuery = z.object({ vault: address, session: address });
  * market=1: the market's own candles even for a catalog stock (to fit a page's chart, which draws market prices);
  * fine=1: at a finer step (a page's 1 day chart may draw every minute); prepost=1: with pre- and after-market.
  */
+const compareQuery = z.object({ names: z.string().trim().min(1).max(200), range: z.enum(["1D", "1W", "1M"]).default("1W") });
 const chartQuery = z.object({ range: z.enum(ALL_RANGES).default("1D"), vault: address.optional(), market: z.enum(["1"]).optional(), fine: z.enum(["1"]).optional(), prepost: z.enum(["1"]).optional() });
 
 /** "GET /voice/speak?text=Hello 200" -> "GET /voice/speak?… 200": query strings never reach the log. */
@@ -251,7 +253,7 @@ export function createServerApp(ctx: AppContext) {
     [["/why/*"], config.WHY_RATE_LIMIT_PER_MINUTE, "why"],
     // One limit for both Show me routes (the whole answer, and the streamed one).
     [["/showme/*"], config.SHOWME_RATE_LIMIT_PER_MINUTE, "showme"],
-    [["/chart/*"], config.CHART_RATE_LIMIT_PER_MINUTE, "chart"],
+    [["/chart/*", "/compare"], config.CHART_RATE_LIMIT_PER_MINUTE, "chart"],
     [["/portfolio/*"], config.PORTFOLIO_RATE_LIMIT_PER_MINUTE, "portfolio"],
     [["/voice/*"], config.VOICE_RATE_LIMIT_PER_MINUTE, "voice"],
   ];
@@ -391,6 +393,14 @@ export function createServerApp(ctx: AppContext) {
     if (!r.ok && r.reason === "daily-limit") throw new ApiError(429, "VISION_DAILY_LIMIT", "I've read enough page charts for today.");
     if (!r.ok) throw new ApiError(r.reason === "budget" ? 429 : 503, r.reason === "budget" ? "BUDGET" : "VISION_UNAVAILABLE", r.reason === "budget" ? LINES.outOfThinking : LINES.cantThink);
     return send(c, { labels: r.labels, model: r.model });
+  });
+
+  // Any two or three US stocks compared, by name or ticker ("AMD|NVIDIA"): the market's daily candles, every number
+  // computed (src/compareAny.ts). Read only: trading stays with the vault's own stocks.
+  app.get("/compare", async (c) => {
+    const q = parse(compareQuery, c.req.query());
+    const names = q.names.split("|").map((n) => n.trim()).filter(Boolean);
+    return send(c, await compareAnyView(ctx, names, q.range));
   });
 
   // The chart's breakdown, computed (src/chartFacts.ts): one stock, or up to three compared ("TSLA,AMD").

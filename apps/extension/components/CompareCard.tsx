@@ -100,7 +100,8 @@ export function CompareView({ view }: { view: ChartFactsView }) {
 }
 
 /** The card: loads the comparison (or shows the one already fetched), with 1D / 1W / 1M. */
-export function CompareCard({ symbols, range: initial, data, onClose }: { symbols: string[]; range: ChartRange; data?: ChartFactsView; onClose?(): void }) {
+/** `market`: from the market's own candles (a stock outside the catalog is in it), the same source for every line. */
+export function CompareCard({ symbols, range: initial, data, market, onClose }: { symbols: string[]; range: ChartRange; data?: ChartFactsView; market?: boolean; onClose?(): void }) {
   const g = useGlance();
   const [range, setRange] = useState(initial);
   const [view, setView] = useState<ChartFactsView | null>(data && data.range === initial ? data : null);
@@ -110,7 +111,7 @@ export function CompareCard({ symbols, range: initial, data, onClose }: { symbol
     if (view && view.range === range) return;
     let live = true;
     setError(null);
-    void api.chartFacts(symbols, range, vault).then((res) => {
+    void api.chartFacts(symbols, range, vault, market ? { market: true } : undefined).then((res) => {
       if (!live) return;
       if (res.ok) setView(res.data);
       else setError(res.message);
@@ -118,7 +119,7 @@ export function CompareCard({ symbols, range: initial, data, onClose }: { symbol
     return () => {
       live = false;
     };
-  }, [symbols, range, vault, view]);
+  }, [symbols, range, vault, view, market]);
   return (
     <div className="g-card" role="region" aria-label="Comparison">
       <div className="g-section" style={{ gap: 10 }}>
