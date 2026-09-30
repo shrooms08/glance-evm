@@ -41,7 +41,7 @@ import { findQuote, nextSentence, revealRange } from "../../lib/anchor";
 import { pageMount } from "../../lib/chartLoader";
 import { listFigures, readPage } from "../../lib/pageRead";
 import { chartAnnotations } from "../../lib/chartAnnotations";
-import { CHART_DRAWINGS_MS } from "../../lib/chartAnnotations";
+import { afterAnswer, watchNavigation } from "../../lib/markLife";
 import { ChartLayer } from "../../lib/chartLayer";
 import { placeOwnChart, wantsOwnChart } from "../../lib/ownChart";
 import type { Box } from "@glance/core/page-chart";
@@ -322,14 +322,8 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
         glanceKey: () => g.shortcuts?.glance || keyLabel(g.glanceKey),
         say: (line, state, note) => g.setOrb({ state, line, meta: note ?? (onConsole ? "Show me · on the console" : "Show me") }),
         done: (cancelled) => {
-          if (cancelled) {
-            drawings.current?.clear();
-            chartAnnotations.clear();
-            session?.layer.close();
-          } else {
-            drawings.current?.fadeLater(session ? CHART_DRAWINGS_MS : undefined);
-            chartAnnotations.clearLater();
-          }
+          // Finished: the marks stay, on the page and on the chart (lib/markLife.ts); cancelled, they all go.
+          afterAnswer(cancelled, { clearPage: () => drawings.current?.clear(), clearCharts: () => chartAnnotations.clear(), closeLayer: () => session?.layer.close() });
           // An explanation of the page's chart always marks it: the computed defaults when the answer mentioned none.
           if (session && !cancelled && session.annotated === 0) for (const a of defaultMarks(session.facts, session.symbol)) session.annotate(a);
           // One log line per chart request, once its marks are drawn (they come in at most every 400ms).
@@ -752,6 +746,16 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
     };
   }, [g.gated]);
 
+  // Navigating away (a new URL, as single-page sites do it) takes the page's marks with it: they were about that page.
+  useEffect(
+    () =>
+      watchNavigation(window, () => {
+        drawings.current?.clear();
+        chartAnnotations.clear();
+      }),
+    [],
+  );
+
   // Underlines only once Glance is set up (and none again should it ever be gated).
   useEffect(() => {
     if (g.gated === false) underliner.start();
@@ -988,6 +992,10 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
                 soundCue.current.request("close");
                 setPanelOpen(false);
                 assistant.setCard(null);
+                // The x: the answer's marks go with it (the chart layer has its own x).
+                showRun.current?.cancel();
+                drawings.current?.clear();
+                chartAnnotations.clear();
               }}
               autoFocusInput={openedByKeyboard}
               pageContext={pageContextFor}
