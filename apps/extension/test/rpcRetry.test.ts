@@ -67,3 +67,34 @@ describe("RPC trouble in the extension", () => {
     expect(chainStatus()).toBe("ok");
   });
 });
+
+describe("a read that failed underneath (INTERNAL)", () => {
+  let slept: number[];
+  beforeEach(() => {
+    send.mockReset();
+    resetChainStatusForTests();
+    slept = [];
+    setSleepForTests(async (ms) => void slept.push(ms));
+  });
+  const internal = { ok: false, status: 502, code: "INTERNAL", message: "I couldn't read the desk's quote from the chain. Try again in a few seconds.", detail: "spreadBps() on 0xBe32 · UnknownRpcError" };
+  const quote = { ok: true, status: 200, data: { preflight: { ok: true } } };
+
+  it("is tried once more automatically before anything is shown, and the console gets what failed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    send.mockResolvedValueOnce(internal).mockResolvedValueOnce(quote);
+    const res = await api.quote({ vault: "0xabc", symbol: "TSLA", side: "buy", amount: "10" });
+    expect(res.ok).toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith("[glance] GET /quote → INTERNAL: spreadBps() on 0xBe32 · UnknownRpcError");
+    warn.mockRestore();
+  });
+
+  it("failing twice, shows the API's specific message", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    send.mockResolvedValue(internal);
+    const res = await api.quote({ vault: "0xabc", symbol: "TSLA", side: "buy", amount: "10" });
+    expect(!res.ok && res.message).toBe("I couldn't read the desk's quote from the chain. Try again in a few seconds.");
+    expect(send).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+});

@@ -6,6 +6,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  BaseError,
+  ContractFunctionZeroDataError,
   decodeEventLog,
   getAddress,
   isAddressEqual,
@@ -66,6 +68,7 @@ import { assemblyaiToday } from "./voice/dailyCaps.js";
 import { STOCK_FRESHNESS } from "@glance/core/freshness";
 import { gapBps } from "./liveQuotes.js";
 import { priceDriftGuard } from "@glance/core/errors";
+import { chainReadMessage, errorDetail, whatFailed } from "./errorDetail.js";
 
 const BPS = 10_000n;
 /** Blocks scanned to rebuild the 24h windows. ~0.17s blocks: 1.2M is about 57 hours, comfortably over 24. */
@@ -83,6 +86,8 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+  /** What actually failed underneath (src/errorDetail.ts: no URLs, no secrets), for the log and the console. */
+  detail?: string;
 }
 
 export interface RefusedAttempt {
@@ -158,7 +163,15 @@ export async function readPrice(ctx: AppContext, stock: CatalogEntry, vault: Add
   const [round, decimals, config, now] = await Promise.all([
     ctx.client.readContract({ address: stock.feed, abi: testPriceFeedAbi, functionName: "latestRoundData" }),
     ctx.client.readContract({ address: stock.feed, abi: testPriceFeedAbi, functionName: "decimals" }),
-    ctx.client.readContract({ address: vault, abi: glanceVaultAbi, functionName: "tokenConfig", args: [stock.token] }),
+    ctx.client
+      .readContract({ address: vault, abi: glanceVaultAbi, functionName: "tokenConfig", args: [stock.token] })
+      .catch((err: unknown) => {
+        // Nothing there that answers as a vault (a wallet with no vault yet): say so, never "something went wrong".
+        if (!isRpcTrouble(err) && err instanceof BaseError && err.walk((e) => e instanceof ContractFunctionZeroDataError)) {
+          throw new ApiError(404, "NOT_A_VAULT", `There's no Glance vault at ${vault}.`);
+        }
+        throw err;
+      }),
     latestTimestamp(ctx),
   ]);
   const [, answer, , updatedAtRaw] = round;
@@ -326,6 +339,20 @@ export async function readWindows(ctx: AppContext, vault: Address, now: number):
   };
 }
 
+/**
+ * The 24h windows as an extra: they only add when the oldest buy or sell frees up (the caps themselves come from the
+ * vault's own state). When the history can't be read (the provider's limit, a slow log scan), the card and the quote
+ * go on without it, and the log says why.
+ */
+async function windowsIfReadable(ctx: AppContext, vault: Address, now: number, where: string): Promise<Windows> {
+  try {
+    return await readWindows(ctx, vault, now);
+  } catch (err) {
+    console.error(`[api] ${where}: the 24h trade history couldn't be read (${errorDetail(err)}); going on without it`);
+    return { buy: [], sell: [] };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Vault state
 // ---------------------------------------------------------------------------
@@ -374,14 +401,20 @@ async function readVaultCore(ctx: AppContext, vault: Address) {
   } catch (err) {
     if (err instanceof ApiError) throw err;
     // Only an answer from the chain can say this isn't a vault: a timeout or an unreachable RPC says nothing about it.
-    if (isRpcTrouble(err)) throw rpcUnavailable();
+    if (isRpcTrouble(err)) throw rpcUnavailable(undefined, err);
     throw new ApiError(404, "NOT_A_VAULT", `${vault} isn't a Glance vault.`);
   }
 }
 
 /** The testnet RPC (every configured endpoint) failed or timed out: nothing is known about the vault or the trade. */
-export function rpcUnavailable(message = RPC_TROUBLE_MESSAGE): ApiError {
-  return new ApiError(503, "RPC_UNAVAILABLE", message);
+export function rpcUnavailable(message?: string, cause?: unknown): ApiError {
+  // With the failed read known, say what couldn't be read (the extension retries reads before showing it).
+  const e = new ApiError(503, "RPC_UNAVAILABLE", message ?? (cause !== undefined && whatFailed(cause) ? chainReadMessage(cause) : RPC_TROUBLE_MESSAGE));
+  if (cause !== undefined) {
+    e.detail = errorDetail(cause);
+    console.error(`[api] RPC_UNAVAILABLE: ${e.detail}`);
+  }
+  return e;
 }
 
 type VaultCore = Awaited<ReturnType<typeof readVaultCore>>;
@@ -408,7 +441,7 @@ export async function vaultView(ctx: AppContext, vaultParam: string) {
   const v = await readVaultCore(ctx, vault);
   const now = await latestTimestamp(ctx);
   const [windows, usdgBalance, positions] = await Promise.all([
-    readWindows(ctx, vault, now),
+    windowsIfReadable(ctx, vault, now, "vault"),
     ctx.client.readContract({ address: v.usdg, abi: erc20Abi, functionName: "balanceOf", args: [vault] }),
     Promise.all(
       ctx.catalog.entries.map(async (stock) => {
@@ -789,7 +822,8 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
   const vaultAddr = getAddress(req.vault);
   const stockEarly = stockBySymbol(ctx, req.symbol);
   const pricePromise = readPrice(ctx, stockEarly, vaultAddr);
-  const windowsPromise = chainNow(ctx).then((n) => readWindows(ctx, vaultAddr, n.timestamp));
+  // The trade history only adds detail to a refusal: the buy card never waits on it, or fails with it.
+  const windowsPromise = chainNow(ctx).then((n) => windowsIfReadable(ctx, vaultAddr, n.timestamp, "quote"));
   pricePromise.catch(() => {});
   windowsPromise.catch(() => {});
   const p = await prepare(ctx, req, pricePromise);
@@ -823,7 +857,7 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
 
   const dq = await deskQuote;
   // A desk quote that failed because the RPC did is not a refusal: never show it as a guard.
-  if (!dq.ok && isRpcTrouble(dq.err)) throw rpcUnavailable();
+  if (!dq.ok && isRpcTrouble(dq.err)) throw rpcUnavailable(undefined, dq.err);
   const deskOut: bigint | null = dq.ok ? dq.value : null;
   const deskError: GuardError | null = dq.ok ? null : explainRevert(decodeRevert(revertDataFromError(dq.err)), exCtx);
   const spreadBps = Number(spreadRaw);
@@ -848,7 +882,7 @@ export async function quoteView(ctx: AppContext, req: TradeRequest, simulateAs?:
       preflight = { ok: true };
     } catch (err) {
       // The preflight couldn't run (RPC trouble): that's not the vault saying no.
-      if (isRpcTrouble(err)) throw rpcUnavailable();
+      if (isRpcTrouble(err)) throw rpcUnavailable(undefined, err);
       preflight = { ok: false, guard: explainRevert(decodeRevert(revertDataFromError(err)), exCtx) };
     }
   }

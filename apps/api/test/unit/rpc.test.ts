@@ -120,7 +120,7 @@ describe("the API tells an unreachable chain from a non-vault", () => {
     vi.spyOn(ctx.client, "getCode").mockRejectedValue(timeout());
     const { status, body } = await get(`/vault/${VAULT}`);
     expect(status).toBe(503);
-    expect(body.error).toEqual({ code: "RPC_UNAVAILABLE", message: RPC_TROUBLE_MESSAGE });
+    expect(body.error).toEqual({ code: "RPC_UNAVAILABLE", message: RPC_TROUBLE_MESSAGE, detail: expect.any(String) });
     vi.restoreAllMocks();
   });
 

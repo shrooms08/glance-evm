@@ -251,7 +251,7 @@ describe("GET /portfolio: an unreachable chain is not 'not a vault'", () => {
     vi.spyOn(ctx.client, "getCode").mockRejectedValue(down);
     const { status, body } = await get(`/portfolio/${VAULT}`);
     expect(status).toBe(503);
-    expect(body.error).toEqual({ code: "RPC_UNAVAILABLE", message: RPC_TROUBLE_MESSAGE });
+    expect(body.error).toEqual({ code: "RPC_UNAVAILABLE", message: RPC_TROUBLE_MESSAGE, detail: expect.any(String) });
     vi.restoreAllMocks();
   });
 

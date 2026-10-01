@@ -25,6 +25,7 @@ import { factsView } from "./chartFacts.js";
 import { VISION_MAX_IMAGE_CHARS } from "./chartVision.js";
 import { chartContextFor } from "./showmeChart.js";
 import { compareAnyView } from "./compareAny.js";
+import { chainReadMessage, errorDetail } from "./errorDetail.js";
 import type { ShowMeEvent } from "./showme.js";
 import { streamSSE } from "hono/streaming";
 import { SESSION_HEADERS } from "@glance/core/session";
@@ -504,14 +505,18 @@ export function createServerApp(ctx: AppContext) {
   app.notFound((c) => send(c, { error: { code: "NOT_FOUND", message: "No such endpoint." } }, 404));
 
   app.onError((err, c) => {
+    const where = `${c.req.method} ${c.req.path}`;
     // Anything else that failed because the RPC did: say so (the extension retries), not "something went wrong".
-    if (!(err instanceof ApiError) && isRpcTrouble(err)) err = rpcUnavailable();
+    if (!(err instanceof ApiError) && isRpcTrouble(err)) err = rpcUnavailable(undefined, err);
     if (err instanceof ApiError) {
-      return send(c, { error: { code: err.code, message: err.message, guard: err.guard } }, err.status);
+      if (err.detail) console.error(`[api] ${where} ${err.code}: ${err.detail}`);
+      return send(c, { error: { code: err.code, message: err.message, guard: err.guard, ...(err.detail ? { detail: err.detail } : {}) } }, err.status);
     }
-    // Unexpected errors: log the class and message only (never request bodies or keys).
-    console.error(`[api] ${err.name}: ${err.message.split("\n")[0]}`);
-    return send(c, { error: { code: "INTERNAL", message: "Something went wrong reading the chain. Try again." } }, 502);
+    // Unexpected errors: what failed underneath (the call, the RPC method, the status, the provider's message; never a
+    // URL, a request body or a key), in the log and for the extension's console.
+    const detail = errorDetail(err);
+    console.error(`[api] ${where} INTERNAL: ${detail}`);
+    return send(c, { error: { code: "INTERNAL", message: chainReadMessage(err), detail } }, 502);
   });
 
   return { app, injectWebSocket: nodeWs.injectWebSocket };

@@ -6,7 +6,16 @@ export type ApiRequest = { kind: "api"; method: "GET" | "POST"; path: string; bo
 
 export type ApiResponse<T> =
   | { ok: true; status: number; data: T }
-  | { ok: false; status: number; offline: boolean; code: string; message: string; guard?: import("./api-types").Guard };
+  | {
+      ok: false;
+      status: number;
+      offline: boolean;
+      code: string;
+      message: string;
+      guard?: import("./api-types").Guard;
+      /** What failed underneath, from the API (the call, the RPC method, the status; never a URL or a key). */
+      detail?: string;
+    };
 
 export type PanelMessage =
   | { kind: "panel:open" }

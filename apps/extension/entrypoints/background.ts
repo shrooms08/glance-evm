@@ -104,7 +104,7 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
     // non-JSON body: handled below
   }
   if (res.ok) return { ok: true, status: res.status, data };
-  const error = (data as { error?: { code?: string; message?: string; guard?: never } } | null)?.error;
+  const error = (data as { error?: { code?: string; message?: string; guard?: never; detail?: string } } | null)?.error;
   return {
     ok: false,
     status: res.status,
@@ -112,6 +112,7 @@ async function fetchApi(base: string, req: ApiRequest): Promise<ApiResponse<unkn
     code: error?.code ?? `HTTP_${res.status}`,
     message: error?.message ?? `The Glance API answered ${res.status}.`,
     guard: error?.guard,
+    ...(error?.detail ? { detail: error.detail } : {}),
   };
 }
 

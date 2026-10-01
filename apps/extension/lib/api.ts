@@ -20,18 +20,31 @@ export function setSleepForTests(fn: (ms: number) => Promise<void>) {
   sleep = fn;
 }
 
+/** What failed underneath a chain read, in the console (the API's detail: never a URL or a key). */
+function logFailure(method: string, path: string, res: Extract<ApiResponse<unknown>, { ok: false }>) {
+  console.warn(`[glance] ${method} ${path.split("?")[0]} → ${res.code}: ${res.detail ?? res.message}`);
+}
+
 /** Reads are safe to repeat. A trade is never retried on our own: it might already have gone through. */
 const retryable = (method: "GET" | "POST", path: string) => method === "GET" || path === "/resolve";
 
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<ApiResponse<T>> {
   let res = await once<T>(method, path, body);
   if (retryable(method, path)) {
+    // A read that failed underneath (INTERNAL) is tried once more before anything is shown.
+    if (!res.ok && res.code === "INTERNAL") {
+      logFailure(method, path, res);
+      await sleep(RPC_RETRY_DELAYS_MS[0]!);
+      res = await once<T>(method, path, body);
+    }
     for (const delay of RPC_RETRY_DELAYS_MS) {
       if (res.ok || res.code !== "RPC_UNAVAILABLE") break;
+      logFailure(method, path, res);
       await sleep(delay);
       res = await once<T>(method, path, body);
     }
   }
+  if (!res.ok && (res.code === "INTERNAL" || res.code === "RPC_UNAVAILABLE")) logFailure(method, path, res);
   // Any answer that reached the chain means it's answering again; RPC_UNAVAILABLE means it isn't.
   if (res.ok || (!res.offline && res.code !== "RPC_UNAVAILABLE")) setChainStatus("ok");
   else if (res.code === "RPC_UNAVAILABLE") setChainStatus("trouble");
