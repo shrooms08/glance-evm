@@ -10,6 +10,7 @@ import { env } from "@/lib/env";
 import { useExtensionInstalled } from "@/lib/extensionPresence";
 import { useGlanceExtension } from "@/lib/glanceExtension";
 import { BROWSERS, detectBrowser, installSteps, UNSUPPORTED_BROWSERS_NOTE, type BrowserKey } from "@/lib/install";
+import { SUPPORTED_WALLETS_LINE } from "@/lib/walletSupport";
 
 const noSubscribe = () => () => {};
 
@@ -53,6 +54,7 @@ export function InstallGuide(p: { installed: boolean; browser: BrowserKey; onBro
               ? `Glance underlines the companies it knows. Hover one for its price and a buy button, or hold ${talkKey} and ask.`
               : "About a minute. Then Glance's Set me up walks you through your own vault: a few wallet prompts, nothing to paste."}
           </p>
+          <p className="meta">{SUPPORTED_WALLETS_LINE}</p>
         </div>
       </div>
 

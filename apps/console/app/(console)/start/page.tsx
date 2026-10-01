@@ -8,6 +8,8 @@ import { useAccount, useSignTypedData } from "wagmi";
 import { Notice } from "@/components/Notice";
 import { TxStatus } from "@/components/TxStatus";
 import { useGate, useReconnect } from "@/components/useGate";
+import { WalletProblem } from "@/components/WalletProblem";
+import { SUPPORTED_WALLETS_LINE } from "@/lib/walletSupport";
 import { VaultStep } from "@/components/VaultStep";
 import { CHAIN_ID, demoVaults, primaryVault, type DemoVault } from "@/lib/deployment";
 import { parseDecimal } from "@/lib/format";
@@ -178,14 +180,14 @@ export default function StartPage() {
     glancePresent: Boolean(hello),
     linked: glanceLinked !== null,
     faucet: { gas: source.gas === "on", usdg: source.usdg === "on" },
-    busy: busy || linking || gate.switching || gas.state === "sending" || usdg.state === "sending" || effective.key !== "paxos",
+    busy: busy || linking || gate.switching || gate.walletProblem !== null || gas.state === "sending" || usdg.state === "sending" || effective.key !== "paxos",
     tried: tried.current,
   };
   const next = nextAutoAction(auto);
   useEffect(() => {
     if (!next) return;
     tried.current.add(next);
-    if (next === "switch-network") gate.onSwitchNetwork();
+    if (next === "switch-network") void gate.onSwitchNetwork();
     else if (next === "get-gas") void getGas();
     else if (next === "get-usdg") void getUsdg();
     else if (next === "create") run("setup", first.raw);
@@ -271,6 +273,7 @@ export default function StartPage() {
           <p className="eyebrow">Get started</p>
           <h1 className="title">Five steps to your own vault</h1>
           <p className="meta">Each step starts by itself once the one before is done; you only answer your wallet. Every step is checked against the chain, so it&apos;s right on any device.</p>
+          <p className="meta">{SUPPORTED_WALLETS_LINE}</p>
           <p className="ui">The plan: {plannedPrompts}.</p>
         </div>
         <output className="progress" data-complete={summary.complete || undefined}>
@@ -293,16 +296,19 @@ export default function StartPage() {
             </button>
           )}
           {address && <p className="meta mono">{address}</p>}
+          {/* A wallet that can't reach Robinhood Chain (Phantom): said here, before any switch is asked for. */}
+          {isConnected && gate.walletProblem?.kind === "phantom" && <WalletProblem message={gate.walletProblem.message} onTryDifferentWallet={() => void gate.onTryDifferentWallet()} />}
         </Step>
 
         <Step n={2} title="Add Robinhood Chain testnet" status={statuses.network}>
           <p className="meta">Chain 46630. One click adds it to your wallet if it&apos;s missing and switches to it.</p>
-          {isConnected && !onChain && (
-            <button className="btn btn-primary" onClick={gate.onSwitchNetwork} disabled={gate.switching}>
+          {isConnected && !onChain && gate.walletProblem?.kind !== "phantom" && (
+            <button className="btn btn-primary" onClick={() => void gate.onSwitchNetwork()} disabled={gate.switching}>
               {gate.switching ? "Check your wallet…" : "Add and switch"}
             </button>
           )}
-          {isConnected && !onChain && gate.switchError && <p className="meta text-fail">{gate.switchError}</p>}
+          {isConnected && !onChain && gate.walletProblem?.kind === "switch" && <WalletProblem message={gate.walletProblem.message} onTryDifferentWallet={() => void gate.onTryDifferentWallet()} />}
+          {isConnected && !onChain && !gate.walletProblem && gate.switchError && <p className="meta text-fail">{gate.switchError}</p>}
         </Step>
 
         <Step n={3} title="Get test ETH and USDG" status={statuses.funds}>
