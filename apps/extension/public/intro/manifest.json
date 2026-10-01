@@ -1,0 +1,68 @@
+{
+  "voice": "flux-sienna-en",
+  "lines": [
+    {
+      "file": "/intro/line-01.mp3",
+      "caption": "Hey. I'm Glance.",
+      "spoken": "Hey. I'm Glance.",
+      "durationMs": 1584,
+      "bytes": 9504
+    },
+    {
+      "file": "/intro/line-02.mp3",
+      "caption": "I live in your browser, on every page you read.",
+      "spoken": "I live in your browser, on every page you read.",
+      "durationMs": 2856,
+      "bytes": 17136
+    },
+    {
+      "file": "/intro/line-03.mp3",
+      "caption": "See a company in the news? Hold ⌥V and ask me about it.",
+      "spoken": "See a company in the news? Hold Option V and ask me about it.",
+      "durationMs": 4776,
+      "bytes": 28656
+    },
+    {
+      "file": "/intro/line-04.mp3",
+      "caption": "Looking at a chart? I'll explain it, and draw right on it.",
+      "spoken": "Looking at a chart? I'll explain it, and draw right on it.",
+      "durationMs": 4704,
+      "bytes": 28224
+    },
+    {
+      "file": "/intro/line-05.mp3",
+      "caption": "Want in? Say “buy ten dollars of Tesla”, and I'll buy it on Robinhood Chain.",
+      "spoken": "Want in? Say, buy ten dollars of Tesla, and I'll buy it on Robinhood Chain.",
+      "durationMs": 4368,
+      "bytes": 26208
+    },
+    {
+      "file": "/intro/line-06.mp3",
+      "caption": "I trade from a vault you own, inside limits you set. I can never withdraw a cent.",
+      "spoken": "I trade from a vault you own, inside limits you set. I can never withdraw a cent.",
+      "durationMs": 6456,
+      "bytes": 38736
+    },
+    {
+      "file": "/intro/line-07.mp3",
+      "caption": "When the market's closed, I slow down on my own.",
+      "spoken": "When the market's closed, I slow down on my own.",
+      "durationMs": 2856,
+      "bytes": 17136
+    },
+    {
+      "file": "/intro/line-08.mp3",
+      "caption": "Pause me any time. Revoke me any time.",
+      "spoken": "Pause me any time. Revoke me any time.",
+      "durationMs": 2928,
+      "bytes": 17568
+    },
+    {
+      "file": "/intro/line-09.mp3",
+      "caption": "Ready when you are.",
+      "spoken": "Ready when you are.",
+      "durationMs": 1824,
+      "bytes": 10944
+    }
+  ]
+}

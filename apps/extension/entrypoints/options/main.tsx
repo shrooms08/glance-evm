@@ -277,7 +277,7 @@ function Settings() {
       </div>
 
       <div className="g-row">
-        <button className="g-btn" onClick={() => void browser.tabs.create({ url: browser.runtime.getURL("/welcome.html") })}>
+        <button className="g-btn" onClick={() => void browser.tabs.create({ url: browser.runtime.getURL("/welcome.html?intro=1") })}>
           Show welcome again
         </button>
       </div>

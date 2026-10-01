@@ -1,5 +1,6 @@
 /**
- * Welcome: opened once, on install (and again from Settings, "Show welcome again"). The structure of GLANCE by
+ * Welcome: opened once, on install (and again from Settings, "Show welcome again"). First a spoken intro (./Intro.tsx:
+ * the orb, one caption at a time, then "Set me up" or "Replay intro"); then the setup steps, the structure of GLANCE by
  * Heylana's first run, with this product's facts (lib/welcome.ts):
  *   Hey. I'm Glance.   pick a wallet: the console's Get started page opens (the "Glance tab")
  *   Fund the vault.    Setup 1 of 2: an amount to start with
@@ -8,11 +9,13 @@
  *   All set            how to glance and talk; "That's a glance." after the first answer
  * Everything the wallet signs happens on the console's own page: this page only reads what the console reported.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 
 import { Orb } from "../../components/Orb";
+import { introStart } from "../../lib/intro";
+import { Intro, webIntroPlayer } from "./Intro";
 import { api } from "../../lib/api";
 import { mountPageStyles } from "../../lib/extensionPage";
 import { keyLabel } from "../../lib/hotkeys";
@@ -224,7 +227,12 @@ function Confetti() {
 }
 
 function Welcome() {
-  const welcome = new URLSearchParams(location.search).has("installed");
+  const params = new URLSearchParams(location.search);
+  const welcome = params.has("installed");
+  // First the spoken intro (on install, from Settings, or before setup); "Set me up" leads to the setup steps.
+  const [view, setView] = useState<"loading" | "intro" | "setup">("loading");
+  const [autoplay, setAutoplay] = useState(false);
+  const player = useMemo(() => webIntroPlayer((path) => browser.runtime.getURL(path as "/welcome.html")), []);
   const [openedAt] = useState(() => Date.now());
   const [complete, setComplete] = useState(false);
   const [progress, setProgress] = useState<{ wallet: boolean; vault: boolean } | null>(null);
@@ -236,7 +244,11 @@ function Welcome() {
 
   useEffect(() => {
     // Read only: what the console reported, whether Glance is set up, and the first answer.
-    void setupComplete.getValue().then(setComplete);
+    void setupComplete.getValue().then((done) => {
+      setComplete(done);
+      setAutoplay(introStart({ installed: welcome, askedForIntro: params.has("intro"), setupComplete: done }) === "play");
+      setView("intro");
+    });
     void setupProgress.getValue().then((p) => setProgress(p));
     void firstAnswerAt.getValue().then(setFirstAt);
     void Promise.all([hotkeyLetter.getValue(), voiceKeyLetter.getValue()]).then(([g, v]) => setKeys({ glance: keyLabel(g), voice: keyLabel(v) }));
@@ -259,6 +271,8 @@ function Welcome() {
         <Orb state="idle" size={28} markUrl="/glance-mark.png" />
         <span className="g-ui">{WELCOME.title}</span>
       </header>
+      {view === "intro" && <Intro autoplay={autoplay} player={player} onSetUp={() => setView("setup")} />}
+      {view === "setup" && (
       <main style={{ width: "100%", maxWidth: 420, margin: "0 auto", padding: "40px 24px 64px", boxSizing: "border-box" }}>
         {stage === "signin" && (
           <SignIn
@@ -273,6 +287,7 @@ function Welcome() {
         {stage === "account" && <Setup symbols={symbols} vaultFound={Boolean(progress?.vault)} />}
         {stage === "tryit" && <TryIt glanceKey={keys.glance} voiceKey={keys.voice} example={example} celebrated={celebrate(firstAt, openedAt)} onDone={onDone} />}
       </main>
+      )}
     </div>
   );
 }

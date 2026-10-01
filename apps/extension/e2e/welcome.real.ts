@@ -26,6 +26,9 @@ test("install opens the Welcome page, and its setup button opens the console's G
     .then(() => context.pages().find((p) => p.url().includes("/welcome.html"))!);
   expect(welcome.url()).toContain("installed=1");
   expect(context.pages().some((p) => p.url().includes("/options.html"))).toBe(false);
+  // The spoken intro comes first: skipped here, then "Set me up" leads to the setup steps.
+  await welcome.getByRole("button", { name: "Skip intro" }).click();
+  await welcome.getByRole("button", { name: "Set me up" }).click();
   await welcome.getByRole("heading", { name: "Hey. I'm Glance." }).waitFor();
   await expect(welcome.getByText("I'm installed. I live on every page you read")).toBeVisible();
   await welcome.waitForTimeout(800);
