@@ -6,6 +6,8 @@ Glance is a voice agent in your browser. It reads the page with you, draws on th
 explains, and buys tokenized stocks on Robinhood Chain from a vault that only you control. Every limit it works within
 is enforced by that vault's contract, not by Glance.
 
+Security: see [SECURITY.md](SECURITY.md) and the full audit in [docs/audit.md](docs/audit.md).
+
 ## Links
 
 - Website: https://glance-evm-console.vercel.app

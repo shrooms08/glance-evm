@@ -5,6 +5,15 @@
 import { getAddress, isAddress, type Address } from "viem";
 import { MAX_SESSION_SECONDS } from "@glance/core/session";
 
+import { shortAddress } from "./format";
+
+/**
+ * Said above the signature button (docs/audit.md M-6): the session address comes from the link itself, so a link from
+ * anyone else could ask the owner to authorise someone else's session. A warning, not a block.
+ */
+export const linkWarning = (session: string) =>
+  `Only continue if you opened this link from your own Glance extension. Session key: ${shortAddress(session)}`;
+
 export type LinkParams = { ok: true; vault: Address; session: Address; expiresAt: number } | { ok: false; problem: string };
 
 /** /link?vault=<vault>&session=<session address>&expires=<unix seconds>, checked. */

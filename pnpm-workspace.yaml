@@ -1,3 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# Security (docs/audit.md L-14): ws below 8.21.0 has a memory-exhaustion DoS (GHSA-96hv-2xvq-fx4p). The console reaches
+# 8.18.0 through WalletConnect's viem; pinned to the nearest patched version.
+overrides:
+  "ws@>=8.0.0 <8.21.0": "8.21.0"

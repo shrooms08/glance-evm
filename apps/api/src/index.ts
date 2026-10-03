@@ -38,7 +38,7 @@ const server = serve({ fetch: app.fetch, port: config.PORT }, (info) => {
   console.log(`  CORS origins: ${origins.join(", ") || "none"}`);
   if (config.NODE_ENV === "production") {
     if (!origins.some((o) => o.startsWith("chrome-extension://"))) console.log("  warning: CORS_ORIGINS has no chrome-extension:// origin: the extension can't call this API");
-    if (origins.some((o) => /localhost|127\.0\.0\.1/.test(o))) console.log("  warning: CORS_ORIGINS still allows localhost in production");
+    if (/localhost|127\.0\.0\.1/.test(config.CORS_ORIGINS)) console.log("  note: CORS_ORIGINS lists localhost; it is dropped in production");
   }
   console.log(
     `  keeper: ${keeper ? `in-process every ${Math.round(config.KEEPER_INTERVAL_MS / 1000)}s (lock ${keeper.lockFile})` : config.KEEPER_IN_PROCESS ? "not running (see the [keeper] line)" : "not in this process (KEEPER_IN_PROCESS unset)"}`,

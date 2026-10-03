@@ -169,6 +169,16 @@ describe("CORS", () => {
   it("an empty CORS_ORIGINS (a copied .env.example) means the default, not none", () => {
     expect(loadConfig({ CORS_ORIGINS: "" }).corsOrigins).toEqual(["chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl", "http://localhost:3000"]);
   });
+
+  it("production: the default is the extension and the hosted console, and localhost is never allowed, even listed", () => {
+    expect(loadConfig({ NODE_ENV: "production", CORS_ORIGINS: "" }).corsOrigins).toEqual(["chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl", "https://glance-evm-console.vercel.app"]);
+    expect(loadConfig({ NODE_ENV: "production" }).corsOrigins).toEqual(["chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl", "https://glance-evm-console.vercel.app"]);
+    expect(
+      loadConfig({ NODE_ENV: "production", CORS_ORIGINS: "chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl,https://glance-evm-console.vercel.app,http://localhost:3000,http://127.0.0.1:5173" }).corsOrigins,
+    ).toEqual(["chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl", "https://glance-evm-console.vercel.app"]);
+    // Outside production, a listed localhost stays (local development).
+    expect(loadConfig({ NODE_ENV: "development", CORS_ORIGINS: "http://localhost:3000" }).corsOrigins).toEqual(["http://localhost:3000"]);
+  });
 });
 
 describe("/health in production", () => {

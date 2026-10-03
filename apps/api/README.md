@@ -380,8 +380,9 @@ VOICE_PROVIDERS=fake PORT=8797 pnpm --filter api dev   # simulated providers, to
 - **Signed trades:** `POST /trade` needs a request signed by a browser session the vault's owner linked (EIP-712), or
   a vault listed in `OPEN_DEMO_VAULTS` (empty by default; recording day only; 10 trades an hour per visitor). See
   [docs/SECURITY.md](../../docs/SECURITY.md).
-- **CORS:** allows only the origins in `CORS_ORIGINS`: by default the extension's fixed ID and the console at
-  `http://localhost:3000`. **CORS isn't authentication.** Anything outside a browser ignores it, which is why trades
+- **CORS:** allows only the origins in `CORS_ORIGINS`: by default the extension's fixed ID and the console
+  (`https://glance-evm-console.vercel.app` in production, `http://localhost:3000` elsewhere). In production a localhost
+  origin is dropped even when listed. **CORS isn't authentication.** Anything outside a browser ignores it, which is why trades
   are signed and the paid endpoints are limited and capped.
 - **Rate limits:** per IP, 120 requests a minute overall and 10 a minute on `/trade`, plus a limit for each paid group
   (resolve, why, Show me, chart, portfolio, voice, session). When a request names a browser session, the same limit

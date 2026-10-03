@@ -19,7 +19,7 @@ import { api } from "@/lib/api";
 import { addressUrl } from "@/lib/chain";
 import { CHAIN_ID } from "@/lib/deployment";
 import { useGlanceExtension } from "@/lib/glanceExtension";
-import { parseLinkParams } from "@/lib/link";
+import { linkWarning, parseLinkParams } from "@/lib/link";
 import { reportError } from "@/lib/report";
 import { useVaultChain } from "@/lib/vault";
 
@@ -161,6 +161,7 @@ export function LinkScreen(p: {
               {p.state.message}
             </Notice>
           )}
+          <Notice tone="guard" title={linkWarning(p.session)} />
           <div className="row">
             <button className="btn btn-primary" onClick={p.onSign} disabled={busy || p.reason !== null}>
               {p.state.step === "signing" ? "Check your wallet…" : p.state.step === "sending" ? "Linking…" : "Sign to link this browser"}

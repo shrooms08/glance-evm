@@ -156,8 +156,8 @@ const envSchema = z.object({
   CORS_ORIGINS: z
     .string()
     .optional()
-    // Empty (as in a copied .env.example) means the default, not "no origins".
-    .transform((v) => (v?.trim() ? v : "chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl,http://localhost:3000")),
+    // Empty (as in a copied .env.example) means the default (corsOriginsFor), not "no origins".
+    .transform((v) => v?.trim() ?? ""),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(120),
   TRADE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
   /** Trust X-Forwarded-For for the client IP. Only enable behind a proxy you control. */
@@ -248,6 +248,25 @@ const envSchema = z.object({
   GIT_COMMIT: z.string().optional(),
 });
 
+/** The extension's origin (its ID is fixed by the manifest key). */
+export const EXTENSION_ORIGIN = "chrome-extension://gmcdcaoneeohbacbnafjdnkkoojgnogl";
+/** The hosted console. */
+export const CONSOLE_ORIGIN = "https://glance-evm-console.vercel.app";
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+/**
+ * The browser origins allowed to call the API: CORS_ORIGINS when set, else the extension plus the console (the hosted
+ * one in production, localhost:3000 elsewhere). In production a localhost origin is never allowed, even when listed
+ * (docs/audit.md L-6).
+ */
+export function corsOriginsFor(listed: string, nodeEnv: string): string[] {
+  const production = nodeEnv === "production";
+  const origins = listed
+    ? listed.split(",").map((o) => o.trim()).filter(Boolean)
+    : [EXTENSION_ORIGIN, production ? CONSOLE_ORIGIN : "http://localhost:3000"];
+  return production ? origins.filter((o) => !LOCAL_ORIGIN.test(o)) : origins;
+}
+
 export type Config = z.infer<typeof envSchema> & { corsOrigins: string[]; openDemoVaults: `0x${string}`[] };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -257,9 +276,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const fields = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid environment: ${fields}`);
   }
-  const corsOrigins = parsed.data.CORS_ORIGINS.split(",")
-    .map((o) => o.trim())
-    .filter(Boolean);
+  const corsOrigins = corsOriginsFor(parsed.data.CORS_ORIGINS, parsed.data.NODE_ENV);
   const openDemoVaults = parsed.data.OPEN_DEMO_VAULTS.split(",")
     .map((a) => a.trim())
     .filter(Boolean) as `0x${string}`[];

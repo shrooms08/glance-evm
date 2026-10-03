@@ -11,6 +11,13 @@ assertPublicEnvSafe();
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+export const SECURITY_HEADERS = [
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+];
+
 const config: NextConfig = {
   // The shared packages ship TypeScript source.
   transpilePackages: ["@glance/design", "@glance/core"],
@@ -28,6 +35,10 @@ const config: NextConfig = {
   // extension's link handshake "/?glance=link&vault=...", a vault picked with "?vault=...", developer mode "?dev=1")
   // still land there, query and all. See lib/routes.ts and test/routes.test.ts.
   redirects: async () => DASHBOARD_REDIRECTS,
+  // Security headers on every route (docs/audit.md L-13): the console's signing pages can't be framed (clickjacking),
+  // referrers leave only the origin cross-site, and responses aren't type-sniffed. frame-ancestors is the only CSP
+  // directive on purpose: a fuller policy needs testing against every wallet connector first.
+  headers: async () => [{ source: "/:path*", headers: SECURITY_HEADERS }],
 };
 
 export default config;

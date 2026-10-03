@@ -11,7 +11,7 @@ import { authorization, ONLY_OWNER } from "@glance/core/session";
 
 import { LinkScreen } from "../app/(console)/link/page";
 import { LinkedBrowsersCard } from "../components/LinkedBrowsers";
-import { parseLinkParams } from "../lib/link";
+import { linkWarning, parseLinkParams } from "../lib/link";
 
 afterEach(cleanup);
 
@@ -44,6 +44,18 @@ describe("the /link screen", () => {
     expect(screen.getByText(SESSION)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Sign to link this browser" }));
     expect(onSign).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns, above the button, that the session came from the link: only continue from your own extension", () => {
+    const onSign = vi.fn();
+    render(<LinkScreen {...base} reason={null} state={{ step: "ready" }} onSign={onSign} />);
+    const warning = screen.getByText("Only continue if you opened this link from your own Glance extension. Session key: 0x1234…7890");
+    const button = screen.getByRole("button", { name: "Sign to link this browser" });
+    // Before the button in the page, and only a warning: the button still works.
+    expect(warning.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(button);
+    expect(onSign).toHaveBeenCalledTimes(1);
+    expect(linkWarning(SESSION)).not.toMatch(/[‒-―]/);
   });
 
   it("any other wallet sees 'Only the vault owner can link a browser.' and no signature button", () => {
