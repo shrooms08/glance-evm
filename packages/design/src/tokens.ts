@@ -140,24 +140,24 @@ export function themeVariables(name: ThemeName): string {
 }
 
 /**
- * The public landing page (design/landing/Glance Landing.html): its own near-black palette, always dark. The glyph
+ * The public landing page: pure black, near-black cards, always dark. The glyph
  * burst colours and the pixel cursor are the page's signature effect.
  */
 export const landing = {
-  bg: "#0A0A0A",
+  bg: "#000000",
   fg: "#F4F4F2",
   muted: "#A1A1A8",
   dim: "#8A8A90",
-  card: "#161618",
-  panel: "#121214",
+  card: "#0E0E0F",
+  panel: "#0B0B0B",
   line: "#26262A",
   lineHover: "#3A3A40",
   lime: color.lime,
   limeHover: "#D3F862",
   amber: "#F2B544",
-  dotGrid: "#1C1C1F",
-  navBg: "rgba(10,10,10,0.82)",
-  heroGlow: "rgba(70,110,20,0.16)",
+  dotGrid: "#141416",
+  navBg: "rgba(0,0,0,0.86)",
+  heroGlow: "rgba(70,110,20,0.10)",
   safetyRule: "rgba(10,10,10,0.22)",
   cardShadow: "rgba(0,0,0,0.45)",
   panelShadow: "rgba(0,0,0,0.6)",

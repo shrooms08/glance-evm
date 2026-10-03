@@ -30,3 +30,17 @@ export function demoEmbed(raw: string | undefined | null): DemoEmbed {
   }
   return null;
 }
+
+/** The video the landing page links to when NEXT_PUBLIC_DEMO_VIDEO_URL isn't set (the published demo on YouTube). */
+export const DEMO_VIDEO_FALLBACK = "https://www.youtube.com/watch?v=KwPYiDraE2I";
+
+/**
+ * Where "Watch the demo" goes: the same video, as its own page on YouTube or Loom (opened in a new tab, never embedded).
+ * Anything that isn't a YouTube or Loom link falls back to the published demo.
+ */
+export function demoWatchUrl(raw: string | undefined | null): string {
+  const embed = demoEmbed(raw);
+  if (embed?.provider === "youtube") return `https://www.youtube.com/watch?v=${/embed\/([A-Za-z0-9_-]{11})/.exec(embed.src)![1]}`;
+  if (embed?.provider === "loom") return embed.src.replace("/embed/", "/share/");
+  return DEMO_VIDEO_FALLBACK;
+}
