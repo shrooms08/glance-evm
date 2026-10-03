@@ -129,7 +129,7 @@ describe("the landing page", () => {
     for (const a of screen.getAllByRole("link", { name: "Get Glance" })) expect(a.getAttribute("href")).toBe("/install");
     for (const a of screen.getAllByRole("link", { name: "Open console" })) expect(a.getAttribute("href")).toBe("/dashboard");
     const demo = screen.getByRole("link", { name: /Watch the demo/ });
-    expect(demo.getAttribute("href")).toMatch(/^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/);
+    expect(demo.getAttribute("href")).toMatch(/^https:\/\/youtu\.be\/[A-Za-z0-9_-]{11}$/);
     expect(demo.getAttribute("target")).toBe("_blank");
     expect(demo.getAttribute("rel")).toBe("noopener noreferrer");
     expect(document.querySelector("iframe")).toBeNull();
@@ -137,10 +137,11 @@ describe("the landing page", () => {
   });
 
   it("the demo link follows NEXT_PUBLIC_DEMO_VIDEO_URL, as a watch page", () => {
-    expect(demoWatchUrl("https://youtu.be/dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-    expect(demoWatchUrl("https://www.youtube.com/embed/dQw4w9WgXcQ")).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    expect(demoWatchUrl("https://youtu.be/dQw4w9WgXcQ")).toBe("https://youtu.be/dQw4w9WgXcQ");
+    expect(demoWatchUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe("https://youtu.be/dQw4w9WgXcQ");
     expect(demoWatchUrl("https://www.loom.com/share/GlanceDemoLoomVideo")).toBe("https://www.loom.com/share/GlanceDemoLoomVideo");
     expect(demoWatchUrl(undefined)).toBe(DEMO_VIDEO_FALLBACK);
+    expect(DEMO_VIDEO_FALLBACK).toBe("https://youtu.be/5sbJWA8093w");
     expect(demoWatchUrl("javascript:alert(1)")).toBe(DEMO_VIDEO_FALLBACK);
   });
 
