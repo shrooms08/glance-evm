@@ -8,18 +8,18 @@
     "marks": 0,
     "ownChartShown": false,
     "screenshot": "docs/qa/chart-annotate-tradingview-hog.png",
-    "log": "[glance] chart \"explain this chart\": site=tradingview symbol=HOG range=1D method=none error=\"canvas: R^2 0.888 under 0.95; dom: no price axis: fewer than 2 readable price labels in a column; vision: the candles' high and low fall outside the plot (over 3%)\" marks=0 ownChart=offered (rule 3)"
+    "log": "[glance] chart \"explain this chart\": site=tradingview symbol=HOG range=1D method=none error=\"canvas: R^2 0.932 under 0.95; dom: no price axis: fewer than 2 readable price labels in a column; vision: no price axis: fewer than 2 readable price labels in a column\" marks=0 ownChart=offered (rule 3)"
   },
   {
     "site": "tradingview",
     "symbol": "TSLA",
     "range": "5 days",
     "method": "canvas",
-    "r2": "1.000",
-    "marks": 2,
+    "r2": "0.999",
+    "marks": 3,
     "ownChartShown": false,
     "screenshot": "docs/qa/chart-annotate-tradingview-tsla.png",
-    "log": "[glance] chart \"explain this chart\": site=tradingview symbol=TSLA range=1W method=canvas r2=1.000 (line #f23645, R^2 1.000, range off 0.4%, x by bar) marks=2 ownChart=no"
+    "log": "[glance] chart \"explain this chart\": site=tradingview symbol=TSLA range=1W method=canvas r2=0.999 (line #089981, R^2 0.999, range off 0.3%, x by bar) marks=3 ownChart=no"
   },
   {
     "site": "tradingview",
@@ -30,17 +30,17 @@
     "marks": 6,
     "ownChartShown": false,
     "screenshot": "docs/qa/chart-annotate-tradingview-nvda.png",
-    "log": "[glance] chart \"explain this chart\": site=tradingview symbol=NVDA range=1M method=canvas r2=1.000 (line #089981, R^2 1.000, range off 0.0%, x by bar) marks=6 ownChart=no"
+    "log": "[glance] chart \"explain this chart\": site=tradingview symbol=NVDA range=1M method=canvas r2=1.000 (line #089981, R^2 1.000, range off 0.1%, x by bar) marks=6 ownChart=no"
   },
   {
     "site": "yahoo",
     "symbol": "TSLA",
     "range": "(the page's default)",
-    "method": "none",
+    "method": "vision",
     "r2": null,
-    "marks": 0,
+    "marks": 3,
     "ownChartShown": false,
     "screenshot": "docs/qa/chart-annotate-yahoo-tsla.png",
-    "log": "[glance] chart \"explain this chart\": site=yahoo symbol=TSLA range=1D method=none error=\"canvas: no series found in the chart's pixels; dom: no price axis: fewer than 2 readable price labels in a column; vision: no price axis: fewer than 2 readable price labels in a column\" marks=0 ownChart=offered (rule 3)"
+    "log": "[glance] chart \"explain this chart\": site=yahoo symbol=TSLA range=1D method=vision (the candles' high and low sit inside the plot) marks=3 ownChart=no"
   }
 ]

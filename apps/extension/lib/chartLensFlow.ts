@@ -22,7 +22,8 @@ import type { ChartAnnotation } from "@glance/core/showme";
 import type { PatternMark } from "./candleAnswer";
 import type { LayerMark } from "./chartLayer";
 
-import { betterFit, fitTraceBy, MAX_RANGE_ERROR, traceSeries, type TraceFit } from "./canvasTrace";
+import { betterFit, fitTraceBy, MAX_RANGE_ERROR, traceSeries, type TraceFit, type TraceOptions } from "./canvasTrace";
+import { chartAskKey, RANGE_CHOICES, type ChartAnswers } from "./chartAsk";
 import { priceLookup } from "./chartMarks";
 import { cropScreenshot, pickPageChart, pixelLineReader, readChartPixels, readDomLabels, svgLineReader, type ChartPixels, type PageChartTarget } from "./pageChart";
 
@@ -64,6 +65,8 @@ export interface LensFlowDeps {
   readPixels?(el: Element, win: Window): ChartPixels | { error: string };
   crop?: typeof cropScreenshot;
   readLine?: typeof pixelLineReader;
+  /** This tab's answers to "which range?" on TradingView's chart page (lib/chartAsk.ts): asked once per chart. */
+  answers?: ChartAnswers;
 }
 
 /** Which market candles: the default step, a finer one, and with the pre- and after-market. */
@@ -101,7 +104,11 @@ export type PageChartSession = {
 
 export type Prepared =
   | { kind: "none" }
-  | { kind: "ask"; question: string; symbol: string | null; range: ChartRange }
+  /**
+   * Unsure which chart: one short question first. `choices`: TradingView's chart page with no range selected, asked
+   * with range buttons (lib/chartAsk.ts); `key` is the chart the answer is remembered for.
+   */
+  | { kind: "ask"; question: string; symbol: string | null; range: ChartRange; choices?: readonly ChartRange[]; key?: string }
   /** Rule 3: no method could line up marks. Nothing is drawn; the user is asked whether to pull up Glance's own. */
   | { kind: "cant-calibrate"; symbol: string; range: ChartRange; site: PageChartTarget["site"]; reasons: string[]; box: Box }
   | { kind: "unavailable"; message: string }
@@ -148,9 +155,16 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   const target = pickPageChart(deps.doc, deps.win, deps.symbols, deps.named, deps.aliases);
   if (!target) return { kind: "none" };
   // The page's own timeframe decides the window (TradingView's "6 months" is 6 months of candles).
-  const range: ChartRange = opts.confirmed?.range ?? target.range ?? "1W";
-  const symbol = opts.confirmed?.symbol ?? target.symbol;
-  if (!opts.confirmed && (target.unsure || !symbol)) return { kind: "ask", question: target.unsure ?? "Which stock is this chart?", symbol, range };
+  // TradingView's chart page: an answer already given for this chart is used, never asked again.
+  const key = target.chartPage ? chartAskKey(deps.win.location.href, target.symbol, target.chartPage.rangeRead) : null;
+  const confirmed = opts.confirmed ?? (key && target.unsure ? (deps.answers?.get(key) ?? undefined) : undefined);
+  const range: ChartRange = confirmed?.range ?? target.range ?? "1W";
+  const symbol = confirmed?.symbol ?? target.symbol;
+  if (target.chartPage) log(`[glance] chart page: symbol=${target.symbol ?? "?"} range=${target.chartPage.rangeRead ?? "not selected"} interval=${JSON.stringify(target.chartPage.interval)}${confirmed ? ` answered=${confirmed.range}` : ""}`);
+  if (!confirmed && (target.unsure || !symbol)) {
+    const askRange = Boolean(target.chartPage && symbol && target.chartPage.rangeRead === null && target.symbol !== null);
+    return { kind: "ask", question: target.unsure ?? "Which stock is this chart?", symbol, range, ...(key ? { key } : {}), ...(askRange ? { choices: RANGE_CHOICES } : {}) };
+  }
   if (!symbol) return { kind: "none" };
 
   const short = range === "1D" || range === "1W";
@@ -175,21 +189,29 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
   if ("error" in px) reasons.push(`canvas: ${px.error}`);
   else {
     await yieldToPage();
-    const trace = during("canvas trace", () => traceSeries(px.pixels, px.dpr));
-    if (!trace) reasons.push("canvas: no series found in the chart's pixels");
+    // TradingView's chart page: its pane also holds the price line and markers, and its 5 day bars are a few px wide:
+    // traced per candle and per column, the better fit kept (lib/canvasTrace.ts TraceOptions).
+    const ways: TraceOptions[] = target.chartPage ? [{ chartPage: true }, { chartPage: true, perColumn: true }] : [{}];
+    const traces = ways.flatMap((o) => {
+      const t = during("canvas trace", () => traceSeries(px.pixels, px.dpr, o));
+      return t ? [{ trace: t, way: o.perColumn ? ", per column" : "" }] : [];
+    });
+    if (traces.length === 0) reasons.push("canvas: no series found in the chart's pixels");
     else {
-      series = trace.kind === "candles" ? "candles" : "line";
-      const points = trace.points.map((p) => ({ x: px.pane.x + p.x / px.dpr, y: px.pane.y + p.y / px.dpr }));
+      series = traces[0]!.trace.kind === "candles" ? "candles" : "line";
       // The page may draw at its own step, and with or without the pre- and after-market: fit each candle set we
       // have, keep the best one that passes.
-      const fits: Array<{ set: (typeof sets)[number]; fit: TraceFit }> = [];
-      for (const set of sets) {
-        const candles = set.data.points.map((p) => ({ t: p.t, price: p.price }));
-        await yieldToPage();
-        const byBar = during("canvas trace", () => fitTraceBy(points, candles, px.pane, "bar"));
-        await yieldToPage();
-        const byTime = during("canvas trace", () => fitTraceBy(points, candles, px.pane, "time"));
-        fits.push({ set, fit: betterFit(byBar, byTime) });
+      const fits: Array<{ set: (typeof sets)[number]; fit: TraceFit; trace: (typeof traces)[number] }> = [];
+      for (const t of traces) {
+        const points = t.trace.points.map((p) => ({ x: px.pane.x + p.x / px.dpr, y: px.pane.y + p.y / px.dpr }));
+        for (const set of sets) {
+          const candles = set.data.points.map((p) => ({ t: p.t, price: p.price }));
+          await yieldToPage();
+          const byBar = during("canvas trace", () => fitTraceBy(points, candles, px.pane, "bar"));
+          await yieldToPage();
+          const byTime = during("canvas trace", () => fitTraceBy(points, candles, px.pane, "time"));
+          fits.push({ set, fit: betterFit(byBar, byTime), trace: t });
+        }
       }
       const best = fits.filter((f) => f.fit.ok).sort((a, b) => b.fit.r2 - a.fit.r2)[0] ?? fits.sort((a, b) => b.fit.r2 - a.fit.r2)[0]!;
       const fit = best.fit;
@@ -197,7 +219,7 @@ export async function preparePageChart(deps: LensFlowDeps, opts: { confirmed?: {
         chosen = best.set;
         cal = fit.calibration;
         r2 = fit.r2;
-        why = `${trace.kind} ${trace.color}, ${fit.reason}`;
+        why = `${best.trace.trace.kind} ${best.trace.trace.color}${best.trace.way}, ${fit.reason}`;
         dots = fit.dots ?? null;
       } else reasons.push(`canvas: ${fit.reason}`);
     }

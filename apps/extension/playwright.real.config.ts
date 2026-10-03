@@ -6,7 +6,7 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "e2e",
-  testMatch: /(charts|voice|candles|welcome|marks|buycard|intro)\.real\.ts$/,
+  testMatch: /(charts|chartpage|voice|candles|welcome|marks|buycard|intro)\.real\.ts$/,
   timeout: 900_000,
   workers: 1,
   reporter: [["list"]],

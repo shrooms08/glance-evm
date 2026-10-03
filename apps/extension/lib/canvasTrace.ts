@@ -146,10 +146,35 @@ export function traceLine(p: Pixels, color: RGB, dpr = 1): Trace | null {
   return points.length >= 20 ? { kind: "line", points, color: hex(color) } : null;
 }
 
+/** How to read the pane of a chart that draws more than the series in it. */
+export interface TraceOptions {
+  /**
+   * TradingView's full chart page: the pane also holds the last-price line (dotted, in the candles' colors) and the
+   * earnings and dividend markers at its foot, under the series' bottom margin. Short runs on a row the colors cross
+   * the whole chart on (the price line) and anything in the pane's bottom 6% (the markers) are skipped.
+   */
+  chartPage?: boolean;
+  /** One point per column (the middle of its candle) instead of one per candle: for bars only a few px wide. */
+  perColumn?: boolean;
+}
+
+/** The bottom of the pane a TradingView chart page keeps its markers in, below the series. */
+const CHART_PAGE_FOOT = 0.06;
+
 /** The series as candles: each body's close (top of an up candle, bottom of a down one), left to right. */
-export function traceCandles(p: Pixels, up: RGB, down: RGB): Trace | null {
+export function traceCandles(p: Pixels, up: RGB, down: RGB, opts: TraceOptions = {}): Trace | null {
   const tolerance = 80;
   const points: TracePoint[] = [];
+  const candleRuns = opts.chartPage ? chartPageRuns(p, up, down, tolerance) : (x: number, color: RGB) => runs(p, x, color, tolerance);
+  if (opts.perColumn) {
+    for (let x = 0; x < p.width; x++) {
+      const all = [...candleRuns(x, up), ...candleRuns(x, down)];
+      if (all.length === 0) continue;
+      const run = all.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
+      points.push({ x, y: (run[0] + run[1]) / 2 });
+    }
+    return points.length >= 20 ? { kind: "candles", points, color: `${hex(up)}/${hex(down)}` } : null;
+  }
   let group: { color: "up" | "down"; x0: number; x1: number; tops: number[]; bottoms: number[] } | null = null;
   const flush = () => {
     if (!group) return;
@@ -164,8 +189,8 @@ export function traceCandles(p: Pixels, up: RGB, down: RGB): Trace | null {
     group = null;
   };
   for (let x = 0; x < p.width; x++) {
-    const u = runs(p, x, up, tolerance);
-    const d = runs(p, x, down, tolerance);
+    const u = candleRuns(x, up);
+    const d = candleRuns(x, down);
     const which = u.length && (!d.length || u[0]![1] - u[0]![0] >= d[0]![1] - d[0]![0]) ? "up" : d.length ? "down" : null;
     if (!which) {
       flush();
@@ -185,17 +210,30 @@ export function traceCandles(p: Pixels, up: RGB, down: RGB): Trace | null {
   return points.length >= 8 ? { kind: "candles", points, color: `${hex(up)}/${hex(down)}` } : null;
 }
 
+/** Runs in a TradingView chart page's pane, without its price line and the markers at its foot (TraceOptions). */
+function chartPageRuns(p: Pixels, up: RGB, down: RGB, tolerance: number): (x: number, color: RGB) => Array<[number, number]> {
+  const across = new Array<number>(p.height).fill(0);
+  for (let y = 0; y < p.height; y++) {
+    for (let x = 0; x < p.width; x++) {
+      const [r, g, b, a] = at(p, x, y);
+      if (a >= 160 && (dist([r, g, b], up) <= tolerance || dist([r, g, b], down) <= tolerance)) across[y]!++;
+    }
+  }
+  const foot = p.height * (1 - CHART_PAGE_FOOT);
+  return (x, color) => runs(p, x, color, tolerance).filter(([top, bottom]) => bottom < foot && !(bottom - top <= 2 && across[top]! >= p.width * 0.2));
+}
+
 /**
  * The page chart's series: candles when there are two strong colors, a green and a red, in comparable amounts;
  * otherwise the line in the most common saturated color. Null when nothing chart-like is there.
  */
-export function traceSeries(p: Pixels, dpr = 1): Trace | null {
+export function traceSeries(p: Pixels, dpr = 1, opts: TraceOptions = {}): Trace | null {
   const colors = dominantColors(p).filter((c) => c.count >= 20);
   if (colors.length === 0) return null;
   const green = colors.find((c) => hueFamily(c.color) === "green");
   const red = colors.find((c) => hueFamily(c.color) === "red");
   if (green && red && Math.min(green.count, red.count) >= Math.max(green.count, red.count) * 0.25 && colors[0] !== undefined && (colors[0] === green || colors[0] === red)) {
-    const candles = traceCandles(p, green.color, red.color);
+    const candles = traceCandles(p, green.color, red.color, opts);
     if (candles) return candles;
   }
   return traceLine(p, colors[0]!.color, dpr);

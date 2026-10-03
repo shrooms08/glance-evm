@@ -47,7 +47,8 @@ import { placeOwnChart, wantsOwnChart } from "../../lib/ownChart";
 import type { Box } from "@glance/core/page-chart";
 import { chartPathLine, defaultMarks, preparePageChart, type PageChartSession } from "../../lib/chartLensFlow";
 import { companiesInText } from "../../lib/commands";
-import { chooseChartRoute, findChartCandidates, pageStock, selectedRange } from "../../lib/pageChart";
+import { chooseChartRoute, findChartCandidates, isTradingViewChartPage, pageStock, readTradingViewChart, selectedRange } from "../../lib/pageChart";
+import { ChartAnswers, RANGE_BUTTON, rangeFromAnswer } from "../../lib/chartAsk";
 import type { ChartRange } from "@glance/core/chart";
 import { ShowDrawings } from "../../lib/showDraw";
 import { CUT_NOTE, downscaleJpeg, runShowMe, type ShowMeRun } from "../../lib/showMe";
@@ -95,9 +96,14 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const showChartRef = useRef<(symbol: string) => void>(() => {});
   const askRef = useRef<(question: string) => void>(() => {});
   const answerOwnChartOffer = useRef<(yes: boolean) => boolean>(() => false);
+  /** TradingView's chart page asked which range (or which chart): a said or typed answer to it. */
+  const answerChartAsk = useRef<(said: string) => boolean>(() => false);
+  /** This tab's answers to that question, by chart (lib/chartAsk.ts): asked once per chart. */
+  const chartAnswers = useRef(new ChartAnswers());
   const assistant = useAssistant({
     context: () => voiceContext.current(),
     onYesNo: (yes) => answerOwnChartOffer.current(yes),
+    onAnswer: (said) => answerChartAsk.current(said),
     onChart: (symbol) => showChartRef.current(symbol),
     onAsk: (question) => askRef.current(question),
     onTestDrawing: () => void testDrawingRef.current(),
@@ -381,6 +387,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
   const ask = useCallback(
     (question: string, lens: { confirmed?: { symbol: string; range: ChartRange } } = {}) => {
       showRun.current?.cancel();
+      answerChartAsk.current = () => false;
       // The next chart question: the last one's marks go.
       chartLayerRef.current?.close();
       ownChartOffer.current = null;
@@ -431,7 +438,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
               const l = new ChartLayer(layerRef.current!, el, cal, at, priceAt, pricesBetween, {
                 dots,
                 range,
-                rangeNow: () => selectedRange(el),
+                rangeNow: () => (isTradingViewChartPage(location) ? readTradingViewChart(document).range : selectedRange(el)),
                 onClose: () => {
                   if (chartLayerRef.current === l) chartLayerRef.current = null;
                 },
@@ -441,6 +448,7 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
             },
             showDots: () => safely(() => calibrationDots.getValue(), Promise.resolve(false)),
             log: (l) => console.info(l),
+            answers: chartAnswers.current,
           },
           lens,
         );
@@ -456,6 +464,26 @@ function Floating({ underliner, sfx }: { underliner: Underliner; sfx?: Sfx }) {
           case "unavailable":
             return g.setOrb({ state: "idle", line: prep.message, meta: "Chart lens" });
           case "ask": {
+            if (prep.key && prep.symbol) {
+              // TradingView's chart page: asked once. The answer is used now, and remembered for this chart.
+              const symbol = prep.symbol;
+              const key = prep.key;
+              const answer = (range: ChartRange) => {
+                answerChartAsk.current = () => false;
+                assistant.setCard(null);
+                chartAnswers.current.set(key, { symbol, range });
+                ask(question, { confirmed: { symbol, range } });
+              };
+              const choices = prep.choices ?? [];
+              answerChartAsk.current = (said) => {
+                const range = choices.length ? rangeFromAnswer(said) : /^(yes|yeah|yep|sure|ok|okay)[.!]?$/i.test(said.trim()) ? prep.range : null;
+                if (range === null || (choices.length && !choices.includes(range))) return false;
+                answer(range);
+                return true;
+              };
+              const options = choices.length ? choices.map((r) => ({ label: RANGE_BUTTON[r as keyof typeof RANGE_BUTTON], run: () => answer(r) })) : [{ label: "Yes", run: () => answer(prep.range) }, { label: "No", run: () => ((answerChartAsk.current = () => false), g.setOrb({ state: "idle", line: "Okay. Tell me the stock and range, like “explain Tesla's 5 day chart”.", meta: "" })) }];
+              return offer(prep.question, options);
+            }
             // Unsure which chart or stock: one short question, never a guess.
             const choices = prep.symbol
               ? [{ label: "Yes", run: () => ask(question, { confirmed: { symbol: prep.symbol!, range: prep.range } }) }]

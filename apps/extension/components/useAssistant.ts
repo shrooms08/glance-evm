@@ -97,6 +97,11 @@ export interface AssistantOptions {
    * it answered that question (a spoken yes can do that: it moves no money). Else a yes stays a trade confirm.
    */
   onYesNo?(yes: boolean): boolean;
+  /**
+   * A short answer to a question Glance asked about the page's chart (TradingView's chart page: "five days", "1M", or
+   * "yes"), said or typed. True when it answered that question; else the words go on as usual.
+   */
+  onAnswer?(said: string): boolean;
 }
 
 export function useAssistant(opts: AssistantOptions = {}) {
@@ -109,6 +114,8 @@ export function useAssistant(opts: AssistantOptions = {}) {
   onTestDrawing.current = opts.onTestDrawing;
   const onYesNo = useRef(opts.onYesNo);
   onYesNo.current = opts.onYesNo;
+  const onAnswer = useRef(opts.onAnswer);
+  onAnswer.current = opts.onAnswer;
   const g = useGlance();
   const [card, setCard] = useState<AssistantCard>(null);
   const [heard, setHeard] = useState("");
@@ -161,6 +168,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
   /** Typed commands (and the browser-fallback transcript), parsed here. */
   const run = useCallback(
     async (text: string, source: "typed" | "voice" = "typed") => {
+      if (onAnswer.current?.(text)) return setHeard(text);
       const baskets = await listBaskets(g.catalog.map((s) => s.symbol));
       const cmd = parseCommand(
         text,
@@ -300,6 +308,7 @@ export function useAssistant(opts: AssistantOptions = {}) {
   const applyIntent = useCallback(
     (it: VoiceIntent, said: string) => {
       const meta = `Heard “${said}”`;
+      if (onAnswer.current?.(said)) return;
       // A spoken yes or no to a question that isn't a trade ("Want me to pull up my own?").
       if (/^(yes|yeah|yep|sure|ok|okay|please|please do|do it|go ahead|pull it up|no|nope|no thanks|not now)[.!]?$/i.test(said.trim())) {
         if (onYesNo.current?.(!/^(no|nope|no thanks|not now)/i.test(said.trim()))) return;

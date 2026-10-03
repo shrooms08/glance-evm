@@ -1,0 +1,58 @@
+[
+  {
+    "page": "https://www.tradingview.com/chart/?symbol=NASDAQ%3ATSLA",
+    "range": "5D",
+    "question": "Explain this chart",
+    "asked": 0,
+    "method": "canvas",
+    "r2": "0.996",
+    "rangeUsed": "1W",
+    "marks": 4,
+    "screenshot": "docs/qa/chart-page-tsla-5d.png",
+    "log": "[glance] chart \"Explain this chart\": site=tradingview symbol=TSLA range=1W method=canvas r2=0.996 (candles #089981/#f23645, per column, R^2 0.996, range off 0.2%, x by bar) marks=4 ownChart=no"
+  },
+  {
+    "page": "https://www.tradingview.com/chart/?symbol=NASDAQ%3ATSLA",
+    "range": "5D",
+    "question": "Any candle patterns here?",
+    "asked": 0,
+    "method": null,
+    "r2": null,
+    "found": [
+      "Doji",
+      "Doji",
+      "Spinning top"
+    ],
+    "boxes": 3,
+    "screenshot": "docs/qa/chart-page-tsla-5d-patterns.png",
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1W series=candles found=[\"Doji\",\"Doji\",\"Spinning top\"] marks=3"
+  },
+  {
+    "page": "https://www.tradingview.com/chart/?symbol=NASDAQ%3ATSLA",
+    "range": "1M",
+    "question": "Explain this chart",
+    "asked": 0,
+    "method": "canvas",
+    "r2": "0.996",
+    "rangeUsed": "1M",
+    "marks": 6,
+    "screenshot": "docs/qa/chart-page-tsla-1m.png",
+    "log": "[glance] chart \"Explain this chart\": site=tradingview symbol=TSLA range=1M method=canvas r2=0.996 (candles #089981/#f23645, R^2 0.996, range off 0.6%, x by bar) marks=6 ownChart=no"
+  },
+  {
+    "page": "https://www.tradingview.com/chart/?symbol=NASDAQ%3ATSLA",
+    "range": "1M",
+    "question": "Any candle patterns here?",
+    "asked": 0,
+    "method": null,
+    "r2": null,
+    "found": [
+      "Doji",
+      "Spinning top",
+      "Hanging man"
+    ],
+    "boxes": 3,
+    "screenshot": "docs/qa/chart-page-tsla-1m-patterns.png",
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1M series=candles found=[\"Doji\",\"Spinning top\",\"Hanging man\"] marks=3"
+  }
+]

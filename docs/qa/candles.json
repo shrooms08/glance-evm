@@ -6,16 +6,16 @@
     "screenshot": "docs/qa/candles-tradingview-tsla.png",
     "series": "line",
     "found": [
-      "Spinning top",
+      "Doji",
       "Doji",
       "Spinning top"
     ],
-    "marks": 3,
+    "marks": 0,
     "voice": {
       "outcome": "ended",
       "breaks": 0
     },
-    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1W series=line found=[\"Spinning top\",\"Doji\",\"Spinning top\"] marks=3"
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=TSLA range=1W series=line found=[\"Doji\",\"Doji\",\"Spinning top\"] marks=0"
   },
   {
     "site": "tradingview",
@@ -24,16 +24,16 @@
     "screenshot": "docs/qa/candles-tradingview-nvda.png",
     "series": "line",
     "found": [
-      "Bullish harami",
-      "Inside bar",
-      "Spinning top"
+      "Tweezer bottom",
+      "Spinning top",
+      "Tweezer bottom"
     ],
     "marks": 3,
     "voice": {
       "outcome": "ended",
       "breaks": 0
     },
-    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=NVDA range=1M series=line found=[\"Bullish harami\",\"Inside bar\",\"Spinning top\"] marks=3"
+    "log": "[glance] candles \"Any candle patterns here?\": site=tradingview symbol=NVDA range=1M series=line found=[\"Tweezer bottom\",\"Spinning top\",\"Tweezer bottom\"] marks=3"
   },
   {
     "site": "tradingview chart",
@@ -44,6 +44,6 @@
     "found": [],
     "marks": 0,
     "voice": null,
-    "log": "[glance] chart \"Any candle patterns here?\": asked first (Which chart: TSLA 5 days?) marks=0 ownChart=no"
+    "log": "[glance] chart \"Any candle patterns here?\": asked first (Which range is this TSLA chart showing?) marks=0 ownChart=no"
   }
 ]

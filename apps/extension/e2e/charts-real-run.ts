@@ -37,7 +37,8 @@ try {
     if (up) break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  // Which checks: "charts" (default), "voice" (the spoken-answer reproduction), "candles", or every one ("all").
+  // Which checks: "charts" (default), "chartpage" (TradingView's full chart page), "voice" (the spoken-answer reproduction),
+  // "candles", or every one ("all").
   const which = process.argv[2] ?? "charts";
   const files = which === "all" ? [] : [`e2e/${which}.real.ts`];
   run("pnpm", ["exec", "playwright", "test", "--config", "playwright.real.config.ts", ...files], extension, { E2E_REAL_API: `http://localhost:${PORT}` });

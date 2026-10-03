@@ -15,6 +15,7 @@
 import { ALL_RANGES, type ChartRange } from "@glance/core/chart";
 import { isChartQuestion } from "@glance/core/showme";
 import { shortName } from "@glance/core/tickers";
+import { rangeQuestion } from "./chartAsk";
 import { chartSite, cropFor, detectSymbol, rangeFromButton, rangeFromSpan, datedTimes, type AxisLabel, type Box } from "@glance/core/page-chart";
 
 /** A question about a chart on the page: "explain this chart", "show me the dip on this chart", "what happened here?". */
@@ -166,6 +167,47 @@ export function selectedRange(el: Element): ChartRange | null {
   return null;
 }
 
+/** TradingView's full chart page (tradingview.com/chart/...), not its symbol pages (tradingview.com/symbols/...). */
+export function isTradingViewChartPage(loc: { hostname: string; pathname: string } | null | undefined): boolean {
+  return Boolean(loc && /(^|\.)tradingview\.com$/i.test(loc.hostname) && /^\/chart(\/|$)/i.test(loc.pathname));
+}
+
+const TICKER = /^[A-Z]{1,5}(?:\.[A-Z])?$/;
+const ON = /(^|\s)(isActive|selected|active|is-active)(-[A-Za-z0-9_]+)?(\s|$)/;
+
+/**
+ * What TradingView's chart page says about its chart, from its own controls:
+ *   symbol    the URL's ?symbol= ("NASDAQ:TSLA"), else the toolbar's symbol button ("TSLA")
+ *   range     the range bar's selected tab (data-name "date-range-tab-5D", marked by an "isActive-..." class or aria
+ *             state); null when none is selected (TradingView clears it once the chart is scrolled or zoomed)
+ *   interval  the bar size, as the toolbar names it ("5 minutes", "1 day"), else the legend's ("5", "1D")
+ */
+export function readTradingViewChart(doc: Document): { symbol: string | null; range: ChartRange | null; interval: string | null } {
+  let symbol: string | null = null;
+  try {
+    const raw = new URL(doc.location?.href ?? "").searchParams.get("symbol") ?? "";
+    const t = raw.split(":").pop()!.trim().toUpperCase();
+    if (TICKER.test(t)) symbol = t;
+  } catch {
+    symbol = null;
+  }
+  if (!symbol) {
+    const t = (doc.querySelector("#header-toolbar-symbol-search")?.textContent ?? "").trim().toUpperCase();
+    if (TICKER.test(t)) symbol = t;
+  }
+  let range: ChartRange | null = null;
+  for (const tab of doc.querySelectorAll("[data-name^='date-range-tab-']")) {
+    const on = ["aria-pressed", "aria-selected", "aria-checked"].some((a) => tab.getAttribute(a) === "true") || ON.test(tab.getAttribute("class") ?? "");
+    if (!on) continue;
+    range = rangeFromButton((tab.getAttribute("data-name") ?? "").slice("date-range-tab-".length)) ?? rangeFromButton(tab.textContent ?? "");
+    if (range) break;
+  }
+  const button = doc.querySelector("#header-toolbar-intervals button");
+  const legend = doc.querySelector("[data-qa-id~='legend-source-interval']");
+  const interval = (button?.getAttribute("aria-label") ?? "").trim() || (legend?.textContent ?? "").trim() || null;
+  return { symbol, range, interval };
+}
+
 export interface PageChartTarget {
   el: Element;
   box: Box;
@@ -176,6 +218,11 @@ export interface PageChartTarget {
   unsure: string | null;
   /** Other candidates close in score (the first is the one picked). */
   alternatives: number;
+  /**
+   * TradingView's full chart page: what its controls said (lib/chartAsk.ts asks once, with range buttons, when the
+   * range isn't selected). Null on every other page.
+   */
+  chartPage: { interval: string | null; rangeRead: ChartRange | null } | null;
 }
 
 const RANGE_WORDS: Record<ChartRange, string> = {
@@ -230,6 +277,7 @@ export function pickPageChart(doc: Document, win: Window, symbols: readonly stri
   // What the page itself says (the question's company is weighed separately: it may not be this chart's). Any US
   // ticker the page names clearly counts, not only Glance's seven.
   const detected = detectSymbol({ url: doc.location?.href ?? "", headings: [doc.title, ...headings], nearChart: around }, symbols, { anyTicker: true });
+  if (isTradingViewChartPage(doc.location)) return chartPageTarget(doc, top, named);
   let range = selectedRange(top.el);
   if (range === null) {
     // No button says: the span of the time labels.
@@ -244,7 +292,23 @@ export function pickPageChart(doc: Document, win: Window, symbols: readonly stri
   if (clash) unsure = `This chart looks like ${detected.symbol}. Which chart: ${detected.symbol} ${RANGE_WORDS[range ?? "1W"]}?`;
   else if (!symbol) unsure = "Which stock is this chart?";
   else if ((!detected.confident && !named) || alike > 0 || range === null) unsure = `Which chart: ${symbol} ${RANGE_WORDS[range ?? "1W"]}?`;
-  return { el: top.el, box: top.box, symbol, range, site: chartSite(doc.location?.hostname ?? ""), unsure, alternatives: alike };
+  return { el: top.el, box: top.box, symbol, range, site: chartSite(doc.location?.hostname ?? ""), unsure, alternatives: alike, chartPage: null };
+}
+
+/**
+ * TradingView's chart page: one chart, its symbol and range from the page's own controls (readTradingViewChart). Unsure
+ * only when the range bar has nothing selected (then the range is asked, with buttons), or when the question names
+ * another stock than the chart's.
+ */
+function chartPageTarget(doc: Document, top: ChartCandidate, named: string | null): PageChartTarget {
+  const tv = readTradingViewChart(doc);
+  const clash = named !== null && tv.symbol !== null && tv.symbol !== named;
+  const symbol = tv.symbol ?? named;
+  let unsure: string | null = null;
+  if (clash) unsure = `This chart looks like ${tv.symbol}. Which chart: ${tv.symbol} ${RANGE_WORDS[tv.range ?? "1W"]}?`;
+  else if (!symbol) unsure = "Which stock is this chart?";
+  else if (tv.range === null) unsure = rangeQuestion(symbol);
+  return { el: top.el, box: top.box, symbol, range: tv.range, site: "tradingview", unsure, alternatives: 0, chartPage: { interval: tv.interval, rangeRead: tv.range } };
 }
 
 export const isChartRange = (r: unknown): r is ChartRange => (ALL_RANGES as readonly unknown[]).includes(r);
