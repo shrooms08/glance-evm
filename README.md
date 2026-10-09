@@ -13,7 +13,7 @@ Security: see [SECURITY.md](SECURITY.md) and the full audit in [docs/audit.md](d
 - Website: https://glance-evm-console.vercel.app
 - Console: https://glance-evm-console.vercel.app/dashboard
 - Install the extension: https://glance-evm-console.vercel.app/install
-- Demo video: link coming
+- Demo video: https://www.youtube.com/watch?v=5sbJWA8093w
 - API health: https://api-production-adb0.up.railway.app/health
 
 ## What it does
